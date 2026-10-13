@@ -106,7 +106,6 @@ watch(
 );
 
 const heroBackdrop = ref('');
-const heroPoster = ref('');
 
 const playableId = computed(() => {
   if (!item.value) return '';
@@ -184,7 +183,6 @@ watch(
     stills.value = {};
     backdrops.value = [];
     heroBackdrop.value = '';
-    heroPoster.value = '';
     item.value = null;
     seasons.value = [];
     episodes.value = [];
@@ -202,9 +200,6 @@ watch(
     if (!it.backdropImageTag && it.primaryImageTag) {
       // No wide art on the server: reuse the poster as a soft backdrop rather than a flat gradient.
       heroBackdrop.value = await app.imageUrl({ id: it.id, primaryImageTag: it.primaryImageTag }, 1000);
-    }
-    if (it.primaryImageTag) {
-      heroPoster.value = await app.imageUrl({ id: it.id, primaryImageTag: it.primaryImageTag }, 240);
     }
 
     const imdb = it.providers?.imdb;
@@ -306,7 +301,6 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
                 </button>
               </div>
             </div>
-            <div v-if="heroPoster" class="art"><img :src="heroPoster" alt="" /></div>
           </div>
         </div>
       </section>
@@ -528,27 +522,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
   will-change: transform, opacity;
 }
 .copy {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 32px;
   color: #fff;
-}
-.art {
-  /* Bigger and pushed to the hero's right edge so it answers the wide backdrop instead of crowding
-     the synopsis. */
-  width: 148px;
-  flex: none;
-  aspect-ratio: 2 / 3;
-  border-radius: var(--radius);
-  overflow: hidden;
-  box-shadow: var(--shadow);
-}
-.art img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
 }
 .text {
   min-width: 0;
