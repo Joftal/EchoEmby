@@ -336,7 +336,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
               <p v-if="item.tagline" class="tagline">{{ item.tagline }}</p>
               <div class="line">{{ metaLine }}</div>
               <div class="badges">
-                <span v-for="s in scoreBadges" :key="s.k" class="b score" :title="s.hint">
+                <span v-for="s in scoreBadges" :key="s.k" class="b score" :class="s.k" :title="s.hint">
                   <img class="lg" :src="s.logo" alt="" /><i>{{ s.text }}</i>
                 </span>
                 <span v-if="!scoreBadges.length && item.communityRating" class="b rate">★ {{ item.communityRating.toFixed(1) }}</span>
@@ -605,10 +605,11 @@ h1 {
 .rate { color: #ffe08a; }
 /* The marks sit straight on the art, so the strip has to read as one line of numbers rather than a row
    of plates: no border, no plate, and the gap between groups barely wider than the gap inside one.
-   Everything is aligned by height and never by width — IMDb ships as a box, TMDB and Bangumi as
-   wordmarks, and a wordmark squeezed square turns to mush at 18px. */
+   Height, never width, is what they share — Bangumi ships only as a wordmark and stretches wide, and
+   TMDB's flower is mostly empty space, so it needs 3px more to weigh as much as IMDb's solid box. */
 .b.score { gap: 5px; }
 .lg { height: 18px; width: auto; display: block; filter: drop-shadow(0 1px 5px rgba(0, 0, 0, 0.55)); }
+.tmdb .lg { height: 21px; }
 .b.score i { font-style: normal; color: #fff; }
 .cert { color: rgba(255, 255, 255, 0.92); }
 .overview {
