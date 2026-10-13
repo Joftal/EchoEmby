@@ -26,6 +26,9 @@ const api: EchoEmbyApi = {
   },
   meta: {
     rt: imdb => invoke('meta:rt', imdb),
+    imdb: imdb => invoke('meta:imdb', imdb),
+    trakt: input => invoke('meta:trakt', input),
+    bangumi: title => invoke('meta:bangumi', title),
     tmdb: input => invoke('meta:tmdb', input),
     tmdbStills: input => invoke('meta:tmdbStills', input),
     tmdbSimilar: input => invoke('meta:tmdbSimilar', input),

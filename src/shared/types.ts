@@ -97,6 +97,31 @@ export interface RtScores {
   fetchedAt: number;
 }
 
+/** IMDb's own 10-point average, cached by IMDb id. */
+export interface ImdbRating {
+  rating: number;
+  fetchedAt: number;
+}
+
+/** Trakt's audience numbers, cached by `kind:imdbId`. The rating lands close to TMDB's; `watchers` is
+ *  the number no other source here gives us. */
+export interface TraktScores {
+  rating?: number;
+  votes?: number;
+  watchers?: number;
+  fetchedAt: number;
+}
+
+/** Bangumi's 10-point average for a CJK title, cached by the searched name. */
+export interface BangumiScore {
+  score: number;
+  /** How many people rated it, which is what tells an 8.6 out of 40 voters from one out of 36k. */
+  total: number;
+  subjectId: number;
+  name: string;
+  fetchedAt: number;
+}
+
 /** TMDB fields we merge in for one title, cached by `kind:tmdbId`. Every field here fills a hole the
  *  Emby server left empty; none of them replaces data the server already returns. */
 export interface TmdbMeta {

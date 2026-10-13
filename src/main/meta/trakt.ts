@@ -1,0 +1,70 @@
+import { net } from 'electron';
+import * as config from '../config';
+import type { TraktScores } from '../../shared/types';
+import { sourceCache } from './cache';
+
+/**
+ * Trakt is the only one of these sources that needs a key, and the only one that reports how many
+ * people actually hold a title in their collection — the ratings themselves all land within a few
+ * tenths of TMDB's. Its API takes an IMDb id wherever it takes its own, so no reverse lookup is
+ * needed: one request per number, both keyed by the id the Emby server already gives us.
+ */
+
+const DAY = 86_400_000;
+const API = 'https://api.trakt.tv';
+
+const cache = sourceCache<TraktScores>('trakt.json', 7 * DAY, 3 * DAY);
+
+const ask = async (url: string, key: string): Promise<any | null> => {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 12000);
+  try {
+    const res = await net.fetch(url, {
+      headers: {
+        'Content-Type': 'application/json',
+        'trakt-api-version': '2',
+        'trakt-api-key': key,
+        // Without a UA the CDN in front of Trakt answers 403 to a default fetch.
+        'User-Agent': 'EchoEmby/0.1 (desktop client; per-title metadata lookup)',
+      },
+      signal: ctrl.signal,
+    });
+    // 404 is Trakt saying it has no such title; only a 5xx or a dead socket is not an answer.
+    if (res.status >= 500) return null;
+    if (res.status === 404) return {};
+    return await res.json().catch(() => null);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+
+export async function traktScores(kind: 'movie' | 'tv', imdb: string): Promise<TraktScores | null> {
+  const key = config.get().meta?.traktClientId;
+  if (!key || !/^tt\d{6,10}$/.test(imdb)) return null;
+  const id = `${kind}:${imdb}`;
+  const hit = cache.read(id);
+  if (hit.status === 'empty') return null;
+  if (hit.status === 'fresh') return hit.value;
+
+  const base = `${API}/${kind === 'movie' ? 'movies' : 'shows'}/${imdb}`;
+  const [rating, stats] = await Promise.all([ask(`${base}/ratings`, key), ask(`${base}/stats`, key)]);
+  if (!rating || !stats) return null;
+
+  const out: TraktScores = { fetchedAt: Date.now() };
+  const r = num(rating.rating) ?? num(rating.value);
+  if (r !== undefined) out.rating = Math.round(r * 100) / 100;
+  const votes = num(rating.votes) ?? num(stats.votes);
+  if (votes !== undefined) out.votes = votes;
+  const watchers = num(stats.watchers);
+  if (watchers !== undefined) out.watchers = watchers;
+  if (out.rating === undefined && out.watchers === undefined) {
+    cache.markEmpty(id);
+    return null;
+  }
+  cache.write(id, out);
+  return out;
+}

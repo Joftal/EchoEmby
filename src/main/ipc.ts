@@ -3,6 +3,9 @@ import { EmbyClient, EmbyError, normalizeBase } from './emby/client';
 import { detail, explain } from './emby/errors';
 import * as config from './config';
 import { rtScores } from './meta/rt';
+import { imdbRating } from './meta/imdb';
+import { traktScores } from './meta/trakt';
+import { bangumiScore } from './meta/bangumi';
 import { tmdbMeta, tmdbSeasonStills, tmdbSimilar, tmdbImages } from './meta/tmdb';
 import { csmGuide } from './meta/csm';
 import { MpvPlayer } from './player/mpv';
@@ -191,6 +194,9 @@ export class AppServices {
     );
 
     ipcMain.handle('meta:rt', (_e, imdb: string) => wrap(() => rtScores(imdb)));
+    ipcMain.handle('meta:imdb', (_e, imdb: string) => wrap(() => imdbRating(imdb)));
+    ipcMain.handle('meta:trakt', (_e, { kind, imdb }: { kind: 'movie' | 'tv'; imdb: string }) => wrap(() => traktScores(kind, imdb)));
+    ipcMain.handle('meta:bangumi', (_e, title: string) => wrap(() => bangumiScore(title)));
     ipcMain.handle('meta:tmdb', (_e, { kind, tmdbId }: { kind: 'movie' | 'tv'; tmdbId: string }) => wrap(() => tmdbMeta(kind, tmdbId)));
     ipcMain.handle('meta:tmdbStills', (_e, { tmdbId, season }: { tmdbId: string; season: number }) => wrap(() => tmdbSeasonStills(tmdbId, season)));
     ipcMain.handle('meta:tmdbSimilar', (_e, { kind, tmdbId }: { kind: 'movie' | 'tv'; tmdbId: string }) => wrap(() => tmdbSimilar(kind, tmdbId)));

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import type { CsmGuide, LibraryItem, MediaSourceInfo, MediaStreamInfo, RtScores, TmdbMeta, TmdbSimilar, TmdbStills } from '../../shared/types';
+import type { BangumiScore, CsmGuide, ImdbRating, LibraryItem, MediaSourceInfo, MediaStreamInfo, RtScores, TmdbMeta, TmdbSimilar, TmdbStills, TraktScores } from '../../shared/types';
 import HScroller from '../components/detail/HScroller.vue';
 import { usePlayerStore } from '../stores/player';
 import { useAppStore } from '../stores/app';
@@ -22,6 +22,9 @@ const playErr = ref('');
 const favBusy = ref(false);
 
 const rt = ref<RtScores | null>(null);
+const imdbScore = ref<ImdbRating | null>(null);
+const trakt = ref<TraktScores | null>(null);
+const bgm = ref<BangumiScore | null>(null);
 const tmdb = ref<TmdbMeta | null>(null);
 const csm = ref<CsmGuide | null>(null);
 const similar = ref<TmdbSimilar[]>([]);
@@ -66,6 +69,39 @@ const crew = computed<CrewRow[]>(() => {
 });
 const overviewText = computed(() => item.value?.overview || tmdb.value?.overviewZh || '');
 const certText = computed(() => item.value?.officialRating || tmdb.value?.cert || '');
+
+/** These counts are colour, not figures to read, so they arrive rounded to 万. */
+const fmtCount = (n: number): string => (n >= 10000 ? `${(n / 10000).toFixed(1).replace(/\.0$/, '')}万` : String(n));
+
+interface ScoreBadge {
+  k: string;
+  text: string;
+  hint: string;
+}
+
+/** One pill per platform that answered for this title. Each names itself because the numbers disagree
+ *  with each other by more than a rounding error, and an unlabelled 8.6 asks which one it is. */
+const scoreBadges = computed<ScoreBadge[]>(() => {
+  const out: ScoreBadge[] = [];
+  if (imdbScore.value) out.push({ k: 'imdb', text: `IMDb ${imdbScore.value.rating.toFixed(1)}`, hint: 'IMDb 评分' });
+  if (tmdb.value?.voteAverage) out.push({ k: 'tmdb', text: `TMDB ${tmdb.value.voteAverage.toFixed(1)}`, hint: 'TMDB 评分' });
+  if (trakt.value?.rating != null) {
+    const w = trakt.value.watchers;
+    out.push({
+      k: 'trakt',
+      text: `Trakt ${trakt.value.rating.toFixed(1)}${w ? ` · ${fmtCount(w)}` : ''}`,
+      hint: w ? `Trakt 均分，${w.toLocaleString('zh-CN')} 人标记在看过` : 'Trakt 均分',
+    });
+  }
+  if (bgm.value) {
+    out.push({
+      k: 'bgm',
+      text: `Bangumi ${bgm.value.score.toFixed(1)} · ${fmtCount(bgm.value.total)}`,
+      hint: `Bangumi《${bgm.value.name}》，${bgm.value.total.toLocaleString('zh-CN')} 人评分`,
+    });
+  }
+  return out;
+});
 
 const source = computed<MediaSourceInfo | undefined>(() => item.value?.sources?.[0]);
 const vstream = computed(() => source.value?.video);
@@ -177,6 +213,9 @@ watch(
     loading.value = true;
     error.value = '';
     rt.value = null;
+    imdbScore.value = null;
+    trakt.value = null;
+    bgm.value = null;
     tmdb.value = null;
     csm.value = null;
     similar.value = [];
@@ -203,9 +242,13 @@ watch(
     }
 
     const imdb = it.providers?.imdb;
-    if (imdb) void window.echoemby.meta.rt(imdb).then(x => (props.id === id ? (rt.value = x.ok ? x.data || null : null) : undefined));
-
     const kind = tmdbKind.value;
+    if (imdb) {
+      void window.echoemby.meta.rt(imdb).then(x => (props.id === id ? (rt.value = x.ok ? x.data || null : null) : undefined));
+      void window.echoemby.meta.imdb(imdb).then(x => (props.id === id ? (imdbScore.value = x.ok ? x.data || null : null) : undefined));
+      if (kind) void window.echoemby.meta.trakt({ kind, imdb }).then(x => (props.id === id ? (trakt.value = x.ok ? x.data || null : null) : undefined));
+    }
+
     const tmdbId = it.providers?.tmdb;
     if (kind && tmdbId) {
       void window.echoemby.meta.tmdb({ kind, tmdbId }).then(x => (props.id === id ? (tmdb.value = x.ok ? x.data || null : null) : undefined));
@@ -216,6 +259,11 @@ watch(
     const csmTitle = it.originalTitle || it.name;
     if (kind && csmTitle) {
       void window.echoemby.meta.csm({ kind, title: csmTitle }).then(x => (props.id === id ? (csm.value = x.ok ? x.data || null : null) : undefined));
+    }
+    // Bangumi is the opposite half: its search only reaches CJK names, and it is where the anime and
+    // domestic-drama titles this server holds are actually reviewed.
+    if (kind && it.name) {
+      void window.echoemby.meta.bangumi(it.name).then(x => (props.id === id ? (bgm.value = x.ok ? x.data || null : null) : undefined));
     }
 
     if (it.type === 'Series') {
@@ -282,8 +330,8 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
               <div class="badges">
                 <span v-if="rt?.tomatometer != null" class="b tomato">{{ rt.tomatoCertified ? '认证 ' : '' }}🍅 {{ rt.tomatometer }}%</span>
                 <span v-if="rt?.popcorn != null" class="b corn">🍿 {{ rt.popcorn }}%</span>
-                <span v-if="item.communityRating" class="b rate">★ {{ item.communityRating.toFixed(1) }}</span>
-                <span v-else-if="tmdb?.voteAverage" class="b rate">★ {{ tmdb.voteAverage.toFixed(1) }}</span>
+                <span v-for="s in scoreBadges" :key="s.k" class="b" :class="s.k" :title="s.hint">{{ s.text }}</span>
+                <span v-if="!scoreBadges.length && item.communityRating" class="b rate">★ {{ item.communityRating.toFixed(1) }}</span>
                 <span v-if="certText" class="b cert">{{ certText }}</span>
                 <span v-if="csm?.minAge" class="b cert">{{ csm.minAge }}+</span>
               </div>
@@ -553,6 +601,12 @@ h1 {
 .rate { color: #ffe08a; }
 .tomato { color: #ff8a7a; }
 .corn { color: #ffcf70; }
+/* Each platform keeps its own brand hue so a row of four numbers still reads as four sources. All
+   four sit above 0.6 relative luminance, which is what the plate needs over art this bright. */
+.imdb { color: #f5c518; }
+.tmdb { color: #5fd0ff; }
+.trakt { color: #d6a6ff; }
+.bgm { color: #79e0a6; }
 .cert { color: rgba(255, 255, 255, 0.9); }
 .overview {
   font-size: 14px;

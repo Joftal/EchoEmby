@@ -1,4 +1,4 @@
-import type { Account, AppConfig, CsmGuide, IpcResult, LibraryItem, LibraryRow, MetaKeys, PlayerState, RtScores, Settings, TmdbMeta, TmdbSimilar, TmdbStills } from './types';
+import type { Account, AppConfig, BangumiScore, CsmGuide, ImdbRating, IpcResult, LibraryItem, LibraryRow, MetaKeys, PlayerState, RtScores, Settings, TmdbMeta, TmdbSimilar, TmdbStills, TraktScores } from './types';
 
 export interface EchoEmbyApi {
   app: {
@@ -24,6 +24,10 @@ export interface EchoEmbyApi {
   meta: {
     /** Null is a normal answer: the title simply has no Rotten Tomatoes page we can find. */
     rt(imdb: string): Promise<IpcResult<RtScores | null>>;
+    imdb(imdb: string): Promise<IpcResult<ImdbRating | null>>;
+    trakt(input: { kind: 'movie' | 'tv'; imdb: string }): Promise<IpcResult<TraktScores | null>>;
+    /** Null for a Latin title, which Bangumi's search cannot reach; only CJK names are looked up. */
+    bangumi(title: string): Promise<IpcResult<BangumiScore | null>>;
     tmdb(input: { kind: 'movie' | 'tv'; tmdbId: string }): Promise<IpcResult<TmdbMeta | null>>;
     tmdbStills(input: { tmdbId: string; season: number }): Promise<IpcResult<{ value: TmdbStills; any: boolean } | null>>;
     tmdbSimilar(input: { kind: 'movie' | 'tv'; tmdbId: string }): Promise<IpcResult<TmdbSimilar[]>>;
