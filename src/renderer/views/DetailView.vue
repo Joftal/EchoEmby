@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import MediaCard from '../components/home/MediaCard.vue';
-import type { LibraryItem } from '../../shared/types';
+import type { LibraryItem, RtScores } from '../../shared/types';
 import { usePlayerStore } from '../stores/player';
 import { useAppStore } from '../stores/app';
 import { fmtDate, fmtRuntime } from '../lib/format';
@@ -21,6 +21,7 @@ const seasonId = ref('');
 const loading = ref(true);
 const error = ref('');
 const playErr = ref('');
+const rt = ref<RtScores | null>(null);
 
 const isSeries = computed(() => item.value?.type === 'Series');
 const isSeason = computed(() => item.value?.type === 'Season');
@@ -88,6 +89,7 @@ watch(
   async id => {
     loading.value = true;
     error.value = '';
+    rt.value = null;
     item.value = null;
     seasons.value = [];
     episodes.value = [];
@@ -98,6 +100,14 @@ watch(
       return;
     }
     item.value = r.data;
+    // Outside scores arrive on their own clock: a Wikidata round trip plus an RT page is far slower
+    // than the server, and the badges simply appear when it answers.
+    const imdb = r.data.providers?.imdb;
+    if (imdb) {
+      void window.echoemby.meta.rt(imdb).then(x => {
+        if (props.id === id) rt.value = x.ok ? x.data || null : null;
+      });
+    }
     posterSrc.value = r.data.primaryImageTag ? await app.imageUrl({ id: r.data.id, primaryImageTag: r.data.primaryImageTag }, 460) : '';
     if (r.data.type === 'Series') {
       const s = await window.echoemby.emby.seasons(id);
@@ -144,11 +154,16 @@ async function play(id = playableId.value) {
             <span>{{ fmtRuntime(item.runTimeTicks) }}</span>
             <span v-if="item.childCount">{{ item.childCount }} 集</span>
           </div>
-          <div v-if="rating || item.officialRating || item.studio" class="badges">
+          <div v-if="rating || item.officialRating || item.studio || rt" class="badges">
             <span v-if="rating" class="b rate">★ {{ rating }}</span>
+            <span v-if="rt?.tomatometer != null" class="b tomato">{{ rt.tomatoCertified ? '认证番茄' : '番茄' }} {{ rt.tomatometer }}</span>
+            <span v-if="rt?.popcorn != null" class="b corn">爆米花 {{ rt.popcorn }}</span>
             <span v-if="item.officialRating" class="b cert">{{ item.officialRating }}</span>
             <span v-if="item.studio" class="b studio">{{ item.studio }}</span>
           </div>
+          <p v-if="rt?.whereToWatch" class="watch">
+            <span class="k">哪里能看</span>{{ rt.whereToWatch.join(' · ') }}
+          </p>
           <p class="overview">{{ item.overview || '暂无简介。' }}</p>
           <div class="actions">
             <button class="play" :disabled="!playableId || player.busy" @click="play()">
@@ -279,6 +294,7 @@ h1 {
 .badges {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 7px;
   margin-bottom: 15px;
 }
@@ -294,6 +310,24 @@ h1 {
 .rate {
   color: #6b4500;
   background: rgba(255, 208, 99, 0.42);
+}
+.tomato {
+  color: #7c150c;
+  background: rgba(228, 72, 51, 0.28);
+}
+.corn {
+  color: #5c3a02;
+  background: rgba(255, 190, 60, 0.34);
+}
+.watch {
+  margin: 0 0 15px;
+  font-size: 13px;
+  color: var(--text);
+}
+.watch .k {
+  margin-right: 10px;
+  font-weight: 600;
+  color: var(--text-dim);
 }
 .cert {
   color: var(--text-dim);

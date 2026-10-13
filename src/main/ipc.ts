@@ -2,6 +2,7 @@ import { BrowserWindow, ipcMain } from 'electron';
 import { EmbyClient, EmbyError, normalizeBase } from './emby/client';
 import { detail, explain } from './emby/errors';
 import * as config from './config';
+import { rtScores } from './meta/rt';
 import { MpvPlayer } from './player/mpv';
 import { StreamBridge } from './player/bridge';
 import { PlayerWindows } from './player/windows';
@@ -185,6 +186,8 @@ export class AppServices {
           : this.client().imageUrl({ id, primaryImageTag: tag }, width),
       ),
     );
+
+    ipcMain.handle('meta:rt', (_e, imdb: string) => wrap(() => rtScores(imdb)));
 
     ipcMain.handle('player:play', (_e, itemId: string) =>
       wrap(async () => {

@@ -23,6 +23,9 @@ const api: EchoEmbyApi = {
     episodes: params => invoke('emby:episodes', params),
     imageUrl: params => invoke('emby:imageUrl', params),
   },
+  meta: {
+    rt: imdb => invoke('meta:rt', imdb),
+  },
   player: {
     play: itemId => invoke('player:play', itemId),
     command: cmd => invoke('player:command', cmd),

@@ -1,4 +1,4 @@
-import type { Account, AppConfig, IpcResult, LibraryItem, LibraryRow, PlayerState, Settings } from './types';
+import type { Account, AppConfig, IpcResult, LibraryItem, LibraryRow, PlayerState, RtScores, Settings } from './types';
 
 export interface EchoEmbyApi {
   app: {
@@ -19,6 +19,10 @@ export interface EchoEmbyApi {
     seasons(seriesId: string): Promise<IpcResult<LibraryItem[]>>;
     episodes(params: { seriesId: string; seasonId: string }): Promise<IpcResult<LibraryItem[]>>;
     imageUrl(params: { id: string; tag?: string; width: number; type?: 'primary' | 'backdrop' }): Promise<IpcResult<string>>;
+  };
+  meta: {
+    /** Null is a normal answer: the title simply has no Rotten Tomatoes page we can find. */
+    rt(imdb: string): Promise<IpcResult<RtScores | null>>;
   };
   player: {
     play(itemId: string): Promise<IpcResult<boolean>>;

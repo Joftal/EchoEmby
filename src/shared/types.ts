@@ -72,6 +72,15 @@ export interface Person {
   imageTag?: string;
 }
 
+/** Rotten Tomatoes numbers for one title, cached by its IMDb id. */
+export interface RtScores {
+  tomatometer?: number;
+  tomatoCertified?: boolean;
+  popcorn?: number;
+  whereToWatch?: string[];
+  fetchedAt: number;
+}
+
 export interface LibraryRow {
   key: string;
   title: string;
