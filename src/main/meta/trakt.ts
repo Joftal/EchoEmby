@@ -4,10 +4,8 @@ import type { TraktScores } from '../../shared/types';
 import { sourceCache } from './cache';
 
 /**
- * Trakt is the only one of these sources that needs a key, and the only one that reports how many
- * people actually hold a title in their collection — the ratings themselves all land within a few
- * tenths of TMDB's. Its API takes an IMDb id wherever it takes its own, so no reverse lookup is
- * needed: one request per number, both keyed by the id the Emby server already gives us.
+ * Trakt is the one source here that needs a key. Its API takes an IMDb id wherever it takes its own, so
+ * no reverse lookup is needed: one request, keyed by the id the Emby server already gives us.
  */
 
 const DAY = 86_400_000;
@@ -51,17 +49,13 @@ export async function traktScores(kind: 'movie' | 'tv', imdb: string): Promise<T
   if (hit.status === 'fresh') return hit.value;
 
   const base = `${API}/${kind === 'movie' ? 'movies' : 'shows'}/${imdb}`;
-  const [rating, stats] = await Promise.all([ask(`${base}/ratings`, key), ask(`${base}/stats`, key)]);
-  if (!rating || !stats) return null;
+  const rating = await ask(`${base}/ratings`, key);
+  if (!rating) return null;
 
   const out: TraktScores = { fetchedAt: Date.now() };
   const r = num(rating.rating) ?? num(rating.value);
   if (r !== undefined) out.rating = Math.round(r * 100) / 100;
-  const votes = num(rating.votes) ?? num(stats.votes);
-  if (votes !== undefined) out.votes = votes;
-  const watchers = num(stats.watchers);
-  if (watchers !== undefined) out.watchers = watchers;
-  if (out.rating === undefined && out.watchers === undefined) {
+  if (out.rating === undefined) {
     cache.markEmpty(id);
     return null;
   }

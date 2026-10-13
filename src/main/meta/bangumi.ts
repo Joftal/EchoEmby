@@ -96,7 +96,6 @@ export async function bangumiScore(title: string): Promise<BangumiScore | null> 
   }
   const out: BangumiScore = {
     score,
-    total: found.rating?.total ?? 0,
     subjectId: found.id,
     name: found.name_cn || found.name || title,
     fetchedAt: Date.now(),

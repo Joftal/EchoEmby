@@ -103,20 +103,16 @@ export interface ImdbRating {
   fetchedAt: number;
 }
 
-/** Trakt's audience numbers, cached by `kind:imdbId`. The rating lands close to TMDB's; `watchers` is
- *  the number no other source here gives us. */
+/** Trakt's audience average for a title we address by its IMDb id, cached by `kind:imdbId`. */
 export interface TraktScores {
   rating?: number;
-  votes?: number;
-  watchers?: number;
   fetchedAt: number;
 }
 
-/** Bangumi's 10-point average for a CJK title, cached by the searched name. */
+/** Bangumi's 10-point average for a CJK title, cached by the searched name. `name` is the subject that
+ *  was matched, which is not always the title we searched for (a series resolves to its first season). */
 export interface BangumiScore {
   score: number;
-  /** How many people rated it, which is what tells an 8.6 out of 40 voters from one out of 36k. */
-  total: number;
   subjectId: number;
   name: string;
   fetchedAt: number;

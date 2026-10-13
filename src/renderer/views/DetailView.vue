@@ -6,6 +6,13 @@ import HScroller from '../components/detail/HScroller.vue';
 import { usePlayerStore } from '../stores/player';
 import { useAppStore } from '../stores/app';
 import { fmtDate, fmtDateTime, fmtRuntime } from '../lib/format';
+import logoTomatoFresh from '../assets/logos/rt-tomato-fresh.svg';
+import logoTomatoRotten from '../assets/logos/rt-tomato-rotten.svg';
+import logoPopcorn from '../assets/logos/rt-popcorn-good.svg';
+import logoImdb from '../assets/logos/imdb.svg';
+import logoTmdb from '../assets/logos/tmdb.svg';
+import logoTrakt from '../assets/logos/trakt.svg';
+import logoBangumi from '../assets/logos/bangumi.png';
 
 const props = defineProps<{ id: string }>();
 const router = useRouter();
@@ -70,36 +77,37 @@ const crew = computed<CrewRow[]>(() => {
 const overviewText = computed(() => item.value?.overview || tmdb.value?.overviewZh || '');
 const certText = computed(() => item.value?.officialRating || tmdb.value?.cert || '');
 
-/** These counts are colour, not figures to read, so they arrive rounded to 万. */
-const fmtCount = (n: number): string => (n >= 10000 ? `${(n / 10000).toFixed(1).replace(/\.0$/, '')}万` : String(n));
-
 interface ScoreBadge {
   k: string;
+  logo: string;
   text: string;
   hint: string;
 }
 
-/** One pill per platform that answered for this title. Each names itself because the numbers disagree
- *  with each other by more than a rounding error, and an unlabelled 8.6 asks which one it is. */
+/** One pill per platform that answered for this title: the platform's own mark, then its number. The
+ *  mark carries the identity, so the counts that used to hang off these numbers — raters, in-watch
+ *  lists, RT's Certified Fresh word — are gone from the strip. The tomato follows RT's own rule and
+ *  turns red under 60%, since a green splat beside a 22% would be a lie. */
 const scoreBadges = computed<ScoreBadge[]>(() => {
   const out: ScoreBadge[] = [];
-  if (imdbScore.value) out.push({ k: 'imdb', text: `IMDb ${imdbScore.value.rating.toFixed(1)}`, hint: 'IMDb 评分' });
-  if (tmdb.value?.voteAverage) out.push({ k: 'tmdb', text: `TMDB ${tmdb.value.voteAverage.toFixed(1)}`, hint: 'TMDB 评分' });
-  if (trakt.value?.rating != null) {
-    const w = trakt.value.watchers;
+  const tomato = rt.value?.tomatometer;
+  if (tomato != null)
     out.push({
-      k: 'trakt',
-      text: `Trakt ${trakt.value.rating.toFixed(1)}${w ? ` · ${fmtCount(w)}` : ''}`,
-      hint: w ? `Trakt 均分，${w.toLocaleString('zh-CN')} 人标记在看过` : 'Trakt 均分',
+      k: 'tomato',
+      logo: tomato >= 60 ? logoTomatoFresh : logoTomatoRotten,
+      text: `${tomato}%`,
+      hint: `烂番茄 影评人 ${tomato}%${rt.value?.tomatoCertified ? '（Certified Fresh）' : ''}`,
     });
-  }
-  if (bgm.value) {
-    out.push({
-      k: 'bgm',
-      text: `Bangumi ${bgm.value.score.toFixed(1)} · ${fmtCount(bgm.value.total)}`,
-      hint: `Bangumi《${bgm.value.name}》，${bgm.value.total.toLocaleString('zh-CN')} 人评分`,
-    });
-  }
+  if (rt.value?.popcorn != null)
+    out.push({ k: 'corn', logo: logoPopcorn, text: `${rt.value.popcorn}%`, hint: `烂番茄 观众 ${rt.value.popcorn}%` });
+  if (imdbScore.value)
+    out.push({ k: 'imdb', logo: logoImdb, text: imdbScore.value.rating.toFixed(1), hint: 'IMDb 评分' });
+  if (tmdb.value?.voteAverage)
+    out.push({ k: 'tmdb', logo: logoTmdb, text: tmdb.value.voteAverage.toFixed(1), hint: 'TMDB 评分' });
+  if (trakt.value?.rating != null)
+    out.push({ k: 'trakt', logo: logoTrakt, text: trakt.value.rating.toFixed(1), hint: 'Trakt 评分' });
+  if (bgm.value)
+    out.push({ k: 'bgm', logo: logoBangumi, text: bgm.value.score.toFixed(1), hint: `Bangumi《${bgm.value.name}》` });
   return out;
 });
 
@@ -328,9 +336,9 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
               <p v-if="item.tagline" class="tagline">{{ item.tagline }}</p>
               <div class="line">{{ metaLine }}</div>
               <div class="badges">
-                <span v-if="rt?.tomatometer != null" class="b tomato">{{ rt.tomatoCertified ? '认证 ' : '' }}🍅 {{ rt.tomatometer }}%</span>
-                <span v-if="rt?.popcorn != null" class="b corn">🍿 {{ rt.popcorn }}%</span>
-                <span v-for="s in scoreBadges" :key="s.k" class="b" :class="s.k" :title="s.hint">{{ s.text }}</span>
+                <span v-for="s in scoreBadges" :key="s.k" class="b score" :title="s.hint">
+                  <img class="lg" :src="s.logo" alt="" /><i>{{ s.text }}</i>
+                </span>
                 <span v-if="!scoreBadges.length && item.communityRating" class="b rate">★ {{ item.communityRating.toFixed(1) }}</span>
                 <span v-if="certText" class="b cert">{{ certText }}</span>
                 <span v-if="csm?.minAge" class="b cert">{{ csm.minAge }}+</span>
@@ -599,14 +607,12 @@ h1 {
   backdrop-filter: blur(6px);
 }
 .rate { color: #ffe08a; }
-.tomato { color: #ff8a7a; }
-.corn { color: #ffcf70; }
-/* Each platform keeps its own brand hue so a row of four numbers still reads as four sources. All
-   four sit above 0.6 relative luminance, which is what the plate needs over art this bright. */
-.imdb { color: #f5c518; }
-.tmdb { color: #5fd0ff; }
-.trakt { color: #d6a6ff; }
-.bgm { color: #79e0a6; }
+/* The mark carries the brand, so the number stays plain white and only has to be readable. Everything
+   is aligned by height, not width: IMDb's boxed wordmark and TMDB's symbol stay near-square, Bangumi's
+   wordmark is the one that stretches wide, because that is the only shape it ships in. */
+.b.score { gap: 7px; }
+.lg { height: 17px; width: auto; display: block; }
+.b.score i { font-style: normal; color: #fff; }
 .cert { color: rgba(255, 255, 255, 0.9); }
 .overview {
   font-size: 14px;
