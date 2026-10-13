@@ -90,17 +90,6 @@ const parse = (html: string, fetchedAt: number): RtScores | null => {
   if (tomato !== undefined) out.tomatometer = tomato;
   if (sc.criticsScore?.certified) out.tomatoCertified = true;
   if (popcorn !== undefined) out.popcorn = popcorn;
-  // The first affiliate is always RT's own Fandango CTA whose text is a verb ("Stream", "Buy"),
-  // so it is dropped and what is left are the services.
-  const watch = [
-    ...new Set<string>(
-      ((jsonBlock(html, 'where-to-watch-json')?.affiliates || []) as any[])
-        .filter(a => a?.icon !== 'fandango')
-        .map(a => String(a?.text || '').trim())
-        .filter(Boolean),
-    ),
-  ];
-  if (watch.length) out.whereToWatch = watch.slice(0, 5);
   return out.tomatometer === undefined && out.popcorn === undefined ? null : out;
 };
 

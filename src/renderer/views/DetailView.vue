@@ -280,7 +280,6 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
           :style="{ opacity: Math.max(0, 1 - scroll / 260), transform: `translate3d(0, ${Math.round(scroll * 0.4)}px, 0)` }"
         >
           <div class="copy">
-            <div v-if="heroPoster" class="art"><img :src="heroPoster" alt="" /></div>
             <div class="text">
               <h1>{{ item.name }}</h1>
               <p v-if="item.tagline" class="tagline">{{ item.tagline }}</p>
@@ -306,8 +305,8 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
                   <svg viewBox="0 0 24 24" width="20" height="20"><path :d="fav ? 'M12 21l-1.5-1.3C5.4 15 2 11.9 2 8.2 2 5.4 4.2 3.2 7 3.2c1.6 0 3.1.7 4 1.9.9-1.2 2.4-1.9 4-1.9 2.8 0 5 2.2 5 5 0 3.7-3.4 6.8-8.5 11.5L12 21z' : 'M12 21l-1.5-1.3C5.4 15 2 11.9 2 8.2 2 5.4 4.2 3.2 7 3.2c1.6 0 3.1.7 4 1.9.9-1.2 2.4-1.9 4-1.9 2.8 0 5 2.2 5 5 0 3.7-3.4 6.8-8.5 11.5L12 21zM7 5.2c-1.7 0-3 1.3-3 3 0 3 3 5.9 8 10.2 5-4.3 8-7.2 8-10.2 0-1.7-1.3-3-3-3-1.3 0-2.5.8-3 2h-4c-.5-1.2-1.7-2-3-2z'" fill="currentColor" /></svg>
                 </button>
               </div>
-              <p v-if="rt?.whereToWatch" class="watch"><span class="k">哪里能看</span>{{ rt.whereToWatch.join(' · ') }}</p>
             </div>
+            <div v-if="heroPoster" class="art"><img :src="heroPoster" alt="" /></div>
           </div>
         </div>
       </section>
@@ -461,7 +460,9 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
 }
 .back {
   position: absolute;
-  top: calc(var(--titlebar-h) + 10px);
+  /* Centred on the rail's search button: rail top 16 + its 8 padding + half the 30px button = 39px,
+     so a 36px disc sits at 21px. It used to hang off --titlebar-h, one row below that button. */
+  top: 21px;
   left: calc(var(--nav-w) + 18px);
   z-index: 4;
   width: 36px;
@@ -529,12 +530,14 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
 .copy {
   display: flex;
   align-items: flex-end;
-  gap: 20px;
-  max-width: 820px;
+  justify-content: space-between;
+  gap: 32px;
   color: #fff;
 }
 .art {
-  width: 104px;
+  /* Bigger and pushed to the hero's right edge so it answers the wide backdrop instead of crowding
+     the synopsis. */
+  width: 148px;
   flex: none;
   aspect-ratio: 2 / 3;
   border-radius: var(--radius);
@@ -621,8 +624,6 @@ h1 {
 }
 .iconb:hover { transform: translateY(-1px); background: rgba(255, 255, 255, 0.26); }
 .iconb.on { color: #ff5a6a; }
-.watch { margin: 14px 0 0; font-size: 13px; color: rgba(255, 255, 255, 0.88); }
-.watch .k { margin-right: 10px; font-weight: 600; color: rgba(255, 255, 255, 0.62); }
 
 /* Mirrors the lobby's .flow: the bands clip their art here (under the rail) while the plain blocks
    inset to the content line. Children that need the line add their own --gutter padding. */

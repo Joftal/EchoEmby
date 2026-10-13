@@ -94,7 +94,6 @@ export interface RtScores {
   tomatometer?: number;
   tomatoCertified?: boolean;
   popcorn?: number;
-  whereToWatch?: string[];
   fetchedAt: number;
 }
 
