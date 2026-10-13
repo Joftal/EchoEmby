@@ -2,7 +2,7 @@ import { app, net } from 'electron';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import * as config from '../config';
-import type { TmdbMeta, TmdbStills } from '../../shared/types';
+import type { TmdbMeta, TmdbSimilar, TmdbStills } from '../../shared/types';
 
 /**
  * TMDB is the outside source with a real API and a Chinese locale, so it fills the four gaps Emby
@@ -15,6 +15,8 @@ import type { TmdbMeta, TmdbStills } from '../../shared/types';
 const DAY = 86_400_000;
 const META_TTL = 30 * DAY;
 const STILLS_TTL = 14 * DAY;
+/** A recommendation list drifts slowly; a week keeps it fresh without a request on every open. */
+const SIMILAR_TTL = 7 * DAY;
 /** A miss is usually TMDB having no record for that id; asking again in a few days is cheap. */
 const MISS_TTL = 3 * DAY;
 
@@ -27,6 +29,10 @@ interface Store {
   meta: Record<string, MetaEntry>;
   /** key = `tv:${tmdbId}/${season}` */
   stills: Record<string, StillsEntry>;
+  /** key = `${kind}:${tmdbId}`; TMDB `/similar`, capped list of poster-only rows. */
+  similar: Record<string, { value: TmdbSimilar[]; fetchedAt: number }>;
+  /** key = `${kind}:${tmdbId}`; image.tmdb.org backdrop paths for the 剧照 strip. */
+  images: Record<string, { value: string[]; fetchedAt: number }>;
 }
 
 const file = () => path.join(app.getPath('userData'), 'tmdb.json');
@@ -36,9 +42,9 @@ const load = (): Store => {
   if (store) return store;
   let next: Store;
   try {
-    next = { meta: {}, stills: {}, ...JSON.parse(readFileSync(file(), 'utf8')) };
+    next = { meta: {}, stills: {}, similar: {}, images: {}, ...JSON.parse(readFileSync(file(), 'utf8')) };
   } catch {
-    next = { meta: {}, stills: {} };
+    next = { meta: {}, stills: {}, similar: {}, images: {} };
   }
   store = next;
   return next;
@@ -224,4 +230,80 @@ export async function tmdbSeasonStills(tmdbId: string, season: number): Promise<
     persist();
   }
   return { value: next, any: Object.keys(next).length > 0 };
+}
+
+const SIMILAR_CAP = 12;
+
+/** The `/similar` list for one title, as poster-only rows. These cannot be resolved back into the
+ *  library (they are outside ids), so the strip is a read-only "more like this", never a link. */
+export async function tmdbSimilar(kind: Kind, tmdbId: string): Promise<TmdbSimilar[]> {
+  if (!/^\d{1,8}$/.test(tmdbId)) return [];
+  const token = tmdbToken();
+  if (!token) return [];
+  const key = `${kind}:${tmdbId}`;
+  const s = load();
+  const hit = s.similar[key];
+  if (hit && Date.now() - hit.fetchedAt < SIMILAR_TTL) return hit.value;
+
+  const { json, answered } = await fetchJson<any>(
+    `https://api.themoviedb.org/3/${kind}/${tmdbId}/similar?language=zh-CN`,
+    token,
+  );
+  // No answer or an empty list both keep the previous value (or nothing); never cache a transport miss.
+  if (!answered) return hit?.value || [];
+  const results: any[] = Array.isArray(json?.results) ? json.results : [];
+  const out: TmdbSimilar[] = [];
+  for (const r of results) {
+    const id = num(r?.id);
+    if (id === undefined) continue;
+    const v = num(r?.vote_average);
+    const date = String(r?.release_date || r?.first_air_date || '');
+    out.push({
+      tmdbId: id,
+      title: String(r?.title || r?.name || '').trim(),
+      posterPath: typeof r?.poster_path === 'string' ? r.poster_path : undefined,
+      year: /^\d{4}/.test(date) ? date.slice(0, 4) : undefined,
+      voteAverage: v !== undefined ? Math.round(v * 10) / 10 : undefined,
+    });
+    if (out.length >= SIMILAR_CAP) break;
+  }
+  const prev = hit?.value;
+  if (!prev || prev.length !== out.length || prev.some((p, i) => p.tmdbId !== out[i].tmdbId)) {
+    s.similar[key] = { value: out, fetchedAt: Date.now() };
+    persist();
+  }
+  return out;
+}
+
+const IMAGES_CAP = 10;
+
+/** Backdrop image paths for the 剧照 strip, best-voted first. `include_image_language=en,null` is
+ *  required: without it TMDB filters to the `language` locale's art and this library's Asian titles
+ *  return zero backdrops. */
+export async function tmdbImages(kind: Kind, tmdbId: string): Promise<string[]> {
+  if (!/^\d{1,8}$/.test(tmdbId)) return [];
+  const token = tmdbToken();
+  if (!token) return [];
+  const key = `${kind}:${tmdbId}`;
+  const s = load();
+  const hit = s.images[key];
+  if (hit && Date.now() - hit.fetchedAt < SIMILAR_TTL) return hit.value;
+
+  const { json, answered } = await fetchJson<any>(
+    `https://api.themoviedb.org/3/${kind}/${tmdbId}/images?include_image_language=en,null`,
+    token,
+  );
+  if (!answered) return hit?.value || [];
+  const list: any[] = Array.isArray(json?.backdrops) ? json.backdrops : [];
+  const out = list
+    .filter(b => typeof b?.file_path === 'string')
+    .sort((a, b) => (b.vote_count || 0) - (a.vote_count || 0))
+    .slice(0, IMAGES_CAP)
+    .map(b => String(b.file_path));
+  const prev = hit?.value;
+  if (!prev || prev.length !== out.length || prev.some((p, i) => p !== out[i])) {
+    s.images[key] = { value: out, fetchedAt: Date.now() };
+    persist();
+  }
+  return out;
 }

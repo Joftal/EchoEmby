@@ -1,18 +1,15 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import MediaCard from '../components/home/MediaCard.vue';
-import type { LibraryItem, RtScores, TmdbMeta, TmdbStills } from '../../shared/types';
+import type { CsmGuide, LibraryItem, MediaSourceInfo, MediaStreamInfo, RtScores, TmdbMeta, TmdbSimilar, TmdbStills } from '../../shared/types';
 import { usePlayerStore } from '../stores/player';
 import { useAppStore } from '../stores/app';
-import { fmtDate, fmtRuntime } from '../lib/format';
+import { fmtDate, fmtDateTime, fmtRuntime } from '../lib/format';
 
 const props = defineProps<{ id: string }>();
 const router = useRouter();
 const player = usePlayerStore();
 const app = useAppStore();
-
-const posterSrc = ref('');
 
 const item = ref<LibraryItem | null>(null);
 const seasons = ref<LibraryItem[]>([]);
@@ -21,9 +18,14 @@ const seasonId = ref('');
 const loading = ref(true);
 const error = ref('');
 const playErr = ref('');
+const favBusy = ref(false);
+
 const rt = ref<RtScores | null>(null);
 const tmdb = ref<TmdbMeta | null>(null);
+const csm = ref<CsmGuide | null>(null);
+const similar = ref<TmdbSimilar[]>([]);
 const stills = ref<TmdbStills>({});
+const backdrops = ref<string[]>([]);
 
 const isSeries = computed(() => item.value?.type === 'Series');
 const isSeason = computed(() => item.value?.type === 'Season');
@@ -34,56 +36,65 @@ const tmdbKind = computed<'movie' | 'tv' | null>(() => {
   return null;
 });
 
-/** Emby sends craft types before the cast, and the field names are the server's, not ours. */
 const CRAFT: Array<[string, string]> = [
   ['Director', '导演'],
   ['Writer', '编剧'],
   ['Producer', '制片'],
 ];
-
 const people = computed(() => item.value?.people || []);
 const craft = computed(() =>
   CRAFT.map(([type, label]) => ({
     label,
-    names: people.value
-      .filter(p => p.type === type)
-      .slice(0, 3)
-      .map(p => p.name)
-      .join(' / '),
+    names: people.value.filter(p => p.type === type).slice(0, 3).map(p => p.name).join(' / '),
   })).filter(c => c.names),
 );
-const cast = computed(() => people.value.filter(p => p.type === 'Actor').slice(0, 14));
+const cast = computed(() => people.value.filter(p => p.type === 'Actor').slice(0, 18));
 
-/** TMDB only shows through where the server left a hole; nothing overrides server data. */
 const hasServerWriter = computed(() => people.value.some(p => p.type === 'Writer'));
 const writerFallback = computed(() => (!hasServerWriter.value && tmdb.value?.writers?.length ? tmdb.value.writers.join(' / ') : ''));
 const overviewText = computed(() => item.value?.overview || tmdb.value?.overviewZh || '');
-const rating = computed(() => {
-  const r = item.value?.communityRating ?? tmdb.value?.voteAverage;
-  return r && r >= 1 ? r.toFixed(1) : '';
-});
 const certText = computed(() => item.value?.officialRating || tmdb.value?.cert || '');
 
-/** image.tmdb.org answers directly on this machine (the API host needs the system proxy), and w500
- *  is the smallest TMDB size that comfortably covers a 286px card at 1.25 DPR. */
+const source = computed<MediaSourceInfo | undefined>(() => item.value?.sources?.[0]);
+const vstream = computed(() => source.value?.video);
+const astream = computed<MediaStreamInfo | undefined>(() => {
+  const a = source.value?.audio || [];
+  return a.find(x => x.isDefault) || a[0];
+});
+
+/** image.tmdb.org answers directly on this machine (the API host needs the system proxy). */
 const stillUrl = (ep: number | undefined): string =>
   ep != null && stills.value[ep] ? `https://image.tmdb.org/t/p/w500${stills.value[ep]}` : '';
+const posterUrl = (p?: string): string => (p ? `https://image.tmdb.org/t/p/w342${p}` : '');
+const backdropUrl = (p: string): string => `https://image.tmdb.org/t/p/w780${p}`;
 
-/** Person portraits come from the same image route as item art, keyed by the person's own id. */
 const faces = ref<Record<string, string>>({});
 watch(
   cast,
   list => {
     for (const p of list) {
       if (!p.imageTag || faces.value[p.id]) continue;
-      void app
-        .imageUrl({ id: p.id, primaryImageTag: p.imageTag }, 110)
-        .then(url => (faces.value[p.id] = url));
+      void app.imageUrl({ id: p.id, primaryImageTag: p.imageTag }, 110).then(url => (faces.value[p.id] = url));
     }
   },
   { immediate: true },
 );
-// A Series or a Season has no media of its own: PlaybackInfo on either 500s.
+
+const epArt = ref<Record<string, string>>({});
+watch(
+  episodes,
+  list => {
+    // Only the server URL is cached; the TMDB still arrives later so the template reads it at render time.
+    for (const e of list) {
+      if (!e.primaryImageTag || epArt.value[e.id]) continue;
+      void app.imageUrl({ id: e.id, primaryImageTag: e.primaryImageTag }, 520).then(url => (epArt.value[e.id] = url));
+    }
+  },
+  { immediate: true },
+);
+
+const heroBackdrop = ref('');
+
 const playableId = computed(() => {
   if (!item.value) return '';
   if (isSeries.value || isSeason.value) {
@@ -91,9 +102,25 @@ const playableId = computed(() => {
   }
   return item.value.id;
 });
+const playTargetLabel = computed(() => {
+  if (!isSeries.value && !isSeason.value) return '';
+  const e = episodes.value.find(x => x.userData?.playedPercentage) || episodes.value[0];
+  if (!e) return '';
+  const s = e.parentIndexNumber ?? seasons.value.find(x => x.id === seasonId.value)?.indexNumber;
+  return s != null ? `第 ${s} 季 · ${e.indexNumber} 集` : `第 ${e.indexNumber} 集`;
+});
 
-const genres = computed(() => (item.value?.genres || []).join(' / '));
+const genres = computed(() => item.value?.genres || []);
 const premiered = computed(() => fmtDate(item.value?.premiereDate) || String(item.value?.productionYear || ''));
+const metaLine = computed(() => {
+  const parts = [premiered.value];
+  if (item.value?.childCount) parts.push(`${item.value.childCount} 集`);
+  const rt = fmtRuntime(item.value?.runTimeTicks);
+  if (rt) parts.push(rt);
+  return parts.filter(Boolean).join(' · ');
+});
+
+const fav = computed(() => !!item.value?.userData?.isFavorite);
 
 async function loadEpisodes(sid: string, seriesId = props.id) {
   seasonId.value = sid;
@@ -102,21 +129,15 @@ async function loadEpisodes(sid: string, seriesId = props.id) {
   if (!sid) return;
   const r = await window.echoemby.emby.episodes({ seriesId, seasonId: sid });
   if (r.ok) episodes.value = r.data || [];
-  // TMDB stills only matter when there is something the server could not art, so the fetch is
-  // fire-and-forget: the cards swap in whenever it answers.
   const seasonNumber = seasons.value.find(x => x.id === sid)?.indexNumber ?? item.value?.indexNumber;
   const tmdbId = item.value?.providers?.tmdb || (isSeason.value ? await fetchParentTmdbId(seriesId) : '');
   if (tmdbId && Number.isInteger(seasonNumber)) {
-    void window.echoemby.meta
-      .tmdbStills({ tmdbId, season: seasonNumber as number })
-      .then(x => {
-        if (x.ok && x.data && seasonId.value === sid) stills.value = x.data.value;
-      });
+    void window.echoemby.meta.tmdbStills({ tmdbId, season: seasonNumber as number }).then(x => {
+      if (x.ok && x.data && seasonId.value === sid) stills.value = x.data.value;
+    });
   }
 }
 
-/** A Season item carries the Series' own providers only when the scanner wrote them through; if not,
- *  we look them up on the parent, which is a single server round trip and one cache entry. */
 const parentTmdbCache = new Map<string, string>();
 async function fetchParentTmdbId(seriesId: string): Promise<string> {
   if (!seriesId) return '';
@@ -135,7 +156,11 @@ watch(
     error.value = '';
     rt.value = null;
     tmdb.value = null;
+    csm.value = null;
+    similar.value = [];
     stills.value = {};
+    backdrops.value = [];
+    heroBackdrop.value = '';
     item.value = null;
     seasons.value = [];
     episodes.value = [];
@@ -145,30 +170,39 @@ watch(
       error.value = r.error || '打不开这一项';
       return;
     }
-    item.value = r.data;
-    // Outside sources arrive on their own clock: a Wikidata round trip plus an RT page is far slower
-    // than the server, and the badges simply appear when it answers.
-    const imdb = r.data.providers?.imdb;
-    if (imdb) {
-      void window.echoemby.meta.rt(imdb).then(x => {
-        if (props.id === id) rt.value = x.ok ? x.data || null : null;
-      });
+    const it = r.data;
+    item.value = it;
+
+    const tag = it.backdropImageTag || it.primaryImageTag;
+    heroBackdrop.value = tag ? await app.backdropUrl({ id: it.id, backdropImageTag: it.backdropImageTag }, 1600) : '';
+    if (!it.backdropImageTag && it.primaryImageTag) {
+      // No wide art on the server: reuse the poster as a soft backdrop rather than a flat gradient.
+      heroBackdrop.value = await app.imageUrl({ id: it.id, primaryImageTag: it.primaryImageTag }, 1000);
     }
+
+    const imdb = it.providers?.imdb;
+    if (imdb) void window.echoemby.meta.rt(imdb).then(x => (props.id === id ? (rt.value = x.ok ? x.data || null : null) : undefined));
+
     const kind = tmdbKind.value;
-    const tmdbId = r.data.providers?.tmdb;
+    const tmdbId = it.providers?.tmdb;
     if (kind && tmdbId) {
-      void window.echoemby.meta.tmdb({ kind, tmdbId }).then(x => {
-        if (props.id === id) tmdb.value = x.ok ? x.data || null : null;
-      });
+      void window.echoemby.meta.tmdb({ kind, tmdbId }).then(x => (props.id === id ? (tmdb.value = x.ok ? x.data || null : null) : undefined));
+      void window.echoemby.meta.tmdbSimilar({ kind, tmdbId }).then(x => (props.id === id ? (similar.value = x.ok ? x.data || [] : []) : undefined));
+      void window.echoemby.meta.tmdbImages({ kind, tmdbId }).then(x => (props.id === id ? (backdrops.value = x.ok ? x.data || [] : []) : undefined));
     }
-    posterSrc.value = r.data.primaryImageTag ? await app.imageUrl({ id: r.data.id, primaryImageTag: r.data.primaryImageTag }, 460) : '';
-    if (r.data.type === 'Series') {
+    // CSM reverse-looks-up by title slug, so it needs the Latin original title when we have one.
+    const csmTitle = it.originalTitle || it.name;
+    if (kind && csmTitle) {
+      void window.echoemby.meta.csm({ kind, title: csmTitle }).then(x => (props.id === id ? (csm.value = x.ok ? x.data || null : null) : undefined));
+    }
+
+    if (it.type === 'Series') {
       const s = await window.echoemby.emby.seasons(id);
       seasons.value = s.ok ? s.data || [] : [];
       const first = seasons.value.find(x => x.childCount) || seasons.value[0];
       if (first) await loadEpisodes(first.id);
-    } else if (r.data.type === 'Season') {
-      await loadEpisodes(r.data.id, r.data.parentId || '');
+    } else if (it.type === 'Season') {
+      await loadEpisodes(it.id, it.parentId || '');
     }
   },
   { immediate: true },
@@ -183,94 +217,203 @@ async function play(id = playableId.value) {
   const ok = await player.play(id);
   if (!ok) playErr.value = player.error;
 }
+
+async function toggleFav() {
+  const it = item.value;
+  if (!it || favBusy.value) return;
+  favBusy.value = true;
+  const next = !fav.value;
+  const r = await window.echoemby.emby.favorite({ id: it.id, on: next });
+  if (r.ok && it.userData) it.userData.isFavorite = next;
+  favBusy.value = false;
+}
+
+const LEVEL_WORD = ['无', '极少', '轻微', '中等', '较多', '严重'];
+const fmtMbps = (n?: number): string => (n ? `${(n / 1e6).toFixed(1)} Mbps` : '');
+const fmtGB = (n?: number): string => (n ? `${(n / 1e9).toFixed(2)} GB` : '');
+const fmtRes = (v?: MediaStreamInfo): string => (v?.width && v?.height ? `${v.width}×${v.height}` : '');
+const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? String(n) : '');
 </script>
 
 <template>
   <div class="page">
     <button class="back" @click="router.back()">←</button>
     <p v-if="playErr" class="err banner">{{ playErr }}</p>
-    <p v-if="loading" class="muted">加载中…</p>
-    <p v-else-if="error" class="err">{{ error }}</p>
+    <p v-if="loading" class="muted pad">加载中…</p>
+    <p v-else-if="error" class="err pad">{{ error }}</p>
 
     <template v-else-if="item">
       <section class="hero">
-        <div class="poster">
-          <img v-if="posterSrc" :src="posterSrc" alt="" />
-          <div v-else class="nopost">{{ item.name.slice(0, 1) }}</div>
+        <div class="bg">
+          <img v-if="heroBackdrop" :src="heroBackdrop" alt="" />
         </div>
-        <div class="meta">
-          <h1>{{ item.name }}</h1>
-          <div class="line">
-            <span v-if="item.seriesName">{{ item.seriesName }}</span>
-            <span v-if="genres">{{ genres }}</span>
-            <span v-if="premiered">{{ premiered }}</span>
-            <span>{{ fmtRuntime(item.runTimeTicks) }}</span>
-            <span v-if="item.childCount">{{ item.childCount }} 集</span>
-          </div>
-          <div v-if="rating || certText || item.studio || rt" class="badges">
-            <span v-if="rating" class="b rate">★ {{ rating }}</span>
-            <span v-if="rt?.tomatometer != null" class="b tomato">{{ rt.tomatoCertified ? '认证番茄' : '番茄' }} {{ rt.tomatometer }}</span>
-            <span v-if="rt?.popcorn != null" class="b corn">爆米花 {{ rt.popcorn }}</span>
-            <span v-if="certText" class="b cert">{{ certText }}</span>
-            <span v-if="item.studio" class="b studio">{{ item.studio }}</span>
-          </div>
-          <p v-if="rt?.whereToWatch" class="watch">
-            <span class="k">哪里能看</span>{{ rt.whereToWatch.join(' · ') }}
-          </p>
-          <p class="overview">{{ overviewText || '暂无简介。' }}</p>
-          <div class="actions">
-            <button class="play" :disabled="!playableId || player.busy" @click="play()">
-              <span class="tri"></span>{{ player.busy ? '准备中…' : item.userData?.playedPercentage ? '继续播放' : '播放' }}
-            </button>
-            <span v-if="player.busy" class="muted">正在协商播放…</span>
-            <span v-else-if="player.state.playMethod" class="pm">{{ player.state.playMethod }}</span>
-          </div>
-        </div>
-      </section>
-
-      <section v-if="craft.length || writerFallback || cast.length" class="block">
-        <h2>演职员</h2>
-        <p v-for="c in craft" :key="c.label" class="credit">
-          <span class="k">{{ c.label }}</span>{{ c.names }}
-        </p>
-        <p v-if="writerFallback" class="credit">
-          <span class="k">编剧</span>{{ writerFallback }}
-        </p>
-        <div v-if="cast.length" class="people">
-          <div v-for="p in cast" :key="p.id" class="person">
-            <div class="face">
-              <img v-if="faces[p.id]" :src="faces[p.id]" alt="" />
-              <span v-else class="ini">{{ p.name.slice(0, 1) }}</span>
+        <div class="scrim"></div>
+        <div class="hero-in">
+          <div class="copy">
+            <h1>{{ item.name }}</h1>
+            <p v-if="item.tagline" class="tagline">{{ item.tagline }}</p>
+            <div class="line">{{ metaLine }}</div>
+            <div class="badges">
+              <span v-if="rt?.tomatometer != null" class="b tomato">{{ rt.tomatoCertified ? '认证 ' : '' }}🍅 {{ rt.tomatometer }}%</span>
+              <span v-if="rt?.popcorn != null" class="b corn">🍿 {{ rt.popcorn }}%</span>
+              <span v-if="item.communityRating" class="b rate">★ {{ item.communityRating.toFixed(1) }}</span>
+              <span v-else-if="tmdb?.voteAverage" class="b rate">★ {{ tmdb.voteAverage.toFixed(1) }}</span>
+              <span v-if="certText" class="b cert">{{ certText }}</span>
+              <span v-if="csm?.minAge" class="b cert">{{ csm.minAge }}+</span>
             </div>
-            <p class="pn">{{ p.name }}</p>
-            <p v-if="p.role" class="pr">{{ p.role }}</p>
+            <p class="overview">{{ overviewText || '暂无简介。' }}</p>
+            <div class="actions">
+              <button class="play" :disabled="!playableId || player.busy" @click="play()">
+                <span class="tri"></span>
+                <span class="ptxt">
+                  <b>{{ player.busy ? '准备中…' : item.userData?.playedPercentage ? '继续播放' : '播放' }}</b>
+                  <i v-if="playTargetLabel">{{ playTargetLabel }}</i>
+                </span>
+              </button>
+              <button class="iconb" :class="{ on: fav }" :disabled="favBusy" :title="fav ? '已收藏' : '收藏'" @click="toggleFav">
+                <svg viewBox="0 0 24 24" width="20" height="20"><path :d="fav ? 'M12 21l-1.5-1.3C5.4 15 2 11.9 2 8.2 2 5.4 4.2 3.2 7 3.2c1.6 0 3.1.7 4 1.9.9-1.2 2.4-1.9 4-1.9 2.8 0 5 2.2 5 5 0 3.7-3.4 6.8-8.5 11.5L12 21z' : 'M12 21l-1.5-1.3C5.4 15 2 11.9 2 8.2 2 5.4 4.2 3.2 7 3.2c1.6 0 3.1.7 4 1.9.9-1.2 2.4-1.9 4-1.9 2.8 0 5 2.2 5 5 0 3.7-3.4 6.8-8.5 11.5L12 21zM7 5.2c-1.7 0-3 1.3-3 3 0 3 3 5.9 8 10.2 5-4.3 8-7.2 8-10.2 0-1.7-1.3-3-3-3-1.3 0-2.5.8-3 2h-4c-.5-1.2-1.7-2-3-2z'" fill="currentColor" /></svg>
+              </button>
+            </div>
+            <p v-if="rt?.whereToWatch" class="watch"><span class="k">哪里能看</span>{{ rt.whereToWatch.join(' · ') }}</p>
           </div>
         </div>
       </section>
 
-      <section v-if="seasons.length" class="block">
-        <h2>季</h2>
-        <div class="seasons">
-          <button v-for="s in seasons" :key="s.id" :class="{ on: s.id === seasonId }" class="sbtn" @click="loadEpisodes(s.id)">
-            {{ s.name }}
-          </button>
-        </div>
-      </section>
+      <div class="body">
+        <section v-if="episodes.length" class="block">
+          <div v-if="seasons.length > 1" class="seasons">
+            <button v-for="s in seasons" :key="s.id" :class="{ on: s.id === seasonId }" class="sbtn" @click="loadEpisodes(s.id)">
+              {{ s.name }}
+            </button>
+          </div>
+          <div class="eps">
+            <button v-for="(e, i) in episodes" :key="e.id" class="epi" :style="{ '--i': i }" @click="play(e.id)">
+              <div class="ethumb">
+                <img v-if="epArt[e.id] || stillUrl(e.indexNumber)" :src="epArt[e.id] || stillUrl(e.indexNumber)" alt="" loading="lazy" decoding="async" />
+                <span v-else class="ph">{{ (e.name || '?').slice(0, 1) }}</span>
+                <span class="disc" role="presentation"><svg viewBox="0 0 24 24" width="18" height="18"><path d="M8 5l12 7-12 7z" fill="currentColor" /></svg></span>
+              </div>
+              <div class="einfo">
+                <p class="emeta">
+                  <span v-if="e.premiereDate">{{ fmtDate(e.premiereDate) }}</span>
+                  <span>第 {{ e.indexNumber }} 集</span>
+                  <span>{{ fmtRuntime(e.runTimeTicks) }}</span>
+                  <span v-if="e.userData?.playedPercentage" class="seen">已观看</span>
+                </p>
+                <p class="etitle">{{ e.name }}</p>
+                <p v-if="e.overview" class="eov">{{ e.overview }}</p>
+              </div>
+            </button>
+          </div>
+        </section>
 
-      <section v-if="episodes.length" class="block">
-        <h2>{{ seasons.find(s => s.id === seasonId)?.name || '剧集' }}</h2>
-        <div class="epi in">
-          <MediaCard
-            v-for="e in episodes"
-            :key="e.id"
-            :item="e"
-            variant="still"
-            :width="286"
-            :fallback-url="stillUrl(e.indexNumber)"
-            @play="play($event.id)"
-          />
-        </div>
-      </section>
+        <section v-if="source" class="block">
+          <h2>播放资源</h2>
+          <div class="src">
+            <div class="srccard">
+              <p class="sc-top">{{ vstream?.range || 'SDR' }}</p>
+              <p class="sc-meta"><span>{{ fmtGB(source.sizeBytes) }}</span><span>{{ fmtMbps(source.bitRate) }}</span></p>
+              <p class="sc-foot"><span class="dot"></span>{{ source.container }}<span class="ok">✓</span></p>
+            </div>
+          </div>
+
+          <div class="tech">
+            <div v-if="vstream" class="tcard">
+              <h3>视频</h3>
+              <dl>
+                <template v-for="row in [
+                  ['标题', vstream.displayTitle || vstream.title],
+                  ['分辨率', fmtRes(vstream)],
+                  ['色彩范围', vstream.range],
+                  ['文件大小', fmtGB(source.sizeBytes)],
+                  ['码率', fmtMbps(source.bitRate)],
+                  ['帧率', vstream.fps ? vstream.fps.toFixed(1) : ''],
+                  ['编码', vstream.codec?.toUpperCase()],
+                  ['位深', vstream.bitDepth ? vstream.bitDepth + ' 位' : ''],
+                  ['色度', vstream.chroma],
+                ] as Array<[string, string]>" :key="row[0]">
+                  <template v-if="row[1]"><dt>{{ row[0] }}</dt><dd>{{ row[1] }}</dd></template>
+                </template>
+              </dl>
+            </div>
+            <div v-if="astream" class="tcard">
+              <h3>音频</h3>
+              <dl>
+                <template v-for="row in [
+                  ['标题', astream.title || astream.displayTitle],
+                  ['语言', astream.lang],
+                  ['编码', astream.codec?.toUpperCase()],
+                  ['声道数', fmtCh(astream.channels)],
+                  ['码率', fmtMbps(astream.bitRate)],
+                  ['采样率', astream.sampleRate ? String(astream.sampleRate) : ''],
+                ] as Array<[string, string]>" :key="row[0]">
+                  <template v-if="row[1]"><dt>{{ row[0] }}</dt><dd>{{ row[1] }}</dd></template>
+                </template>
+                <template v-if="(source.audio.length > 1)">
+                  <dt>音轨</dt><dd>共 {{ source.audio.length }} 条</dd>
+                </template>
+                <template v-if="source.subtitle.length">
+                  <dt>字幕</dt><dd>{{ source.subtitle.map(s => s.lang || '?').join(' / ') }}</dd>
+                </template>
+              </dl>
+            </div>
+          </div>
+          <p v-if="item.dateCreated" class="added">入库时间　{{ fmtDateTime(item.dateCreated) }}</p>
+        </section>
+
+        <section v-if="craft.length || writerFallback || cast.length" class="block">
+          <h2>演职员</h2>
+          <p v-for="c in craft" :key="c.label" class="credit"><span class="k">{{ c.label }}</span>{{ c.names }}</p>
+          <p v-if="writerFallback" class="credit"><span class="k">编剧</span>{{ writerFallback }}</p>
+          <div v-if="cast.length" class="people">
+            <div v-for="p in cast" :key="p.id" class="person">
+              <div class="face">
+                <img v-if="faces[p.id]" :src="faces[p.id]" alt="" loading="lazy" />
+                <span v-else class="ini">{{ p.name.slice(0, 1) }}</span>
+              </div>
+              <p class="pn">{{ p.name }}</p>
+              <p v-if="p.role" class="pr">{{ p.role }}</p>
+            </div>
+          </div>
+        </section>
+
+        <section v-if="csm?.categories.length" class="block">
+          <h2>家长指南</h2>
+          <div class="pg">
+            <div v-for="c in csm.categories" :key="c.key" class="pgi">
+              <p class="pgt">{{ c.label }}</p>
+              <div class="pgdots"><i v-for="n in 5" :key="n" :class="{ on: n <= c.level }"></i></div>
+              <p class="pgw">{{ LEVEL_WORD[c.level] || '' }}</p>
+            </div>
+          </div>
+        </section>
+
+        <section v-if="genres.length" class="block">
+          <h2>分类</h2>
+          <div class="chips"><span v-for="g in genres" :key="g" class="chip">{{ g }}</span></div>
+        </section>
+
+        <section v-if="backdrops.length" class="block">
+          <h2>剧照</h2>
+          <div class="stills">
+            <img v-for="(b, i) in backdrops" :key="i" :src="backdropUrl(b)" alt="" loading="lazy" decoding="async" />
+          </div>
+        </section>
+
+        <section v-if="similar.length" class="block">
+          <h2>相似作品</h2>
+          <div class="sims">
+            <div v-for="s in similar" :key="s.tmdbId" class="sim">
+              <div class="sposter">
+                <img v-if="s.posterPath" :src="posterUrl(s.posterPath)" alt="" loading="lazy" decoding="async" />
+                <span v-else class="ph">{{ s.title.slice(0, 1) }}</span>
+              </div>
+              <p class="stitle">{{ s.title }}</p>
+              <p class="smeta"><span v-if="s.voteAverage" class="srate">★ {{ s.voteAverage.toFixed(1) }}</span><span v-if="s.year">{{ s.year }}</span></p>
+            </div>
+          </div>
+        </section>
+      </div>
     </template>
   </div>
 </template>
@@ -279,204 +422,132 @@ async function play(id = playableId.value) {
 .page {
   height: 100%;
   overflow-y: auto;
-  padding: calc(var(--titlebar-h) + 16px) clamp(26px, 3vw, 44px) 48px calc(var(--nav-w) + 26px);
   position: relative;
-  transition: padding var(--rail-dur) var(--rail-ease);
+  padding-bottom: 56px;
 }
 .back {
   position: absolute;
-  top: calc(var(--titlebar-h) + 6px);
-  left: calc(var(--nav-w) + 8px);
-  width: 34px;
-  height: 34px;
+  top: calc(var(--titlebar-h) + 10px);
+  left: calc(var(--nav-w) + 18px);
+  z-index: 4;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
-  background: var(--bg-elev);
-  border: 1px solid var(--line);
-  box-shadow: var(--shadow-sm);
-  color: var(--text-dim);
-  transition: background var(--hov) var(--ease), color var(--hov) var(--ease), transform var(--hov) var(--ease-out), left var(--rail-dur) var(--rail-ease);
+  background: rgba(16, 16, 22, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  backdrop-filter: blur(10px);
+  color: #fff;
+  transition: background var(--hov) var(--ease), transform var(--hov) var(--ease-out), left var(--rail-dur) var(--rail-ease);
 }
 .back:hover {
-  background: var(--ink);
-  color: var(--on-ink);
+  background: rgba(16, 16, 22, 0.66);
   transform: translateX(-2px);
 }
+.pad { padding: calc(var(--titlebar-h) + 40px) 44px 0 calc(var(--nav-w) + 44px); }
+
 .hero {
+  position: relative;
+  min-height: clamp(420px, 62vh, 640px);
   display: flex;
-  gap: 26px;
-  margin-top: 18px;
-}
-.poster {
-  width: 232px;
-  flex: none;
-  aspect-ratio: 2 / 3;
-  border-radius: var(--r-tile);
+  align-items: flex-end;
   overflow: hidden;
-  background: var(--bg-elev);
-  border: 1px solid var(--line);
-  box-shadow: var(--shadow);
 }
-.poster img,
-.nopost {
+.bg { position: absolute; inset: 0; }
+.bg img { width: 100%; height: 100%; object-fit: cover; object-position: center 22%; }
+.scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(10, 12, 20, 0.35) 0%, rgba(10, 12, 20, 0.1) 34%, rgba(10, 12, 20, 0.72) 78%, var(--bg) 100%),
+    linear-gradient(90deg, rgba(10, 12, 20, 0.82) 0%, rgba(10, 12, 20, 0.32) 46%, rgba(10, 12, 20, 0) 72%);
+}
+.hero-in {
+  position: relative;
+  z-index: 2;
   width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
+  padding: 0 clamp(26px, 3vw, 44px) 30px calc(var(--nav-w) + 26px);
 }
-.nopost {
-  display: grid;
-  place-items: center;
-  font-size: 62px;
-  font-weight: 700;
-  /* Same letter, same plate, same opaque token as both card placeholders: an alpha glyph here
-     composited to 2.1:1 against its own gradient, and this letter is the only identifier when the
-     server has no art for the item. */
-  color: var(--text-faint);
-  background: linear-gradient(150deg, var(--bg), var(--bg-elev-2));
-}
-.meta {
-  min-width: 0;
-  padding-top: 6px;
-}
+.copy { max-width: 720px; color: #fff; }
 h1 {
-  margin: 0 0 8px;
-  font-size: 26px;
-  font-weight: 650;
-  letter-spacing: -0.2px;
-  color: var(--text);
+  margin: 0 0 6px;
+  font-size: clamp(28px, 3.4vw, 40px);
+  font-weight: 700;
+  letter-spacing: -0.4px;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.4);
 }
-.line {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-dim);
-  margin-bottom: 14px;
-  font-variant-numeric: tabular-nums;
-}
-.badges {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 7px;
-  margin-bottom: 15px;
-}
+.tagline { margin: 0 0 8px; font-size: 14px; font-style: italic; color: rgba(255, 255, 255, 0.82); }
+.line { font-size: 13.5px; font-weight: 500; color: rgba(255, 255, 255, 0.86); margin-bottom: 12px; font-variant-numeric: tabular-nums; }
+.badges { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
 .b {
   display: inline-flex;
   align-items: center;
-  padding: 2px 9px;
+  padding: 3px 10px;
   border-radius: 999px;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 650;
   font-variant-numeric: tabular-nums;
+  background: rgba(16, 16, 22, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(6px);
 }
-.rate {
-  color: #6b4500;
-  background: rgba(255, 208, 99, 0.42);
-}
-.tomato {
-  color: #7c150c;
-  background: rgba(228, 72, 51, 0.28);
-}
-.corn {
-  color: #5c3a02;
-  background: rgba(255, 190, 60, 0.34);
-}
-.watch {
-  margin: 0 0 15px;
-  font-size: 13px;
-  color: var(--text);
-}
-.watch .k {
-  margin-right: 10px;
-  font-weight: 600;
-  color: var(--text-dim);
-}
-.cert {
-  color: var(--text-dim);
-  border: 1px solid var(--line-strong);
-}
-.studio {
-  color: var(--text-dim);
-  background: var(--chip);
-}
+.rate { color: #ffe08a; }
+.tomato { color: #ff8a7a; }
+.corn { color: #ffcf70; }
+.cert { color: rgba(255, 255, 255, 0.9); }
 .overview {
-  color: var(--text-dim);
   font-size: 14px;
   line-height: 1.65;
-  max-width: 640px;
-  margin: 0 0 20px;
+  color: rgba(255, 255, 255, 0.9);
+  max-width: 660px;
+  margin: 0 0 18px;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
-.actions {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
+.actions { display: flex; align-items: center; gap: 12px; }
 .play {
   display: inline-flex;
   align-items: center;
-  gap: 9px;
-  padding: 11px 22px;
+  gap: 11px;
+  padding: 11px 26px;
   border-radius: 999px;
   background: var(--ink);
   color: var(--on-ink);
-  font-weight: 600;
-  box-shadow: 0 10px 26px rgba(18, 18, 34, 0.24);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.34);
   transition: transform var(--hov) var(--ease-out), box-shadow var(--hov) var(--ease), opacity var(--hov) var(--ease);
 }
-.play:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 14px 32px rgba(18, 18, 34, 0.3);
+.play:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 16px 36px rgba(0, 0, 0, 0.4); }
+.play:active:not(:disabled) { transform: scale(0.97); }
+.play:disabled { opacity: 0.5; }
+.tri { width: 0; height: 0; border-left: 11px solid var(--on-ink); border-top: 7px solid transparent; border-bottom: 7px solid transparent; }
+.ptxt { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.15; }
+.ptxt b { font-size: 15px; font-weight: 650; }
+.ptxt i { font-size: 12.5px; font-weight: 500; opacity: 0.78; font-style: normal; }
+.iconb {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(16, 16, 22, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(8px);
+  transition: color var(--hov) var(--ease), background var(--hov) var(--ease), transform var(--hov) var(--ease-out);
 }
-.play:active:not(:disabled) {
-  transform: scale(0.97);
+.iconb:hover { transform: translateY(-1px); background: rgba(16, 16, 22, 0.62); }
+.iconb.on { color: #ff5a6a; }
+.watch { margin: 14px 0 0; font-size: 13px; color: rgba(255, 255, 255, 0.88); }
+.watch .k { margin-right: 10px; font-weight: 600; color: rgba(255, 255, 255, 0.62); }
+
+.body {
+  padding: 8px clamp(26px, 3vw, 44px) 0 calc(var(--nav-w) + 26px);
+  max-width: 1240px;
 }
-.play:disabled {
-  opacity: 0.45;
-}
-.tri {
-  width: 0;
-  height: 0;
-  border-left: 9px solid var(--on-ink);
-  border-top: 6px solid transparent;
-  border-bottom: 6px solid transparent;
-}
-.pm {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-dim);
-  border: 1px solid var(--line-strong);
-  border-radius: 999px;
-  padding: 3px 9px;
-  background: var(--bg-elev);
-}
-.muted {
-  color: var(--text-dim);
-  font-weight: 500;
-  font-size: 13px;
-}
-.err {
-  color: var(--danger);
-}
-.banner {
-  margin: 0 0 12px;
-}
-.block {
-  margin-top: 30px;
-}
-h2 {
-  font-size: 15px;
-  font-weight: 650;
-  letter-spacing: -0.2px;
-  margin: 0 0 13px;
-  color: var(--text);
-}
-.seasons {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
+.block { margin-top: 30px; }
+h2 { font-size: 16px; font-weight: 650; letter-spacing: -0.2px; margin: 0 0 14px; color: var(--text); }
+
+.seasons { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
 .sbtn {
   padding: 7px 14px;
   border-radius: 999px;
@@ -485,92 +556,155 @@ h2 {
   box-shadow: var(--shadow-sm);
   font-size: 13.5px;
   color: var(--text-dim);
-  transition: background var(--hov) var(--ease), color var(--hov) var(--ease),
-    border-color var(--hov) var(--ease);
+  transition: background var(--hov) var(--ease), color var(--hov) var(--ease), border-color var(--hov) var(--ease);
 }
-.sbtn:hover {
-  color: var(--text);
-  border-color: var(--line-strong);
-}
-.sbtn.on {
-  background: var(--chip-hi);
-  border-color: var(--line-strong);
-  color: var(--text);
-  font-weight: 600;
-}
-.people {
+.sbtn:hover { color: var(--text); border-color: var(--line-strong); }
+.sbtn.on { background: var(--chip-hi); border-color: var(--line-strong); color: var(--text); font-weight: 600; }
+
+.eps { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px 22px; }
+.epi {
   display: flex;
-  gap: 14px;
-  overflow-x: auto;
-  margin-top: 15px;
-  padding-bottom: 8px;
+  gap: 12px;
+  text-align: left;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+  animation: epi-in 0.5s var(--ease-out) both;
+  animation-delay: calc(var(--i) * 26ms);
 }
-.person {
-  width: 104px;
+@keyframes epi-in {
+  from { opacity: 0; transform: translate3d(0, 14px, 0); }
+  to { opacity: 1; transform: none; }
+}
+.ethumb {
+  position: relative;
   flex: none;
+  width: 150px;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-sm);
 }
+.ethumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.ethumb .ph { position: absolute; inset: 0; display: grid; place-items: center; font-size: 30px; font-weight: 700; color: var(--text-faint); background: linear-gradient(150deg, var(--bg), var(--bg-elev-2)); }
+.ethumb .disc {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 38px;
+  height: 38px;
+  margin: -19px 0 0 -19px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: rgba(16, 16, 22, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  backdrop-filter: blur(8px);
+  opacity: 0;
+  transform: scale(0.72);
+  transition: opacity var(--hov) var(--ease), transform var(--hov) var(--ease-out);
+}
+.epi:hover .disc { opacity: 1; transform: none; }
+.einfo { min-width: 0; padding-top: 2px; }
+.emeta { margin: 0; display: flex; gap: 8px; flex-wrap: wrap; font-size: 12.5px; font-weight: 500; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.emeta .seen { color: var(--text-faint); }
+.etitle { margin: 3px 0 0; font-size: 14px; font-weight: 650; color: var(--text); }
+.eov {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.src { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
+.srccard {
+  width: 210px;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-sm);
+}
+.sc-top { margin: 0 0 8px; font-size: 15px; font-weight: 700; color: var(--text); }
+.sc-meta { margin: 0 0 10px; display: flex; gap: 14px; font-size: 13px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.sc-foot { margin: 0; display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; color: var(--text); }
+.sc-foot .dot { width: 8px; height: 8px; border-radius: 50%; background: #3fbf7f; }
+.sc-foot .ok { margin-left: auto; color: #3fbf7f; }
+
+.tech { display: flex; gap: 16px; flex-wrap: wrap; }
+.tcard {
+  flex: 1 1 260px;
+  max-width: 380px;
+  padding: 16px 18px;
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-sm);
+}
+.tcard h3 { margin: 0 0 12px; font-size: 14px; font-weight: 650; color: var(--text); }
+.tcard dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 7px 16px; }
+.tcard dt { font-size: 13px; color: var(--text-dim); }
+.tcard dd { margin: 0; font-size: 13px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.added { margin: 18px 0 0; font-size: 13px; color: var(--text-dim); }
+
+.credit { display: flex; align-items: baseline; gap: 10px; margin: 0 0 7px; font-size: 13px; color: var(--text); }
+.credit .k { flex: none; width: 30px; font-weight: 600; color: var(--text-dim); }
+.people { display: flex; gap: 14px; overflow-x: auto; margin-top: 15px; padding-bottom: 8px; }
+.person { width: 84px; flex: none; }
 .face {
-  width: 104px;
+  width: 84px;
   aspect-ratio: 1;
-  border-radius: var(--r-tile);
+  border-radius: 50%;
   overflow: hidden;
   background: var(--bg-elev);
   border: 1px solid var(--line);
   box-shadow: var(--shadow-sm);
 }
-.face img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
+.face img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ini { display: grid; place-items: center; width: 100%; height: 100%; font-size: 28px; font-weight: 700; color: var(--text-faint); background: linear-gradient(150deg, var(--bg), var(--bg-elev-2)); }
+.pn, .pr { margin: 8px 0 0; font-size: 13px; line-height: 1.3; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pr { margin: 2px 0 0; font-weight: 500; color: var(--text-dim); }
+.pn { font-weight: 600; color: var(--text); }
+
+.pg { display: flex; gap: 14px; flex-wrap: wrap; }
+.pgi {
+  flex: 1 1 150px;
+  max-width: 210px;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-sm);
 }
-.ini {
-  display: grid;
-  place-items: center;
-  width: 100%;
-  height: 100%;
-  font-size: 30px;
-  font-weight: 700;
-  color: var(--text-faint);
-  background: linear-gradient(150deg, var(--bg), var(--bg-elev-2));
-}
-.pn,
-.pr {
-  margin: 8px 0 0;
-  font-size: 13px;
-  line-height: 1.3;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.pr {
-  margin: 2px 0 0;
-  font-weight: 500;
-  color: var(--text-dim);
-}
-.pn {
-  font-weight: 600;
-  color: var(--text);
-}
-.credit {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  margin: 0 0 7px;
-  font-size: 13px;
-  color: var(--text);
-}
-.credit .k {
-  flex: none;
-  width: 30px;
-  font-weight: 600;
-  color: var(--text-dim);
-}
-.epi {
-  display: flex;
-  gap: 14px;
-  overflow-x: auto;
-  padding-bottom: 10px;
-}
+.pgt { margin: 0 0 10px; font-size: 14px; font-weight: 650; color: var(--text); }
+.pgdots { display: flex; gap: 5px; margin-bottom: 8px; }
+.pgdots i { width: 22px; height: 5px; border-radius: 3px; background: var(--line-strong); }
+.pgdots i.on { background: #f0913a; }
+.pgw { margin: 0; font-size: 13px; color: var(--text-dim); }
+
+.chips { display: flex; gap: 9px; flex-wrap: wrap; }
+.chip { padding: 6px 14px; border-radius: 999px; background: var(--chip); border: 1px solid var(--line); font-size: 13px; font-weight: 600; color: var(--text); }
+
+.stills { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 10px; }
+.stills img { flex: none; width: 320px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: var(--radius); border: 1px solid var(--line); box-shadow: var(--shadow-sm); }
+
+.sims { display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 18px 16px; }
+.sim { min-width: 0; }
+.sposter { position: relative; aspect-ratio: 2 / 3; border-radius: var(--radius); overflow: hidden; background: var(--bg-elev-2); border: 1px solid var(--line); box-shadow: var(--shadow-sm); }
+.sposter img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.sposter .ph { position: absolute; inset: 0; display: grid; place-items: center; font-size: 34px; font-weight: 700; color: var(--text-faint); background: linear-gradient(150deg, var(--bg), var(--bg-elev-2)); }
+.stitle { margin: 8px 0 0; font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.smeta { margin: 2px 0 0; display: flex; gap: 8px; font-size: 12.5px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.smeta .srate { color: #b8860b; font-weight: 650; }
+
+.muted { color: var(--text-dim); font-weight: 500; font-size: 13px; }
+.err { color: var(--danger); }
+.banner { margin: 0 0 12px; padding: 0 44px; }
 </style>

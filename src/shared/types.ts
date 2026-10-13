@@ -37,6 +37,8 @@ export interface LibraryItem {
   id: string;
   type: string;
   name: string;
+  /** The server's non-localised title; outside sources slug off this because `name` is often Chinese. */
+  originalTitle?: string;
   seriesName?: string;
   productionYear?: number;
   officialRating?: string;
@@ -55,12 +57,20 @@ export interface LibraryItem {
   childCount?: number;
   /** Newest added episode behind a Series card; the Latest endpoint has no episode position of its own. */
   latestEpisode?: { season?: number; episode: number };
-  userData?: { playedPercentage?: number };
+  userData?: { playedPercentage?: number; isFavorite?: boolean };
   /** External ids the server already scraped. Every outside source is keyed off these instead of the
    *  title, which matters because our item names are Chinese and the outside databases are not. */
   providers?: Providers;
   /** Detail endpoint only: the list payload does not carry People. */
   people?: Person[];
+  /** Detail endpoint only: the technical description of the file the server can actually serve.
+   *  A source is one container with its video/audio/subtitle streams; this library only ever has one
+   *  per item, so it feeds the 视频/音频 table, not a source switcher. */
+  sources?: MediaSourceInfo[];
+  /** Detail endpoint only: when the item entered the library. */
+  dateCreated?: string;
+  /** Detail endpoint only: the movie's marketing line. */
+  tagline?: string;
 }
 
 export interface Providers {
@@ -103,6 +113,64 @@ export interface TmdbMeta {
 
 /** Episode stills for one season; keys are TMDB's episode numbers (1-based), values are image.tmdb.org paths. */
 export type TmdbStills = Record<number, string>;
+
+/** One video/audio/subtitle track as the server describes it. Field presence depends on Type, so all
+ *  are optional; the table renders whichever the stream carries. */
+export interface MediaStreamInfo {
+  type: string; // Video | Audio | Subtitle
+  codec?: string;
+  displayTitle?: string;
+  lang?: string;
+  title?: string;
+  width?: number;
+  height?: number;
+  bitDepth?: number;
+  range?: string; // HDR / HDR10 / SDR / DoVi
+  chroma?: string;
+  fps?: number;
+  bitRate?: number;
+  channels?: number;
+  sampleRate?: number;
+  profile?: string;
+  isDefault?: boolean;
+  isForced?: boolean;
+}
+
+/** One playable version the server holds for an item. This library keeps exactly one per item, but the
+ *  shape is a list because the API is. */
+export interface MediaSourceInfo {
+  name?: string;
+  container?: string;
+  bitRate?: number;
+  sizeBytes?: number;
+  isHls?: boolean;
+  video?: MediaStreamInfo;
+  audio: MediaStreamInfo[];
+  subtitle: MediaStreamInfo[];
+}
+
+/** Common Sense Media content advisories, one entry per category. `level` is CSM's 0–5 dot scale. */
+export interface CsmCategory {
+  key: string;
+  label: string;
+  level: number;
+}
+export interface CsmGuide {
+  categories: CsmCategory[];
+  /** Recommended minimum age from the page's JSON-LD `typicalAgeRange` (e.g. 13 in "13-18"). */
+  minAge?: number;
+  fetchedAt: number;
+}
+
+/** A TMDB similar/recommended title, kept as a read-only strip: we cannot resolve these back into the
+ *  library, so they link nowhere and carry only the poster image.tmdb.org can serve. */
+export interface TmdbSimilar {
+  tmdbId: number;
+  title: string;
+  posterPath?: string;
+  year?: string;
+  voteAverage?: number;
+}
 
 export interface LibraryRow {
   key: string;

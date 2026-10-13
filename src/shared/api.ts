@@ -1,4 +1,4 @@
-import type { Account, AppConfig, IpcResult, LibraryItem, LibraryRow, MetaKeys, PlayerState, RtScores, Settings, TmdbMeta, TmdbStills } from './types';
+import type { Account, AppConfig, CsmGuide, IpcResult, LibraryItem, LibraryRow, MetaKeys, PlayerState, RtScores, Settings, TmdbMeta, TmdbSimilar, TmdbStills } from './types';
 
 export interface EchoEmbyApi {
   app: {
@@ -18,6 +18,7 @@ export interface EchoEmbyApi {
     item(id: string): Promise<IpcResult<LibraryItem>>;
     seasons(seriesId: string): Promise<IpcResult<LibraryItem[]>>;
     episodes(params: { seriesId: string; seasonId: string }): Promise<IpcResult<LibraryItem[]>>;
+    favorite(params: { id: string; on: boolean }): Promise<IpcResult<boolean>>;
     imageUrl(params: { id: string; tag?: string; width: number; type?: 'primary' | 'backdrop' }): Promise<IpcResult<string>>;
   };
   meta: {
@@ -25,6 +26,9 @@ export interface EchoEmbyApi {
     rt(imdb: string): Promise<IpcResult<RtScores | null>>;
     tmdb(input: { kind: 'movie' | 'tv'; tmdbId: string }): Promise<IpcResult<TmdbMeta | null>>;
     tmdbStills(input: { tmdbId: string; season: number }): Promise<IpcResult<{ value: TmdbStills; any: boolean } | null>>;
+    tmdbSimilar(input: { kind: 'movie' | 'tv'; tmdbId: string }): Promise<IpcResult<TmdbSimilar[]>>;
+    tmdbImages(input: { kind: 'movie' | 'tv'; tmdbId: string }): Promise<IpcResult<string[]>>;
+    csm(input: { kind: 'movie' | 'tv'; title: string }): Promise<IpcResult<CsmGuide | null>>;
     setKeys(patch: Partial<MetaKeys>): Promise<IpcResult<MetaKeys | undefined>>;
   };
   player: {

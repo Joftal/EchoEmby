@@ -3,7 +3,8 @@ import { EmbyClient, EmbyError, normalizeBase } from './emby/client';
 import { detail, explain } from './emby/errors';
 import * as config from './config';
 import { rtScores } from './meta/rt';
-import { tmdbMeta, tmdbSeasonStills } from './meta/tmdb';
+import { tmdbMeta, tmdbSeasonStills, tmdbSimilar, tmdbImages } from './meta/tmdb';
+import { csmGuide } from './meta/csm';
 import { MpvPlayer } from './player/mpv';
 import { StreamBridge } from './player/bridge';
 import { PlayerWindows } from './player/windows';
@@ -179,6 +180,7 @@ export class AppServices {
     ipcMain.handle('emby:item', (_e, id: string) => wrap(() => this.client().item(id)));
     ipcMain.handle('emby:seasons', (_e, id: string) => wrap(() => this.client().seasons(id)));
     ipcMain.handle('emby:episodes', (_e, { seriesId, seasonId }: { seriesId: string; seasonId: string }) => wrap(() => this.client().episodes(seriesId, seasonId)));
+    ipcMain.handle('emby:favorite', (_e, { id, on }: { id: string; on: boolean }) => wrap(() => this.client().setFavorite(id, on)));
 
     ipcMain.handle('emby:imageUrl', (_e, { id, tag, width, type }: { id: string; tag?: string; width: number; type?: 'primary' | 'backdrop' }) =>
       wrap(() =>
@@ -191,6 +193,9 @@ export class AppServices {
     ipcMain.handle('meta:rt', (_e, imdb: string) => wrap(() => rtScores(imdb)));
     ipcMain.handle('meta:tmdb', (_e, { kind, tmdbId }: { kind: 'movie' | 'tv'; tmdbId: string }) => wrap(() => tmdbMeta(kind, tmdbId)));
     ipcMain.handle('meta:tmdbStills', (_e, { tmdbId, season }: { tmdbId: string; season: number }) => wrap(() => tmdbSeasonStills(tmdbId, season)));
+    ipcMain.handle('meta:tmdbSimilar', (_e, { kind, tmdbId }: { kind: 'movie' | 'tv'; tmdbId: string }) => wrap(() => tmdbSimilar(kind, tmdbId)));
+    ipcMain.handle('meta:tmdbImages', (_e, { kind, tmdbId }: { kind: 'movie' | 'tv'; tmdbId: string }) => wrap(() => tmdbImages(kind, tmdbId)));
+    ipcMain.handle('meta:csm', (_e, { kind, title }: { kind: 'movie' | 'tv'; title: string }) => wrap(() => csmGuide(kind, title)));
     ipcMain.handle('meta:setKeys', (_e, patch: { tmdbV4Token?: string; traktClientId?: string }) => wrap(() => config.setMetaKeys(patch)));
 
     ipcMain.handle('player:play', (_e, itemId: string) =>

@@ -1,5 +1,5 @@
 import { net } from 'electron';
-import type { Account, LibraryItem, LibraryRow, Person, PlaybackResult, Providers, Settings } from '../../shared/types';
+import type { Account, LibraryItem, LibraryRow, MediaSourceInfo, MediaStreamInfo, Person, PlaybackResult, Providers, Settings } from '../../shared/types';
 import { buildDeviceProfile } from './deviceProfile';
 
 export interface Identity {
@@ -52,8 +52,9 @@ const authHeader = (id: Identity, token?: string): string =>
 const FIELDS =
   'BasicSyncInfo,CanDelete,CanDownload,PrimaryImageAspectRatio,ProductionYear,Status,EndDate,CommunityRating,OfficialRating,Overview,MediaStreams,Container,Bitrate,VideoRange,Width,Height,SeriesName,SeriesId,ParentId,ChildCount,Genres,PremiereDate,Studio,ProviderIds';
 
-/** People is a detail-only field: on the list endpoints it would multiply every row by the cast size. */
-const DETAIL_FIELDS = FIELDS + ',People';
+/** People is a detail-only field: on the list endpoints it would multiply every row by the cast size.
+ *  MediaSources, DateCreated and Taglines only exist on the single-item call, so they ride here too. */
+const DETAIL_FIELDS = FIELDS + ',People,DateCreated,Taglines,OriginalTitle';
 
 // Measured on this server: 40/40 items carry a Tmdb id and 35/40 an Imdb id, so outside sources can
 // be keyed off ids instead of guessing from a Chinese title.
@@ -78,10 +79,47 @@ const studioName = (r: any): string | undefined => {
   return typeof s === 'string' ? s : s?.Name;
 };
 
+const mapSources = (raw: any): MediaSourceInfo[] | undefined => {
+  if (!Array.isArray(raw) || !raw.length) return undefined;
+  return raw.map((s: any): MediaSourceInfo => {
+    const streams: MediaStreamInfo[] = (s.MediaStreams || []).map((v: any): MediaStreamInfo => ({
+      type: v.Type,
+      codec: v.Codec,
+      displayTitle: v.DisplayTitle,
+      lang: v.Language,
+      title: v.Title,
+      width: v.Width,
+      height: v.Height,
+      bitDepth: v.BitDepth,
+      range: v.VideoRange || v.VideoRangeType,
+      chroma: v.ChromaSubsampling,
+      fps: v.NominalFrameRate || v.AverageFrameRate,
+      bitRate: v.BitRate,
+      channels: v.Channels,
+      sampleRate: v.SampleRate,
+      profile: v.Profile,
+      isDefault: v.IsDefault,
+      isForced: v.IsForced,
+    }));
+    const video = streams.find(x => x.type === 'Video');
+    return {
+      name: s.Name,
+      container: s.Container,
+      bitRate: s.Bitrate,
+      sizeBytes: s.Size,
+      isHls: !!s.IsRemote || s.Container === 'm3u8',
+      video,
+      audio: streams.filter(x => x.type === 'Audio'),
+      subtitle: streams.filter(x => x.type === 'Subtitle'),
+    };
+  });
+};
+
 const mapItem = (r: any): LibraryItem => ({
   id: r.Id,
   type: r.Type,
   name: r.Name,
+  originalTitle: r.OriginalTitle,
   seriesName: r.SeriesName,
   productionYear: r.ProductionYear,
   officialRating: r.OfficialRating,
@@ -100,9 +138,11 @@ const mapItem = (r: any): LibraryItem => ({
   parentIndexNumber: r.ParentIndexNumber,
   childCount: r.ChildCount,
   userData: r.UserData
-    ? { playedPercentage: r.UserData.PlayedPercentage }
+    ? { playedPercentage: r.UserData.PlayedPercentage, isFavorite: r.UserData.IsFavorite }
     : undefined,
   providers: mapProviders(r.ProviderIds),
+  dateCreated: r.DateCreated,
+  tagline: r.Taglines?.[0],
 });
 
 async function http(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
@@ -221,6 +261,15 @@ export class EmbyClient {
     throw new EmbyError(v.text, v.status);
   }
 
+  async del<T = any>(path: string, params: Record<string, string | number | boolean | undefined> = {}, timeoutMs = 20000): Promise<T> {
+    const q = authQuery(this.identity);
+    for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') q.set(k, String(v));
+    const res = await http(`${this.base}${path}?${q}`, { method: 'DELETE', headers: this.headers() }, timeoutMs);
+    const text = await res.text();
+    if (!res.ok) throw new EmbyError(text.slice(0, 200) || res.statusText, res.status);
+    return text ? JSON.parse(text) : ({} as T);
+  }
+
   async serverName(): Promise<string> {
     const j = await this.get<any>('/System/Info/Public', {}, 8000);
     return j?.ServerName || '';
@@ -253,6 +302,7 @@ export class EmbyClient {
     const j = await this.get<any>(`/Users/${this.account.userId}/Items/${id}`, { Fields: DETAIL_FIELDS });
     const it = mapItem(j);
     it.people = mapPeople(j.People);
+    it.sources = mapSources(j.MediaSources);
     return it;
   }
 
@@ -381,5 +431,13 @@ export class EmbyClient {
 
   async markPlayed(itemId: string): Promise<void> {
     await this.post(`/Users/${this.account.userId}/PlayedItems/${itemId}`).catch(() => undefined);
+  }
+
+  /** Returns the state after the toggle so the caller can render it without a refetch. */
+  async setFavorite(itemId: string, on: boolean): Promise<boolean> {
+    const path = `/Users/${this.account.userId}/FavoriteItems/${itemId}`;
+    if (on) await this.post(path);
+    else await this.del(path);
+    return on;
   }
 }

@@ -21,12 +21,16 @@ const api: EchoEmbyApi = {
     item: id => invoke('emby:item', id),
     seasons: seriesId => invoke('emby:seasons', seriesId),
     episodes: params => invoke('emby:episodes', params),
+    favorite: params => invoke('emby:favorite', params),
     imageUrl: params => invoke('emby:imageUrl', params),
   },
   meta: {
     rt: imdb => invoke('meta:rt', imdb),
     tmdb: input => invoke('meta:tmdb', input),
     tmdbStills: input => invoke('meta:tmdbStills', input),
+    tmdbSimilar: input => invoke('meta:tmdbSimilar', input),
+    tmdbImages: input => invoke('meta:tmdbImages', input),
+    csm: input => invoke('meta:csm', input),
     setKeys: patch => invoke('meta:setKeys', patch),
   },
   player: {
