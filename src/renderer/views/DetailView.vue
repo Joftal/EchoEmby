@@ -44,22 +44,26 @@ const tmdbKind = computed<'movie' | 'tv' | null>(() => {
   return null;
 });
 
-const CRAFT: Array<[string, string]> = [
-  ['Director', '导演'],
-  ['Writer', '编剧'],
-  ['Producer', '制片'],
-];
 const people = computed(() => item.value?.people || []);
-const craft = computed(() =>
-  CRAFT.map(([type, label]) => ({
-    label,
-    names: people.value.filter(p => p.type === type).slice(0, 3).map(p => p.name).join(' / '),
-  })).filter(c => c.names),
-);
-const cast = computed(() => people.value.filter(p => p.type === 'Actor').slice(0, 18));
-
-const hasServerWriter = computed(() => people.value.some(p => p.type === 'Writer'));
-const writerFallback = computed(() => (!hasServerWriter.value && tmdb.value?.writers?.length ? tmdb.value.writers.join(' / ') : ''));
+const ROLE_LABEL: Record<string, string> = { Director: '导演', Writer: '编剧', Producer: '制片' };
+interface CrewRow { id: string; name: string; imageTag?: string; sub: string }
+/** Directors, writers and producers share one avatar band with the cast — the reference shows a single
+ *  row of circular heads, the role label underneath telling them apart, not a text credit list on top. */
+const crew = computed<CrewRow[]>(() => {
+  const order: Record<string, number> = { Director: 0, Writer: 1, Producer: 2, Actor: 3 };
+  const seen = new Set<string>();
+  const out: CrewRow[] = [];
+  for (const p of [...people.value].sort((a, b) => (order[a.type] ?? 9) - (order[b.type] ?? 9))) {
+    if (seen.has(p.id)) continue;
+    seen.add(p.id);
+    out.push({ id: p.id, name: p.name, imageTag: p.imageTag, sub: p.type === 'Actor' ? p.role || '' : ROLE_LABEL[p.type] || p.role || '' });
+  }
+  // Server carries no writers for this library, so TMDB's fill the gap rather than losing the credit.
+  if (!people.value.some(p => p.type === 'Writer')) {
+    for (const w of tmdb.value?.writers || []) out.push({ id: `tw:${w}`, name: w, sub: '编剧' });
+  }
+  return out.slice(0, 30);
+});
 const overviewText = computed(() => item.value?.overview || tmdb.value?.overviewZh || '');
 const certText = computed(() => item.value?.officialRating || tmdb.value?.cert || '');
 
@@ -78,7 +82,7 @@ const backdropUrl = (p: string): string => `https://image.tmdb.org/t/p/w780${p}`
 
 const faces = ref<Record<string, string>>({});
 watch(
-  cast,
+  crew,
   list => {
     for (const p of list) {
       if (!p.imageTag || faces.value[p.id]) continue;
@@ -156,6 +160,16 @@ async function fetchParentTmdbId(seriesId: string): Promise<string> {
   const id = r.ok ? r.data?.providers?.tmdb || '' : '';
   parentTmdbCache.set(seriesId, id);
   return id;
+}
+
+/** The dropdown reads 「第1季」 from the season's index, falling back to its server name. */
+const seasonLabel = (s: LibraryItem): string => (s.indexNumber != null ? `第 ${s.indexNumber} 季` : s.name);
+const activeSeasonLabel = computed(() => {
+  const s = seasons.value.find(x => x.id === seasonId.value);
+  return s ? seasonLabel(s) : item.value?.name || '本季';
+});
+function onSeason(ev: Event): void {
+  void loadEpisodes((ev.target as HTMLSelectElement).value);
 }
 
 watch(
@@ -298,33 +312,38 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
         </div>
       </section>
 
-      <div class="body">
-        <section v-if="episodes.length" class="block">
-          <div v-if="seasons.length > 1" class="seasons">
-            <button v-for="s in seasons" :key="s.id" :class="{ on: s.id === seasonId }" class="sbtn" @click="loadEpisodes(s.id)">
-              {{ s.name }}
-            </button>
-          </div>
-          <div class="eps">
-            <button v-for="(e, i) in episodes" :key="e.id" class="epi" :style="{ '--i': i }" @click="play(e.id)">
-              <div class="ethumb">
-                <img v-if="epArt[e.id] || stillUrl(e.indexNumber)" :src="epArt[e.id] || stillUrl(e.indexNumber)" alt="" loading="lazy" decoding="async" />
-                <span v-else class="ph">{{ (e.name || '?').slice(0, 1) }}</span>
-                <span class="disc" role="presentation"><svg viewBox="0 0 24 24" width="18" height="18"><path d="M8 5l12 7-12 7z" fill="currentColor" /></svg></span>
-              </div>
-              <div class="einfo">
-                <p class="emeta">
-                  <span v-if="e.premiereDate">{{ fmtDate(e.premiereDate) }}</span>
-                  <span>第 {{ e.indexNumber }} 集</span>
-                  <span>{{ fmtRuntime(e.runTimeTicks) }}</span>
-                  <span v-if="e.userData?.playedPercentage" class="seen">已观看</span>
-                </p>
-                <p class="etitle">{{ e.name }}</p>
-                <p v-if="e.overview" class="eov">{{ e.overview }}</p>
-              </div>
-            </button>
-          </div>
-        </section>
+      <div class="flow">
+        <HScroller v-if="episodes.length" class="block">
+          <template #header>
+            <div class="ep-head">
+              <label v-if="seasons.length > 1" class="pick">
+                <select :value="seasonId" @change="onSeason">
+                  <option v-for="s in seasons" :key="s.id" :value="s.id">{{ seasonLabel(s) }}</option>
+                </select>
+                <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              </label>
+              <h2 v-else>{{ activeSeasonLabel }}</h2>
+              <span class="count">{{ episodes.length }} 集</span>
+            </div>
+          </template>
+          <button v-for="e in episodes" :key="e.id" class="epi" @click="play(e.id)">
+            <div class="ethumb">
+              <img v-if="epArt[e.id] || stillUrl(e.indexNumber)" :src="epArt[e.id] || stillUrl(e.indexNumber)" alt="" loading="lazy" decoding="async" />
+              <span v-else class="ph">{{ (e.name || '?').slice(0, 1) }}</span>
+              <span class="disc" role="presentation"><svg viewBox="0 0 24 24" width="18" height="18"><path d="M8 5l12 7-12 7z" fill="currentColor" /></svg></span>
+            </div>
+            <div class="einfo">
+              <p class="emeta">
+                <span v-if="e.premiereDate">{{ fmtDate(e.premiereDate) }}</span>
+                <span>第 {{ e.indexNumber }} 集</span>
+                <span>{{ fmtRuntime(e.runTimeTicks) }}</span>
+                <span v-if="e.userData?.playedPercentage" class="seen">已观看</span>
+              </p>
+              <p class="etitle">{{ e.name }}</p>
+              <p v-if="e.overview" class="eov">{{ e.overview }}</p>
+            </div>
+          </button>
+        </HScroller>
 
         <section v-if="source" class="block">
           <h2>播放资源</h2>
@@ -380,21 +399,16 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
           <p v-if="item.dateCreated" class="added">入库时间　{{ fmtDateTime(item.dateCreated) }}</p>
         </section>
 
-        <section v-if="craft.length || writerFallback || cast.length" class="block">
-          <h2>演职员</h2>
-          <p v-for="c in craft" :key="c.label" class="credit"><span class="k">{{ c.label }}</span>{{ c.names }}</p>
-          <p v-if="writerFallback" class="credit"><span class="k">编剧</span>{{ writerFallback }}</p>
-          <HScroller v-if="cast.length" class="band">
-            <div v-for="p in cast" :key="p.id" class="person">
-              <div class="face">
-                <img v-if="faces[p.id]" :src="faces[p.id]" alt="" loading="lazy" />
-                <span v-else class="ini">{{ p.name.slice(0, 1) }}</span>
-              </div>
-              <p class="pn">{{ p.name }}</p>
-              <p v-if="p.role" class="pr">{{ p.role }}</p>
+        <HScroller v-if="crew.length" title="演职员" :count="crew.length" class="block">
+          <div v-for="p in crew" :key="p.id" class="person">
+            <div class="face">
+              <img v-if="faces[p.id]" :src="faces[p.id]" alt="" loading="lazy" />
+              <span v-else class="ini">{{ p.name.slice(0, 1) }}</span>
             </div>
-          </HScroller>
-        </section>
+            <p class="pn">{{ p.name }}</p>
+            <p v-if="p.sub" class="pr">{{ p.sub }}</p>
+          </div>
+        </HScroller>
 
         <section v-if="csm?.categories.length" class="block">
           <h2>家长指南</h2>
@@ -433,8 +447,15 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
 
 <style scoped>
 .page {
+  /* Same inset ladder as the lobby: the rail floats, so the content line is its right edge, and the
+     bands tuck their art under it. Defining them here lets the HScroller children inherit the math. */
+  --side: clamp(10px, 1.8vw, 26px);
+  --gutter: var(--nav-w);
+  --rail-x: 12px;
+  --tuck: 214px;
   height: 100%;
   overflow-y: auto;
+  overflow-x: hidden;
   position: relative;
   padding-bottom: 56px;
 }
@@ -460,10 +481,15 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
 
 .hero {
   position: relative;
-  min-height: clamp(440px, 64vh, 660px);
+  /* Same clamp and the same gutter offset as the lobby hero: the backdrop starts on the content line
+     and never runs under the floating rail, which is the whole left-bleed complaint. */
+  height: clamp(460px, 61vh, 620px);
+  margin-left: var(--gutter);
+  margin-bottom: 4px;
   display: flex;
   align-items: flex-end;
   overflow: hidden;
+  transition: margin-left var(--rail-dur) var(--rail-ease);
 }
 /* Only the art layer parallaxes; a transform on the clipped .hero box emits a 1px seam at its edge. */
 .stage {
@@ -497,18 +523,18 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
   position: relative;
   z-index: 2;
   width: 100%;
-  padding: 0 clamp(26px, 3vw, 44px) 40px calc(var(--nav-w) + 26px);
+  padding: 0 var(--side) 44px 32px;
   will-change: transform, opacity;
 }
 .copy {
   display: flex;
   align-items: flex-end;
-  gap: 22px;
-  max-width: 840px;
+  gap: 20px;
+  max-width: 820px;
   color: #fff;
 }
 .art {
-  width: 132px;
+  width: 104px;
   flex: none;
   aspect-ratio: 2 / 3;
   border-radius: var(--radius);
@@ -527,7 +553,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
 }
 h1 {
   margin: 0 0 6px;
-  font-size: clamp(28px, 3.4vw, 40px);
+  font-size: clamp(28px, 3.6vw, 44px);
   font-weight: 700;
   letter-spacing: -0.4px;
   text-shadow: 0 2px 18px rgba(0, 0, 0, 0.4);
@@ -580,7 +606,7 @@ h1 {
 .tri { width: 0; height: 0; border-left: 11px solid var(--ink); border-top: 7px solid transparent; border-bottom: 7px solid transparent; }
 .ptxt { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.15; }
 .ptxt b { font-size: 15px; font-weight: 650; }
-.ptxt i { font-size: 12.5px; font-weight: 500; opacity: 0.72; font-style: normal; }
+.ptxt i { font-size: 13px; font-weight: 500; opacity: 0.72; font-style: normal; }
 .iconb {
   display: grid;
   place-items: center;
@@ -598,46 +624,59 @@ h1 {
 .watch { margin: 14px 0 0; font-size: 13px; color: rgba(255, 255, 255, 0.88); }
 .watch .k { margin-right: 10px; font-weight: 600; color: rgba(255, 255, 255, 0.62); }
 
-.body {
-  padding: 8px clamp(26px, 3vw, 44px) 0 calc(var(--nav-w) + 26px);
-  max-width: 1240px;
+/* Mirrors the lobby's .flow: the bands clip their art here (under the rail) while the plain blocks
+   inset to the content line. Children that need the line add their own --gutter padding. */
+.flow {
+  position: relative;
+  z-index: 1;
+  margin-left: var(--rail-x);
+  overflow-x: clip;
+  max-width: 1320px;
 }
-.block { margin-top: 30px; }
-h2 { font-size: 16px; font-weight: 650; letter-spacing: -0.2px; margin: 0 0 14px; color: var(--text); }
-
-.seasons { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
-.sbtn {
-  padding: 7px 14px;
-  border-radius: 999px;
-  background: var(--bg-elev);
-  border: 1px solid var(--line);
-  box-shadow: var(--shadow-sm);
-  font-size: 13.5px;
-  color: var(--text-dim);
-  transition: background var(--hov) var(--ease), color var(--hov) var(--ease), border-color var(--hov) var(--ease);
+.flow > .block { margin-top: 26px; }
+.block:not(.hrow) {
+  padding-left: calc(var(--gutter) - var(--rail-x));
+  padding-right: var(--side);
+  transition: padding-left var(--rail-dur) var(--rail-ease);
 }
-.sbtn:hover { color: var(--text); border-color: var(--line-strong); }
-.sbtn.on { background: var(--chip-hi); border-color: var(--line-strong); color: var(--text); font-weight: 600; }
+h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px; color: var(--text); }
 
-.eps { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px 22px; }
+.ep-head { display: flex; align-items: baseline; gap: 12px; flex: 1; min-width: 0; }
+.pick {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  select {
+    appearance: none;
+    -webkit-appearance: none;
+    padding: 6px 30px 6px 14px;
+    border-radius: 999px;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow-sm);
+    font-size: 14px;
+    font-weight: 650;
+    color: var(--text);
+    cursor: pointer;
+    transition: border-color var(--hov) var(--ease), background var(--hov) var(--ease);
+  }
+  select:hover { border-color: var(--line-strong); }
+  svg { position: absolute; right: 10px; pointer-events: none; color: var(--text-dim); }
+}
+
 .epi {
+  flex: none;
+  width: 280px;
   display: flex;
-  gap: 12px;
+  flex-direction: column;
   text-align: left;
   padding: 0;
   background: none;
   cursor: pointer;
-  animation: epi-in 0.5s var(--ease-out) both;
-  animation-delay: calc(var(--i) * 26ms);
-}
-@keyframes epi-in {
-  from { opacity: 0; transform: translate3d(0, 14px, 0); }
-  to { opacity: 1; transform: none; }
 }
 .ethumb {
   position: relative;
-  flex: none;
-  width: 150px;
+  width: 100%;
   aspect-ratio: 16 / 9;
   border-radius: var(--radius);
   overflow: hidden;
@@ -666,8 +705,8 @@ h2 { font-size: 16px; font-weight: 650; letter-spacing: -0.2px; margin: 0 0 14px
   transition: opacity var(--hov) var(--ease), transform var(--hov) var(--ease-out);
 }
 .epi:hover .disc { opacity: 1; transform: none; }
-.einfo { min-width: 0; padding-top: 2px; }
-.emeta { margin: 0; display: flex; gap: 8px; flex-wrap: wrap; font-size: 12.5px; font-weight: 500; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.einfo { min-width: 0; margin-top: 11px; }
+.emeta { margin: 0; display: flex; gap: 8px; flex-wrap: wrap; font-size: 13px; font-weight: 500; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .emeta .seen { color: var(--text-faint); }
 .etitle { margin: 3px 0 0; font-size: 14px; font-weight: 650; color: var(--text); }
 .eov {
@@ -712,9 +751,6 @@ h2 { font-size: 16px; font-weight: 650; letter-spacing: -0.2px; margin: 0 0 14px
 .tcard dd { margin: 0; font-size: 13px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
 .added { margin: 18px 0 0; font-size: 13px; color: var(--text-dim); }
 
-.credit { display: flex; align-items: baseline; gap: 10px; margin: 0 0 7px; font-size: 13px; color: var(--text); }
-.credit .k { flex: none; width: 30px; font-weight: 600; color: var(--text-dim); }
-.band { margin-top: 15px; }
 .person { width: 84px; flex: none; }
 .face {
   width: 84px;

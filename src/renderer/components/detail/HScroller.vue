@@ -32,9 +32,11 @@ onBeforeUnmount(() => window.removeEventListener('resize', measure));
 
 <template>
   <section class="hrow">
-    <header v-if="title">
-      <h2>{{ title }}</h2>
-      <span v-if="count" class="count">{{ count }}</span>
+    <header v-if="title || $slots.header">
+      <slot name="header">
+        <h2>{{ title }}</h2>
+        <span v-if="count" class="count">{{ count }}</span>
+      </slot>
     </header>
     <div class="wrap">
       <button class="edge left" :class="{ off: atStart }" aria-label="向左" @click="nudge(-1)">
@@ -51,15 +53,23 @@ onBeforeUnmount(() => window.removeEventListener('resize', measure));
 </template>
 
 <style scoped>
+/* Same gutter math as the home rows so a band rests its first card on the content line and its art
+   bleeds under the floating rail. The caller's .page defines --gutter/--tuck/--rail-x/--side. */
+.hrow {
+  margin-left: calc(var(--gutter) - var(--tuck) - var(--rail-x));
+  padding: 16px 0 4px;
+  transition: margin var(--rail-dur) var(--rail-ease);
+}
 .hrow header {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  margin-bottom: 14px;
+  padding-left: var(--tuck);
+  margin-bottom: 11px;
 }
 h2 {
-  font-size: 16px;
-  font-weight: 650;
+  font-size: 18px;
+  font-weight: 700;
   letter-spacing: -0.2px;
   margin: 0;
   color: var(--text);
@@ -86,7 +96,8 @@ h2 {
   overflow-x: auto;
   scroll-behavior: smooth;
   scroll-snap-type: x proximity;
-  padding: 4px 0 8px;
+  scroll-padding: 0 var(--side) 0 var(--tuck);
+  padding: 6px var(--side) 20px var(--tuck);
   scrollbar-width: none;
 }
 .track::-webkit-scrollbar {
@@ -114,10 +125,10 @@ h2 {
   transition: opacity var(--hov) var(--ease), transform var(--hov) var(--ease-out), background var(--hov) var(--ease);
 }
 .edge.left {
-  left: 6px;
+  left: calc(var(--tuck) + 7px);
 }
 .edge.right {
-  right: 6px;
+  right: calc(var(--side) + 7px);
 }
 .hrow:hover .edge {
   opacity: 1;

@@ -275,16 +275,14 @@ export async function tmdbSimilar(kind: Kind, tmdbId: string): Promise<TmdbSimil
   return out;
 }
 
-const IMAGES_CAP = 10;
-
 /** Backdrop image paths for the 剧照 strip, best-voted first. `include_image_language=en,null` is
  *  required: without it TMDB filters to the `language` locale's art and this library's Asian titles
- *  return zero backdrops. */
+ *  return zero backdrops. The strip is uncapped — the row scrolls sideways, so every backdrop earns its slot. */
 export async function tmdbImages(kind: Kind, tmdbId: string): Promise<string[]> {
   if (!/^\d{1,8}$/.test(tmdbId)) return [];
   const token = tmdbToken();
   if (!token) return [];
-  const key = `${kind}:${tmdbId}`;
+  const key = `b2:${kind}:${tmdbId}`;
   const s = load();
   const hit = s.images[key];
   if (hit && Date.now() - hit.fetchedAt < SIMILAR_TTL) return hit.value;
@@ -298,7 +296,6 @@ export async function tmdbImages(kind: Kind, tmdbId: string): Promise<string[]> 
   const out = list
     .filter(b => typeof b?.file_path === 'string')
     .sort((a, b) => (b.vote_count || 0) - (a.vote_count || 0))
-    .slice(0, IMAGES_CAP)
     .map(b => String(b.file_path));
   const prev = hit?.value;
   if (!prev || prev.length !== out.length || prev.some((p, i) => p !== out[i])) {
