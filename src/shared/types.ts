@@ -49,6 +49,27 @@ export interface LibraryItem {
   /** Newest added episode behind a Series card; the Latest endpoint has no episode position of its own. */
   latestEpisode?: { season?: number; episode: number };
   userData?: { playedPercentage?: number };
+  /** External ids the server already scraped. Every outside source is keyed off these instead of the
+   *  title, which matters because our item names are Chinese and the outside databases are not. */
+  providers?: Providers;
+  /** Detail endpoint only: the list payload does not carry People. */
+  people?: Person[];
+}
+
+export interface Providers {
+  imdb?: string;
+  tmdb?: string;
+  tvdb?: string;
+}
+
+export interface Person {
+  id: string;
+  name: string;
+  /** Emby uses the same field for the craft role (Director/Writer) and for Actor. */
+  type: string;
+  /** Character name for an Actor, empty for craft roles. */
+  role?: string;
+  imageTag?: string;
 }
 
 export interface LibraryRow {

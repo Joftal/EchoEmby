@@ -24,6 +24,41 @@ const playErr = ref('');
 
 const isSeries = computed(() => item.value?.type === 'Series');
 const isSeason = computed(() => item.value?.type === 'Season');
+
+/** Emby sends craft types before the cast, and the field names are the server's, not ours. */
+const CRAFT: Array<[string, string]> = [
+  ['Director', '导演'],
+  ['Writer', '编剧'],
+  ['Producer', '制片'],
+];
+
+const people = computed(() => item.value?.people || []);
+const craft = computed(() =>
+  CRAFT.map(([type, label]) => ({
+    label,
+    names: people.value
+      .filter(p => p.type === type)
+      .slice(0, 3)
+      .map(p => p.name)
+      .join(' / '),
+  })).filter(c => c.names),
+);
+const cast = computed(() => people.value.filter(p => p.type === 'Actor').slice(0, 14));
+
+/** Person portraits come from the same image route as item art, keyed by the person's own id. */
+const faces = ref<Record<string, string>>({});
+watch(
+  cast,
+  list => {
+    for (const p of list) {
+      if (!p.imageTag || faces.value[p.id]) continue;
+      void app
+        .imageUrl({ id: p.id, primaryImageTag: p.imageTag }, 110)
+        .then(url => (faces.value[p.id] = url));
+    }
+  },
+  { immediate: true },
+);
 // A Series or a Season has no media of its own: PlaybackInfo on either 500s.
 const playableId = computed(() => {
   if (!item.value) return '';
@@ -121,6 +156,23 @@ async function play(id = playableId.value) {
             </button>
             <span v-if="player.busy" class="muted">正在协商播放…</span>
             <span v-else-if="player.state.playMethod" class="pm">{{ player.state.playMethod }}</span>
+          </div>
+        </div>
+      </section>
+
+      <section v-if="craft.length || cast.length" class="block">
+        <h2>演职员</h2>
+        <p v-for="c in craft" :key="c.label" class="credit">
+          <span class="k">{{ c.label }}</span>{{ c.names }}
+        </p>
+        <div v-if="cast.length" class="people">
+          <div v-for="p in cast" :key="p.id" class="person">
+            <div class="face">
+              <img v-if="faces[p.id]" :src="faces[p.id]" alt="" />
+              <span v-else class="ini">{{ p.name.slice(0, 1) }}</span>
+            </div>
+            <p class="pn">{{ p.name }}</p>
+            <p v-if="p.role" class="pr">{{ p.role }}</p>
           </div>
         </div>
       </section>
@@ -347,6 +399,75 @@ h2 {
   border-color: var(--line-strong);
   color: var(--text);
   font-weight: 600;
+}
+.people {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  margin-top: 15px;
+  padding-bottom: 8px;
+}
+.person {
+  width: 104px;
+  flex: none;
+}
+.face {
+  width: 104px;
+  aspect-ratio: 1;
+  border-radius: var(--r-tile);
+  overflow: hidden;
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-sm);
+}
+.face img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.ini {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  font-size: 30px;
+  font-weight: 700;
+  color: var(--text-faint);
+  background: linear-gradient(150deg, var(--bg), var(--bg-elev-2));
+}
+.pn,
+.pr {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.pr {
+  margin: 2px 0 0;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+.pn {
+  font-weight: 600;
+  color: var(--text);
+}
+.credit {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 0 7px;
+  font-size: 13px;
+  color: var(--text);
+}
+.credit .k {
+  flex: none;
+  width: 30px;
+  font-weight: 600;
+  color: var(--text-dim);
 }
 .epi {
   display: flex;

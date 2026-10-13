@@ -1,5 +1,5 @@
 import { net } from 'electron';
-import type { Account, LibraryItem, LibraryRow, PlaybackResult, Settings } from '../../shared/types';
+import type { Account, LibraryItem, LibraryRow, Person, PlaybackResult, Providers, Settings } from '../../shared/types';
 import { buildDeviceProfile } from './deviceProfile';
 
 export interface Identity {
@@ -50,7 +50,27 @@ const authHeader = (id: Identity, token?: string): string =>
   `MediaBrowser Client="${id.clientName}", Device="${id.deviceName}", DeviceId="${id.deviceId}", Version="${id.clientVersion}"${token ? `, Token="${token}"` : ''}`;
 
 const FIELDS =
-  'BasicSyncInfo,CanDelete,CanDownload,PrimaryImageAspectRatio,ProductionYear,Status,EndDate,CommunityRating,OfficialRating,Overview,MediaStreams,Container,Bitrate,VideoRange,Width,Height,SeriesName,SeriesId,ParentId,ChildCount,Genres,PremiereDate,Studio';
+  'BasicSyncInfo,CanDelete,CanDownload,PrimaryImageAspectRatio,ProductionYear,Status,EndDate,CommunityRating,OfficialRating,Overview,MediaStreams,Container,Bitrate,VideoRange,Width,Height,SeriesName,SeriesId,ParentId,ChildCount,Genres,PremiereDate,Studio,ProviderIds';
+
+/** People is a detail-only field: on the list endpoints it would multiply every row by the cast size. */
+const DETAIL_FIELDS = FIELDS + ',People';
+
+// Measured on this server: 40/40 items carry a Tmdb id and 35/40 an Imdb id, so outside sources can
+// be keyed off ids instead of guessing from a Chinese title.
+const mapProviders = (raw: any): Providers | undefined => {
+  if (!raw) return undefined;
+  const p: Providers = {};
+  if (raw.Imdb) p.imdb = raw.Imdb;
+  if (raw.Tmdb) p.tmdb = raw.Tmdb;
+  if (raw.Tvdb) p.tvdb = raw.Tvdb;
+  return p.imdb || p.tmdb || p.tvdb ? p : undefined;
+};
+
+// Server order is craft roles first, then cast, so the cap keeps the directors.
+const mapPeople = (raw: any): Person[] | undefined => {
+  if (!Array.isArray(raw) || !raw.length) return undefined;
+  return raw.slice(0, 24).map((p: any) => ({ id: p.Id, name: p.Name, type: p.Type, role: p.Role, imageTag: p.PrimaryImageTag }));
+};
 
 // The item endpoint answers Studios with objects, the list endpoint with names.
 const studioName = (r: any): string | undefined => {
@@ -82,6 +102,7 @@ const mapItem = (r: any): LibraryItem => ({
   userData: r.UserData
     ? { playedPercentage: r.UserData.PlayedPercentage }
     : undefined,
+  providers: mapProviders(r.ProviderIds),
 });
 
 async function http(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
@@ -229,8 +250,10 @@ export class EmbyClient {
   }
 
   async item(id: string): Promise<LibraryItem> {
-    const j = await this.get<any>(`/Users/${this.account.userId}/Items/${id}`, { Fields: FIELDS });
-    return mapItem(j);
+    const j = await this.get<any>(`/Users/${this.account.userId}/Items/${id}`, { Fields: DETAIL_FIELDS });
+    const it = mapItem(j);
+    it.people = mapPeople(j.People);
+    return it;
   }
 
   async seasons(seriesId: string): Promise<LibraryItem[]> {
