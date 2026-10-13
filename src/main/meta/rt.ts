@@ -54,7 +54,9 @@ const get = async (url: string, headers: Record<string, string>, timeoutMs: numb
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await net.fetch(url, { headers, signal: ctrl.signal });
-    return res.ok ? await res.text() : null;
+    // 4xx/5xx is an answer about the title; only a dead transport is not.
+    if (res.status >= 500) return null;
+    return await res.text();
   } catch {
     return null;
   } finally {
@@ -102,28 +104,31 @@ const parse = (html: string, fetchedAt: number): RtScores | null => {
   return out.tomatometer === undefined && out.popcorn === undefined ? null : out;
 };
 
-const resolveSlug = async (imdb: string): Promise<string | null> => {
+/** `answered: false` means the request never got through, which must not be cached as "no page". */
+const resolveSlug = async (imdb: string): Promise<{ slug: string | null; answered: boolean }> => {
   const s = load();
-  if (s.slugs[imdb]) return s.slugs[imdb];
+  if (s.slugs[imdb]) return { slug: s.slugs[imdb], answered: true };
   const q = new URLSearchParams({
     query: `SELECT ?rt WHERE { ?item wdt:P345 "${imdb}". ?item wdt:P1258 ?rt } LIMIT 1`,
     format: 'json',
   });
   const text = await get(`https://query.wikidata.org/sparql?${q}`, { 'User-Agent': WD_UA, Accept: 'application/sparql-results+json' }, 12000);
-  if (!text) return null;
-  let slug = '';
+  if (text === null) return { slug: null, answered: false };
+  let value = '';
   try {
-    slug = JSON.parse(text).results?.bindings?.[0]?.rt?.value || '';
+    value = JSON.parse(text).results?.bindings?.[0]?.rt?.value || '';
   } catch {
-    return null;
+    // Wikidata answers an HTML error page when it dislikes the request; that is not a negative.
+    return { slug: null, answered: false };
   }
-  if (!/^\/?(m|tv)\//.test(slug)) return null;
-  s.slugs[imdb] = slug.replace(/^\/+/, '');
+  if (!value) return { slug: null, answered: true };
+  if (!/^\/?(m|tv)\//.test(value)) return { slug: null, answered: true };
+  s.slugs[imdb] = value.replace(/^\/+/, '');
   persist();
-  return s.slugs[imdb];
+  return { slug: s.slugs[imdb], answered: true };
 };
 
-/** Null means "no RT page for this id", which the UI renders as the absence of a badge. */
+/** Null means "no RT numbers for this id", which the UI renders as the absence of a badge. */
 export async function rtScores(imdb: string): Promise<RtScores | null> {
   // The id goes into a query string, so anything that is not shaped like one is refused here.
   if (!/^tt\d{6,10}$/.test(imdb)) return null;
@@ -132,11 +137,23 @@ export async function rtScores(imdb: string): Promise<RtScores | null> {
   if (hit && Date.now() - hit.fetchedAt < ('missing' in hit ? MISS_TTL : SCORE_TTL)) {
     return 'missing' in hit ? null : hit;
   }
-  const slug = await resolveSlug(imdb);
-  const fresh = Date.now();
-  const html = slug ? await get(`https://www.rottentomatoes.com/${slug}`, { 'User-Agent': SITE_UA, 'Accept-Language': 'en-US,en;q=0.9' }, 15000) : null;
-  const parsed = html ? parse(html, fresh) : null;
-  s.rt[imdb] = parsed || { missing: true, fetchedAt: fresh };
+  const miss = () => {
+    s.rt[imdb] = { missing: true, fetchedAt: Date.now() };
+    persist();
+  };
+  const resolved = await resolveSlug(imdb);
+  if (!resolved.slug) {
+    if (resolved.answered) miss();
+    return null;
+  }
+  const html = await get(`https://www.rottentomatoes.com/${resolved.slug}`, { 'User-Agent': SITE_UA, 'Accept-Language': 'en-US,en;q=0.9' }, 15000);
+  if (html === null) return null;
+  const parsed = parse(html, Date.now());
+  if (!parsed) {
+    miss();
+    return null;
+  }
+  s.rt[imdb] = parsed;
   persist();
   return parsed;
 }
