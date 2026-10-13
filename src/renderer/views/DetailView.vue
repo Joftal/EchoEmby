@@ -593,27 +593,24 @@ h1 {
 }
 .tagline { margin: 0 0 8px; font-size: 14px; font-style: italic; color: rgba(255, 255, 255, 0.82); }
 .line { font-size: 13.5px; font-weight: 500; color: rgba(255, 255, 255, 0.86); margin-bottom: 12px; font-variant-numeric: tabular-nums; }
-.badges { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.badges { display: flex; align-items: center; flex-wrap: wrap; gap: 7px 13px; margin-bottom: 14px; }
 .b {
   display: inline-flex;
   align-items: center;
-  padding: 3px 10px;
-  border-radius: 999px;
   font-size: 13px;
   font-weight: 650;
   font-variant-numeric: tabular-nums;
-  background: rgba(16, 16, 22, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  backdrop-filter: blur(6px);
+  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.7);
 }
 .rate { color: #ffe08a; }
-/* The mark carries the brand, so the number stays plain white and only has to be readable. Everything
-   is aligned by height, not width: IMDb's boxed wordmark and TMDB's symbol stay near-square, Bangumi's
-   wordmark is the one that stretches wide, because that is the only shape it ships in. */
-.b.score { gap: 7px; }
-.lg { height: 17px; width: auto; display: block; }
+/* The marks sit straight on the art, so the strip has to read as one line of numbers rather than a row
+   of plates: no border, no plate, and the gap between groups barely wider than the gap inside one.
+   Everything is aligned by height and never by width — IMDb ships as a box, TMDB and Bangumi as
+   wordmarks, and a wordmark squeezed square turns to mush at 18px. */
+.b.score { gap: 5px; }
+.lg { height: 18px; width: auto; display: block; filter: drop-shadow(0 1px 5px rgba(0, 0, 0, 0.55)); }
 .b.score i { font-style: normal; color: #fff; }
-.cert { color: rgba(255, 255, 255, 0.9); }
+.cert { color: rgba(255, 255, 255, 0.92); }
 .overview {
   font-size: 14px;
   line-height: 1.65;
