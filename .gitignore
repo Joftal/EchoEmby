@@ -1,0 +1,7 @@
+node_modules
+dist
+resources/mpv
+tools/
+.probe
+*.log
+.vite

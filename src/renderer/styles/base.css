@@ -1,0 +1,223 @@
+:root {
+  --bg: #f4f4f7;
+  --bg-elev: #ffffff;
+  --bg-elev-2: #ececf1;
+  --line: rgba(18, 18, 26, 0.14);
+  --line-strong: rgba(18, 18, 26, 0.28);
+  --text: #12121a;
+  /* Text colours are opaque on purpose. An alpha grey composites against whatever sits behind
+     it, so the same token measures 1.9:1 on the pastel wash and 2.7:1 on a white card; small
+     Chinese glyphs then read as smudges. These three steps hold AAA/AA on every surface here. */
+  --text-dim: #33333d;
+  --text-faint: #55555f;
+  --accent: #2f6bed;
+  --accent-soft: rgba(47, 107, 237, 0.1);
+  --brand: #52b54b;
+  --ink: #14141c;
+  --on-ink: #ffffff;
+  --chip: rgba(18, 18, 26, 0.075);
+  --chip-hi: rgba(18, 18, 26, 0.13);
+  /* The rail's frost. It has to be strong enough that the panel's own surface, not whatever it is
+     floating over, decides how bright the sidebar is: at the old 0.46 the panel read 158 at the top
+     (over the hero art) and 249 at the bottom (over the page plate), and that 91-point ramp is what
+     the user kept calling 「侧边栏/导航栏底部的高光」. No hero-side wash can fix it — a white fill can
+     only lift the dark half, never dim the bright half, so the two meet only as alpha -> 1. Measured on
+     an aligned frame: 91 points of ramp at 0.46, 64 at 0.62, 47 at 0.72, 30 at 0.82, 26 at 0.88. The
+     floor is 0.88 because that is where the nav's own text clears: with the hero's left band deleted
+     the panel's top sits at 206 and 发现 measured CR 4.75, and 0.88 lifts it to 5.13.
+     Tinted with --bg rather than pure white on purpose: white at 0.82 puts the panel at 253 against a
+     244 page, i.e. a bar that glows next to the content it sits beside. */
+  --glass: rgba(244, 244, 247, 0.88);
+  /* Also used as text on light cards; #d1393e only reached 4.1:1 there, so the red carries
+     the same job at 5.9:1 while white-on-red stays at 6.5:1. */
+  --danger: #b3262c;
+  /* The 10px step, shared by two families that happen to want the same corner: every image tile
+     (poster, still, hero thumb, list thumb, the skeleton cards that stand in for them) and every
+     30px chrome control. It used to be 13px and the skeleton card was its only reader, so the
+     loading screen had a rounder corner than the art that replaced it while the tiles themselves
+     carried four different radii (10 / 9 / 12 / 13). */
+  --radius: 10px;
+  /* The rest of the scale, by role, measured back off the running app rather than imposed on it:
+     --r-row is the nav row family and it does follow height/3 (30px -> 10, 38px -> 12.7), which is
+     why a row and the disc inside it round at the same rate; --r-badge is every chip and skeleton
+     bar; --r-tile is a surface that holds art; --r-modal and --r-panel are the two floating
+     containers. Form fields and their submit button take --radius together at 10px, which is *not*
+     height/3 (they are 45px tall, so that rule would ask for 15) — what they share is the corner of
+     their own group, and a 45px field with 15px corners is a different design from this one.
+     Pills (999px) and circles (50%) are not part of a scale and stay literal; the seek bar's 4px
+     corners were a fourth family of one, and on a 4px-tall box they clamp to exactly what 999px
+     gives, so they are now written as the pill they already drew. */
+  --r-badge: 6px;
+  --r-row: 12px;
+  --r-tile: 14px;
+  --r-modal: 20px;
+  --r-panel: 22px;
+  /* Only the surfaces that can meet each other across a component boundary are in here: the rail is
+     under the title bar, both are under a toast, and the modal scrim is under nothing. The small
+     integers inside a component (the disc over its poster, the arrow over its track, the row over
+     the parallax layer) order themselves locally and stay as they are. */
+  --z-top: 4;
+  --z-rail: 6;
+  --z-bar: 7;
+  --z-toast: 9;
+  --z-modal: 20;
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  /* The rail sweep is long, so its curve has to keep moving. Distance covered at 20/40/60/80% of
+     the time, per 20% window: --ease gave 66/26/6/2 (a snap then a creep), the previous rail curve
+     15/48/25/10/1 (still front-loaded), this one 12/29/30/20/6 — the middle two windows carry it. */
+  --rail-ease: cubic-bezier(0.35, 0.05, 0.5, 0.9);
+  /* One schedule for the rail and for everything that insets itself by the rail's width, so the
+     content keeps its gap: measured constant at 36.5px across the whole sweep. Staggering the two
+     layers instead bought about 8fps and left a 105px hole mid-flight, which reads as latency. */
+  --rail-dur: 0.32s;
+  /* Labels squeeze away with the panel, but reappear only once the space is there. */
+  --fade-t: 0.22s;
+  --fade-d: 0.1s;
+  /* One rhythm for pointer feedback. A single hover used to move things on 0.16 / 0.18 / 0.2 / 0.22 /
+     0.24 / 0.3 / 0.34s across two curves — inside one card the frame lifted in 0.32s while its rating
+     badge slid in 0.25s and its play disc scaled in 0.34s, three reactions to one event. Motion takes
+     --hov on --ease-out, paint takes --hov on --ease. Where a press has its own timing it stays
+     shorter than hover (0.1-0.12s on the cards and nav rows). */
+  --hov: 0.24s;
+  --titlebar-h: 44px;
+  --shadow: 0 16px 40px rgba(18, 18, 34, 0.13);
+  --shadow-sm: 0 2px 10px rgba(18, 18, 34, 0.06);
+  /* One placeholder sweep for the whole app. The card-level shimmer (#eeeef2 -> #f7f7fa, 1.3s) and
+     the page-level one (the elev tokens, 1.4s) put a bright band and a dark band on the same screen,
+     which reads as two loading states stacked on each other. The keyframes are global because a
+     scoped <style> block renames them per component, which is how the duplicate got written.
+     The base is its own step, not --bg-elev-2: #ececf1 on the #f4f4f7 page is a 3-point difference,
+     so the row skeletons on the loading screen nearly disappeared (fix-min.png). */
+  --bg-skel: #e2e2ea;
+  --shimmer: linear-gradient(100deg, var(--bg-skel) 30%, var(--bg-elev) 50%, var(--bg-skel) 70%);
+}
+
+@keyframes sh {
+  to {
+    background-position: -220% 0;
+  }
+}
+
+* {
+  box-sizing: border-box;
+  scrollbar-width: none;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 400 14px/1.55 'Segoe UI Variable Text', 'Segoe UI', 'Microsoft YaHei UI', system-ui, sans-serif;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* The pastel wash every page sits on; the lobby hero art covers it, the lists let it show.
+   Kept pale on purpose: the wash is the ground for 11-13px meta text, and a saturated blob
+   behind it lowers the contrast of the very lines that need to be read. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(58% 46% at 14% 4%, rgba(255, 208, 226, 0.28), transparent 62%),
+    radial-gradient(52% 44% at 86% 2%, rgba(203, 214, 255, 0.26), transparent 64%),
+    radial-gradient(66% 56% at 74% 98%, rgba(226, 208, 252, 0.24), transparent 66%),
+    radial-gradient(50% 40% at 4% 92%, rgba(208, 238, 244, 0.22), transparent 62%);
+}
+#app {
+  position: relative;
+  z-index: 1;
+}
+
+/* Player overlay: the window is transparent so mpv's surface shows through. */
+html.overlay,
+html.overlay body,
+html.overlay #app {
+  background: transparent;
+}
+html.overlay body::before {
+  display: none;
+}
+/* Over video there is no opaque ground for ClearType to resolve against, so the control layer
+   keeps grayscale AA; every other page uses the subpixel default for crisper small glyphs. */
+html.overlay body {
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+  /* Every control label in the app is a button; half a step of weight is what separates a
+     clickable word from the 400-weight prose around it at 12-13px. */
+  font-weight: 500;
+  color: inherit;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+input {
+  font: inherit;
+  font-weight: 500;
+  color: inherit;
+}
+
+input::placeholder {
+  color: var(--text-faint);
+  opacity: 1;
+}
+
+::selection {
+  background: rgba(47, 107, 237, 0.18);
+}
+
+::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.drag {
+  -webkit-app-region: drag;
+}
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+.page-enter-active,
+.page-leave-active {
+  transition: opacity 0.24s var(--ease), transform 0.3s var(--ease);
+}
+.page-enter-from {
+  opacity: 0;
+  transform: translate3d(2.5%, 0, 0);
+}
+.page-leave-to {
+  opacity: 0;
+  transform: translate3d(-2.5%, 0, 0);
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.22s var(--ease);
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "name": "echoemby",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Windows Emby client — Electron UI with an embedded libmpv playback surface",
+  "main": "dist/main/index.cjs",
+  "scripts": {
+    "mpv": "node scripts/get-mpv.mjs",
+    "dev": "node scripts/dev.mjs",
+    "build": "node scripts/build.mjs && vite build",
+    "start": "electron .",
+    "typecheck": "vue-tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "koffi": "^3.3.3",
+    "pinia": "^2.2.6",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "electron": "^33.4.11",
+    "esbuild": "^0.24.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5",
+    "vue-tsc": "^3.3.13"
+  }
+}
