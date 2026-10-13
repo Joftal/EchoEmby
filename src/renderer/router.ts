@@ -5,6 +5,7 @@ import DetailView from './views/DetailView.vue';
 import PlayerView from './views/PlayerView.vue';
 import BrowseView from './views/BrowseView.vue';
 import ServersView from './views/ServersView.vue';
+import SettingsView from './views/SettingsView.vue';
 
 export const router = createRouter({
   history: createWebHashHistory(),
@@ -14,6 +15,7 @@ export const router = createRouter({
     { path: '/', name: 'home', component: HomeView },
     { path: '/browse', name: 'browse', component: BrowseView },
     { path: '/servers', name: 'servers', component: ServersView },
+    { path: '/settings', name: 'settings', component: SettingsView },
     { path: '/detail/:id', name: 'detail', component: DetailView, props: true },
   ],
 });

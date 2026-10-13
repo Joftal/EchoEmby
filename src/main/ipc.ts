@@ -5,7 +5,7 @@ import * as config from './config';
 import { MpvPlayer } from './player/mpv';
 import { StreamBridge } from './player/bridge';
 import { PlayerWindows } from './player/windows';
-import { emptyPlayerState, type Account, type IpcResult, type PlayerState } from '../shared/types';
+import { emptyPlayerState, type Account, type IpcResult, type PlayerState, type Settings } from '../shared/types';
 
 const wrap = async <T>(fn: () => Promise<T> | T): Promise<IpcResult<T>> => {
   try {
@@ -156,6 +156,8 @@ export class AppServices {
     );
 
     ipcMain.handle('app:pingServer', (_e, baseUrl: string) => wrap(() => EmbyClient.publicInfo(baseUrl, this.identity())));
+
+    ipcMain.handle('app:setSettings', (_e, patch: Partial<Settings>) => wrap(() => config.saveSettings(patch)));
 
     // Every card shows its own server's totals, so this must read with that account's token, not the active one.
     ipcMain.handle('app:accountCounts', (_e, accountId: string) => wrap(async () => {

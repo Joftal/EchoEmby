@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
-import type { AppConfig, LibraryItem, LibraryRow } from '../../shared/types';
+import type { AppConfig, LibraryItem, LibraryRow, Settings } from '../../shared/types';
 
 export const useAppStore = defineStore('app', () => {
   const config = ref<AppConfig | null>(null);
@@ -81,6 +81,18 @@ export const useAppStore = defineStore('app', () => {
     return true;
   }
 
+  /** The main process answers with the whole merged block, so the page reads back what it wrote. */
+  async function saveSettings(patch: Partial<Settings>): Promise<boolean> {
+    error.value = '';
+    const r = await window.echoemby.app.setSettings(patch);
+    if (!r.ok) {
+      error.value = r.error || '保存失败';
+      return false;
+    }
+    if (r.data && config.value) config.value = { ...config.value, settings: r.data };
+    return true;
+  }
+
   let viewsPromise: Promise<void> | null = null;
 
   const counts = ref<Record<string, { movies: number; series: number }>>({});
@@ -143,5 +155,5 @@ export const useAppStore = defineStore('app', () => {
     return url;
   }
 
-  return { config, account, rows, views, loading, error, ready, counts, init, login, switchTo, remove, update, loadCounts, loadHome, loadViews, imageUrl, backdropUrl };
+  return { config, account, rows, views, loading, error, ready, counts, init, login, switchTo, remove, update, saveSettings, loadCounts, loadHome, loadViews, imageUrl, backdropUrl };
 });

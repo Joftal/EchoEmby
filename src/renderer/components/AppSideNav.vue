@@ -26,6 +26,9 @@ const ICONS = {
   heart: ['M12 19.6S5.2 15.2 5.2 10.7A3.9 3.9 0 0 1 12 8.3a3.9 3.9 0 0 1 6.8 2.4c0 4.5-6.8 8.9-6.8 8.9Z'],
   layers: ['M4 8.4 12 4.2l8 4.2-8 4.2z', 'M4 8.4v7.2L12 19.8l8-4.2v-7.2'],
   search: ['M11 4.6a6.4 6.4 0 1 0 0 12.8 6.4 6.4 0 0 0 0-12.8Z', 'M19.4 19.4 15.6 15.6'],
+  // Two rails with knobs, not a gear: a toothed rim needs ~7px of ink to read as a gear, and at the
+  // 19px icon column it came back as a sun (the teeth detached from the circle at that stroke weight).
+  tune: ['M4.4 8h2.1', 'M11.1 8h8.5', 'M8.8 5.7a2.3 2.3 0 1 0 0 4.6 2.3 2.3 0 0 0 0-4.6Z', 'M4.4 16h8.5', 'M17.5 16h2.1', 'M15.2 13.7a2.3 2.3 0 1 0 0 4.6 2.3 2.3 0 0 0 0-4.6Z'],
   chevL: ['M14.5 6.5 9 12l5.5 5.5'],
   chevR: ['M9.5 6.5 15 12l-5.5 5.5'],
 };
@@ -39,6 +42,7 @@ const mine: NavItem[] = [
 
 const activeKey = computed(() => {
   if (route.name === 'home') return 'home';
+  if (route.name === 'settings') return 'set';
   if (route.name === 'browse') return route.query.view ? `v${route.query.view}` : `k${route.query.kind || ''}`;
   return '';
 });
@@ -60,6 +64,7 @@ const libs = computed(() => {
   if (c.series > 0) parts.push(`电视剧 ${c.series}`);
   return parts.join('·');
 });
+const railEl = ref<HTMLElement | null>(null);
 const listEl = ref<HTMLElement | null>(null);
 
 /** The library group is server-sized, so the list can and does end mid-row (measured: 42px of
@@ -77,10 +82,10 @@ function checkMore(): void {
     a measured offset (which measured 31px adrift mid-sweep). Moving between rows is a FLIP —
     remember where it was, let the patch drop it into the new row, then play the difference back. */
 watch(activeKey, () => {
-  const from = listEl.value?.querySelector<HTMLElement>('.glider')?.getBoundingClientRect();
+  const from = railEl.value?.querySelector<HTMLElement>('.glider')?.getBoundingClientRect();
   if (!from) return;
   void nextTick(() => {
-    const g = listEl.value?.querySelector<HTMLElement>('.glider');
+    const g = railEl.value?.querySelector<HTMLElement>('.glider');
     if (!g) return;
     const dy = from.top - g.getBoundingClientRect().top;
     if (!dy) return;
@@ -114,7 +119,7 @@ watch(() => store.views.length, () => void nextTick(checkMore));
 </script>
 
 <template>
-  <aside class="rail" :class="{ min: collapsed }">
+  <aside ref="railEl" class="rail" :class="{ min: collapsed }">
     <header class="head">
       <button class="logo" @click="emit('toggle')">
         <img class="wm" :src="logoUrl" alt="" width="22" height="22" />
@@ -186,6 +191,13 @@ watch(() => store.views.length, () => void nextTick(checkMore));
     </nav>
 
     <footer class="foot">
+      <button class="item" :class="{ on: activeKey === 'set' }" @click="go('/settings')">
+        <span v-if="activeKey === 'set'" class="glider"></span>
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path v-for="p in ICONS.tune" :key="p" :d="p" />
+        </svg>
+        <span class="lb">设置</span>
+      </button>
       <button class="acct" :class="{ on: serversOn }" @click="go('/servers')">
         <span class="av"><EmbyMark :size="15" /></span>
         <span class="who">
@@ -491,6 +503,9 @@ watch(() => store.views.length, () => void nextTick(checkMore));
 
 .foot {
   flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   padding-top: 8px;
   border-top: 1px solid rgba(255, 255, 255, 0.5);
 }

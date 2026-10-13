@@ -12,6 +12,7 @@ const api: EchoEmbyApi = {
     pingServer: baseUrl => invoke('app:pingServer', baseUrl),
     accountCounts: accountId => invoke('app:accountCounts', accountId),
     switchAccount: accountId => invoke('app:switchAccount', accountId),
+    setSettings: patch => invoke('app:setSettings', patch),
   },
   emby: {
     views: () => invoke('emby:views'),

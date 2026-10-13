@@ -1,4 +1,4 @@
-import type { Account, AppConfig, IpcResult, LibraryItem, LibraryRow, PlayerState } from './types';
+import type { Account, AppConfig, IpcResult, LibraryItem, LibraryRow, PlayerState, Settings } from './types';
 
 export interface EchoEmbyApi {
   app: {
@@ -9,6 +9,7 @@ export interface EchoEmbyApi {
     pingServer(baseUrl: string): Promise<IpcResult<{ serverName: string; version: string }>>;
     accountCounts(accountId: string): Promise<IpcResult<{ movies: number; series: number }>>;
     switchAccount(accountId: string): Promise<IpcResult<boolean>>;
+    setSettings(patch: Partial<Settings>): Promise<IpcResult<Settings>>;
   };
   emby: {
     views(): Promise<IpcResult<LibraryItem[]>>;
