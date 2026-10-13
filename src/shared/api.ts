@@ -1,4 +1,4 @@
-import type { Account, AppConfig, IpcResult, LibraryItem, LibraryRow, PlayerState, RtScores, Settings } from './types';
+import type { Account, AppConfig, IpcResult, LibraryItem, LibraryRow, MetaKeys, PlayerState, RtScores, Settings, TmdbMeta, TmdbStills } from './types';
 
 export interface EchoEmbyApi {
   app: {
@@ -23,6 +23,9 @@ export interface EchoEmbyApi {
   meta: {
     /** Null is a normal answer: the title simply has no Rotten Tomatoes page we can find. */
     rt(imdb: string): Promise<IpcResult<RtScores | null>>;
+    tmdb(input: { kind: 'movie' | 'tv'; tmdbId: string }): Promise<IpcResult<TmdbMeta | null>>;
+    tmdbStills(input: { tmdbId: string; season: number }): Promise<IpcResult<{ value: TmdbStills; any: boolean } | null>>;
+    setKeys(patch: Partial<MetaKeys>): Promise<IpcResult<MetaKeys | undefined>>;
   };
   player: {
     play(itemId: string): Promise<IpcResult<boolean>>;

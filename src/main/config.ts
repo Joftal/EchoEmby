@@ -2,7 +2,7 @@ import { app, safeStorage } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
-import type { Account, AppConfig, Settings } from '../shared/types';
+import type { Account, AppConfig, MetaKeys, Settings } from '../shared/types';
 
 const DEFAULT_SETTINGS: Settings = {
   maxStreamingBitrate: 140_000_000,
@@ -34,6 +34,22 @@ const writeToken = (token: string): string => {
   return 'dpapi:' + safeStorage.encryptString(token).toString('base64');
 };
 
+const decodeMeta = (raw: Partial<MetaKeys> | undefined): MetaKeys | undefined => {
+  if (!raw) return undefined;
+  const out: MetaKeys = {};
+  if (typeof raw.tmdbV4Token === 'string' && raw.tmdbV4Token) out.tmdbV4Token = readToken(raw.tmdbV4Token);
+  if (typeof raw.traktClientId === 'string' && raw.traktClientId) out.traktClientId = readToken(raw.traktClientId);
+  return Object.keys(out).length ? out : undefined;
+};
+
+const encodeMeta = (meta: MetaKeys | undefined): MetaKeys | undefined => {
+  if (!meta) return undefined;
+  const out: MetaKeys = {};
+  if (meta.tmdbV4Token) out.tmdbV4Token = writeToken(meta.tmdbV4Token);
+  if (meta.traktClientId) out.traktClientId = writeToken(meta.traktClientId);
+  return Object.keys(out).length ? out : undefined;
+};
+
 const defaults = (): AppConfig => ({
   deviceId: randomUUID(),
   deviceName: process.env.COMPUTERNAME || 'EchoEmby',
@@ -50,7 +66,7 @@ export function load(): AppConfig {
   if (cache) return cache;
   try {
     const parsed = JSON.parse(readFileSync(file(), 'utf8')) as AppConfig & { accounts: Account[] };
-    cache = { ...defaults(), ...parsed, settings: pickSettings(parsed.settings) };
+    cache = { ...defaults(), ...parsed, settings: pickSettings(parsed.settings), meta: decodeMeta(parsed.meta) };
     cache.accounts = (parsed.accounts || []).map(a => ({ ...a, accessToken: readToken(a.accessToken) }));
   } catch {
     cache = defaults();
@@ -61,7 +77,11 @@ export function load(): AppConfig {
 
 export function save(cfg: AppConfig = cache!): void {
   mkdirSync(path.dirname(file()), { recursive: true });
-  const copy: AppConfig = { ...cfg, accounts: cfg.accounts.map(a => ({ ...a, accessToken: writeToken(a.accessToken) })) };
+  const copy: AppConfig = {
+    ...cfg,
+    accounts: cfg.accounts.map(a => ({ ...a, accessToken: writeToken(a.accessToken) })),
+    meta: encodeMeta(cfg.meta),
+  };
   writeFileSync(file(), JSON.stringify(copy, null, 2), 'utf8');
   cache = cfg;
 }
@@ -124,4 +144,21 @@ export function saveSettings(patch: Partial<Settings>): Settings {
   cfg.settings = pickSettings({ ...cfg.settings, ...patch });
   save(cfg);
   return cfg.settings;
+}
+
+/** Empty-string patches delete that key; undefined leaves it alone. The cache in each meta module
+ *  is not invalidated here — old entries stay until their TTL expires, which is fine because the
+ *  numbers themselves did not come from the key. */
+export function setMetaKeys(patch: Partial<MetaKeys>): MetaKeys | undefined {
+  const cfg = load();
+  const cur: MetaKeys = { ...(cfg.meta || {}) };
+  for (const k of ['tmdbV4Token', 'traktClientId'] as const) {
+    const v = patch[k];
+    if (v === undefined) continue;
+    if (v === '') delete cur[k];
+    else cur[k] = v;
+  }
+  cfg.meta = Object.keys(cur).length ? cur : undefined;
+  save(cfg);
+  return cfg.meta;
 }

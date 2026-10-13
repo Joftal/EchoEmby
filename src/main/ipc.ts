@@ -3,6 +3,7 @@ import { EmbyClient, EmbyError, normalizeBase } from './emby/client';
 import { detail, explain } from './emby/errors';
 import * as config from './config';
 import { rtScores } from './meta/rt';
+import { tmdbMeta, tmdbSeasonStills } from './meta/tmdb';
 import { MpvPlayer } from './player/mpv';
 import { StreamBridge } from './player/bridge';
 import { PlayerWindows } from './player/windows';
@@ -188,6 +189,9 @@ export class AppServices {
     );
 
     ipcMain.handle('meta:rt', (_e, imdb: string) => wrap(() => rtScores(imdb)));
+    ipcMain.handle('meta:tmdb', (_e, { kind, tmdbId }: { kind: 'movie' | 'tv'; tmdbId: string }) => wrap(() => tmdbMeta(kind, tmdbId)));
+    ipcMain.handle('meta:tmdbStills', (_e, { tmdbId, season }: { tmdbId: string; season: number }) => wrap(() => tmdbSeasonStills(tmdbId, season)));
+    ipcMain.handle('meta:setKeys', (_e, patch: { tmdbV4Token?: string; traktClientId?: string }) => wrap(() => config.setMetaKeys(patch)));
 
     ipcMain.handle('player:play', (_e, itemId: string) =>
       wrap(async () => {

@@ -24,6 +24,13 @@ export interface AppConfig {
   accounts: Account[];
   activeAccountId: string | null;
   settings: Settings;
+  meta?: MetaKeys;
+}
+
+/** User-supplied keys for outside metadata sources; both fields are encrypted at rest. */
+export interface MetaKeys {
+  tmdbV4Token?: string;
+  traktClientId?: string;
 }
 
 export interface LibraryItem {
@@ -80,6 +87,22 @@ export interface RtScores {
   whereToWatch?: string[];
   fetchedAt: number;
 }
+
+/** TMDB fields we merge in for one title, cached by `kind:tmdbId`. Every field here fills a hole the
+ *  Emby server left empty; none of them replaces data the server already returns. */
+export interface TmdbMeta {
+  overviewZh?: string;
+  voteAverage?: number;
+  voteCount?: number;
+  /** Names from the Writing department, up to three, only used when the server has no Writer people. */
+  writers?: string[];
+  /** US certification (`PG-13`, `TV-14`) or the closest first-listed country when there is no US entry. */
+  cert?: string;
+  fetchedAt: number;
+}
+
+/** Episode stills for one season; keys are TMDB's episode numbers (1-based), values are image.tmdb.org paths. */
+export type TmdbStills = Record<number, string>;
 
 export interface LibraryRow {
   key: string;

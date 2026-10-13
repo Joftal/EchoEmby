@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import MediaCard from '../components/home/MediaCard.vue';
-import type { LibraryItem, RtScores } from '../../shared/types';
+import type { LibraryItem, RtScores, TmdbMeta, TmdbStills } from '../../shared/types';
 import { usePlayerStore } from '../stores/player';
 import { useAppStore } from '../stores/app';
 import { fmtDate, fmtRuntime } from '../lib/format';
@@ -22,9 +22,17 @@ const loading = ref(true);
 const error = ref('');
 const playErr = ref('');
 const rt = ref<RtScores | null>(null);
+const tmdb = ref<TmdbMeta | null>(null);
+const stills = ref<TmdbStills>({});
 
 const isSeries = computed(() => item.value?.type === 'Series');
 const isSeason = computed(() => item.value?.type === 'Season');
+const tmdbKind = computed<'movie' | 'tv' | null>(() => {
+  const t = item.value?.type;
+  if (t === 'Movie') return 'movie';
+  if (t === 'Series' || t === 'Season') return 'tv';
+  return null;
+});
 
 /** Emby sends craft types before the cast, and the field names are the server's, not ours. */
 const CRAFT: Array<[string, string]> = [
@@ -45,6 +53,21 @@ const craft = computed(() =>
   })).filter(c => c.names),
 );
 const cast = computed(() => people.value.filter(p => p.type === 'Actor').slice(0, 14));
+
+/** TMDB only shows through where the server left a hole; nothing overrides server data. */
+const hasServerWriter = computed(() => people.value.some(p => p.type === 'Writer'));
+const writerFallback = computed(() => (!hasServerWriter.value && tmdb.value?.writers?.length ? tmdb.value.writers.join(' / ') : ''));
+const overviewText = computed(() => item.value?.overview || tmdb.value?.overviewZh || '');
+const rating = computed(() => {
+  const r = item.value?.communityRating ?? tmdb.value?.voteAverage;
+  return r && r >= 1 ? r.toFixed(1) : '';
+});
+const certText = computed(() => item.value?.officialRating || tmdb.value?.cert || '');
+
+/** image.tmdb.org answers directly on this machine (the API host needs the system proxy), and w500
+ *  is the smallest TMDB size that comfortably covers a 286px card at 1.25 DPR. */
+const stillUrl = (ep: number | undefined): string =>
+  ep != null && stills.value[ep] ? `https://image.tmdb.org/t/p/w500${stills.value[ep]}` : '';
 
 /** Person portraits come from the same image route as item art, keyed by the person's own id. */
 const faces = ref<Record<string, string>>({});
@@ -71,17 +94,38 @@ const playableId = computed(() => {
 
 const genres = computed(() => (item.value?.genres || []).join(' / '));
 const premiered = computed(() => fmtDate(item.value?.premiereDate) || String(item.value?.productionYear || ''));
-const rating = computed(() => {
-  const r = item.value?.communityRating;
-  return r && r >= 1 ? r.toFixed(1) : '';
-});
 
 async function loadEpisodes(sid: string, seriesId = props.id) {
   seasonId.value = sid;
   episodes.value = [];
+  stills.value = {};
   if (!sid) return;
   const r = await window.echoemby.emby.episodes({ seriesId, seasonId: sid });
   if (r.ok) episodes.value = r.data || [];
+  // TMDB stills only matter when there is something the server could not art, so the fetch is
+  // fire-and-forget: the cards swap in whenever it answers.
+  const seasonNumber = seasons.value.find(x => x.id === sid)?.indexNumber ?? item.value?.indexNumber;
+  const tmdbId = item.value?.providers?.tmdb || (isSeason.value ? await fetchParentTmdbId(seriesId) : '');
+  if (tmdbId && Number.isInteger(seasonNumber)) {
+    void window.echoemby.meta
+      .tmdbStills({ tmdbId, season: seasonNumber as number })
+      .then(x => {
+        if (x.ok && x.data && seasonId.value === sid) stills.value = x.data.value;
+      });
+  }
+}
+
+/** A Season item carries the Series' own providers only when the scanner wrote them through; if not,
+ *  we look them up on the parent, which is a single server round trip and one cache entry. */
+const parentTmdbCache = new Map<string, string>();
+async function fetchParentTmdbId(seriesId: string): Promise<string> {
+  if (!seriesId) return '';
+  const cached = parentTmdbCache.get(seriesId);
+  if (cached !== undefined) return cached;
+  const r = await window.echoemby.emby.item(seriesId);
+  const id = r.ok ? r.data?.providers?.tmdb || '' : '';
+  parentTmdbCache.set(seriesId, id);
+  return id;
 }
 
 watch(
@@ -90,6 +134,8 @@ watch(
     loading.value = true;
     error.value = '';
     rt.value = null;
+    tmdb.value = null;
+    stills.value = {};
     item.value = null;
     seasons.value = [];
     episodes.value = [];
@@ -100,12 +146,19 @@ watch(
       return;
     }
     item.value = r.data;
-    // Outside scores arrive on their own clock: a Wikidata round trip plus an RT page is far slower
+    // Outside sources arrive on their own clock: a Wikidata round trip plus an RT page is far slower
     // than the server, and the badges simply appear when it answers.
     const imdb = r.data.providers?.imdb;
     if (imdb) {
       void window.echoemby.meta.rt(imdb).then(x => {
         if (props.id === id) rt.value = x.ok ? x.data || null : null;
+      });
+    }
+    const kind = tmdbKind.value;
+    const tmdbId = r.data.providers?.tmdb;
+    if (kind && tmdbId) {
+      void window.echoemby.meta.tmdb({ kind, tmdbId }).then(x => {
+        if (props.id === id) tmdb.value = x.ok ? x.data || null : null;
       });
     }
     posterSrc.value = r.data.primaryImageTag ? await app.imageUrl({ id: r.data.id, primaryImageTag: r.data.primaryImageTag }, 460) : '';
@@ -154,17 +207,17 @@ async function play(id = playableId.value) {
             <span>{{ fmtRuntime(item.runTimeTicks) }}</span>
             <span v-if="item.childCount">{{ item.childCount }} 集</span>
           </div>
-          <div v-if="rating || item.officialRating || item.studio || rt" class="badges">
+          <div v-if="rating || certText || item.studio || rt" class="badges">
             <span v-if="rating" class="b rate">★ {{ rating }}</span>
             <span v-if="rt?.tomatometer != null" class="b tomato">{{ rt.tomatoCertified ? '认证番茄' : '番茄' }} {{ rt.tomatometer }}</span>
             <span v-if="rt?.popcorn != null" class="b corn">爆米花 {{ rt.popcorn }}</span>
-            <span v-if="item.officialRating" class="b cert">{{ item.officialRating }}</span>
+            <span v-if="certText" class="b cert">{{ certText }}</span>
             <span v-if="item.studio" class="b studio">{{ item.studio }}</span>
           </div>
           <p v-if="rt?.whereToWatch" class="watch">
             <span class="k">哪里能看</span>{{ rt.whereToWatch.join(' · ') }}
           </p>
-          <p class="overview">{{ item.overview || '暂无简介。' }}</p>
+          <p class="overview">{{ overviewText || '暂无简介。' }}</p>
           <div class="actions">
             <button class="play" :disabled="!playableId || player.busy" @click="play()">
               <span class="tri"></span>{{ player.busy ? '准备中…' : item.userData?.playedPercentage ? '继续播放' : '播放' }}
@@ -175,10 +228,13 @@ async function play(id = playableId.value) {
         </div>
       </section>
 
-      <section v-if="craft.length || cast.length" class="block">
+      <section v-if="craft.length || writerFallback || cast.length" class="block">
         <h2>演职员</h2>
         <p v-for="c in craft" :key="c.label" class="credit">
           <span class="k">{{ c.label }}</span>{{ c.names }}
+        </p>
+        <p v-if="writerFallback" class="credit">
+          <span class="k">编剧</span>{{ writerFallback }}
         </p>
         <div v-if="cast.length" class="people">
           <div v-for="p in cast" :key="p.id" class="person">
@@ -203,8 +259,16 @@ async function play(id = playableId.value) {
 
       <section v-if="episodes.length" class="block">
         <h2>{{ seasons.find(s => s.id === seasonId)?.name || '剧集' }}</h2>
-        <div class="epi">
-          <MediaCard v-for="e in episodes" :key="e.id" :item="e" variant="still" :width="286" @play="play($event.id)" />
+        <div class="epi in">
+          <MediaCard
+            v-for="e in episodes"
+            :key="e.id"
+            :item="e"
+            variant="still"
+            :width="286"
+            :fallback-url="stillUrl(e.indexNumber)"
+            @play="play($event.id)"
+          />
         </div>
       </section>
     </template>
