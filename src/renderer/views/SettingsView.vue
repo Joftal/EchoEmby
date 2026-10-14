@@ -49,10 +49,20 @@ onMounted(async () => {
   if (!store.account) router.replace('/login');
 });
 
-/** A reading belongs to the route it was taken on, so changing either half of that route retires it. */
+/** A reading belongs to the route it was taken on, so changing either half of that route retires it -
+ *  including one still in flight, which would otherwise land as an answer about a route that no
+ *  longer exists (measured: 不代理 showing the 系统代理 exit address). */
+let probeSeq = 0;
+function retireRoute(): void {
+  probeSeq++;
+  probing.value = false;
+  probe.value = null;
+}
+
+/** Changes to the route take effect immediately; everything else just writes through. */
 async function set(patch: Partial<Settings>): Promise<void> {
   if (!settings.value) return;
-  if (patch.proxyMode !== undefined || patch.proxyUrl !== undefined) probe.value = null;
+  if (patch.proxyMode !== undefined || patch.proxyUrl !== undefined) retireRoute();
   await store.saveSettings(patch);
 }
 
@@ -64,8 +74,10 @@ async function commitAddr(): Promise<void> {
 
 async function runProbe(): Promise<void> {
   if (probing.value) return;
+  const gen = ++probeSeq;
   probing.value = true;
   const r = await window.echoemby.net.probe();
+  if (gen !== probeSeq) return;
   probing.value = false;
   if (r.ok && r.data) probe.value = r.data;
   else store.error = r.error || '检测失败';

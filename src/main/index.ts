@@ -62,8 +62,17 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(async () => {
     const s = config.load().settings;
-    // A saved address that no longer parses must not leave the app without a route.
-    await applyProxy(s).catch(() => applyProxy({ ...s, proxyMode: 'system', proxyUrl: '' }).catch(() => undefined));
+    // A saved address that no longer parses must not leave the app without a route, and must not stay in
+    // the file either. Measured 2026-10-14 by hand-poisoning config.json: the fallback kept traffic
+    // alive, but the settings row went on reading 「手动代理 / not a url」 while the system route was what
+    // actually carried every request - so the correction is written down, and the page tells the truth.
+    try {
+      await applyProxy(s);
+    } catch {
+      const fallback = { ...s, proxyMode: 'system' as const, proxyUrl: '' };
+      await applyProxy(fallback).catch(() => undefined);
+      config.saveSettings(fallback);
+    }
     services = new AppServices(getMainWindow, rendererUrl);
     services.register();
     createMainWindow();

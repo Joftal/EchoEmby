@@ -9,7 +9,7 @@ const NET: Array<[RegExp, string]> = [
   [/err_name_not_resolved|enotfound|eai_again|no such host/, '地址解析不了，检查域名有没有写错'],
   // Chromium reports a dead manual proxy with the same err_proxy code as a dead system proxy, so
   // the sentence must not name one of them or it sends the user to the wrong settings row.
-  [/err_proxy|proxy connection/, '代理连不上，检查代理有没有开着、地址和端口有没有写错'],
+  [/err_proxy|err_socks|proxy connection/, '代理连不上，检查代理有没有开着、地址和端口有没有写错'],
   [/err_connection_refused|econnrefused/, '这个端口拒绝连接，检查地址和端口'],
   [/err_connection_reset|err_connection_aborted|err_empty_response|econnreset|epipe/, '连接被中断，多半是代理或网关断的'],
   [/err_cert|err_bad_ssl|self[- ]signed|unable to verify|certificate/, '证书没被系统信任'],
@@ -29,7 +29,24 @@ const chainText = (e: unknown): string => {
   return out.toLowerCase();
 };
 
-const classifyNet = (key: string): string | undefined => NET.find(([re]) => re.test(key))?.[1];
+/** The address 手动代理 is live on, written by net.ts whenever the route moves. Empty for 系统代理 and
+ *  不代理, so the sentence below only appears when the user actually pointed the app at a proxy. */
+let manualProxy = '';
+export function setManualProxy(host: string): void {
+  manualProxy = host;
+}
+
+const TIMEOUT = /err_timed_out|err_timeout|etimedout|abort/;
+
+const classifyNet = (key: string): string | undefined => {
+  // Measured 2026-10-14 against a closed port: a hand-typed proxy that is not there does not always say
+  // so - an http:// address dies as err_proxy, which the table already calls a proxy, but a socks5:// one
+  // hangs until our own timeout aborts it. Left as a plain server timeout it sends the user to wait on a
+  // route that will never answer; a slow server behind a working proxy hangs the same way, so both stay
+  // in the sentence.
+  if (manualProxy && TIMEOUT.test(key)) return `等不到回应，超时了，检查手动代理 ${manualProxy} 有没有在工作，或过一会儿再试`;
+  return NET.find(([re]) => re.test(key))?.[1];
+};
 
 const redact = (s: string): string => s.replace(/([?&]api_key=)[^&\s]+/gi, '$1<redacted>');
 
@@ -45,6 +62,9 @@ export function explain(e: unknown): string {
     if (net) return net;
   }
   if (status === 401 || status === 403) return '账号或密码不对，或者登录已经过期';
+  // Only a proxy answers 407 - the server itself asks for credentials with 401 - so this names the
+  // 手动代理 address rather than the account. Measured against a local proxy that demands Basic auth.
+  if (status === 407) return '代理要求登录，代理地址写成 user:pass@host:port 再试';
   if (status === 404) return '服务器上找不到这个条目';
   if (status === 429) return '请求太频繁，过一会儿再试';
   // Measured 2026-10-12: with the system proxy on, a host that cannot be resolved comes back as

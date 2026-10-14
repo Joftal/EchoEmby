@@ -1,7 +1,7 @@
 import { app, net, session } from 'electron';
 import * as config from './config';
 import { EmbyClient, type Identity } from './emby/client';
-import { explain } from './emby/errors';
+import { explain, setManualProxy } from './emby/errors';
 import type { NetProbe, Settings } from '../shared/types';
 
 /** Where the app's traffic actually goes. Every request this client makes - the Emby API, the poster
@@ -10,6 +10,8 @@ import type { NetProbe, Settings } from '../shared/types';
  *  of them; mpv itself never sees a proxy because it only ever opens a loopback URL. */
 export interface ProxyRoute {
   rules: string;
+  /** host:port with the credentials left off, for the sentence that tells the user the proxy is dead. */
+  host: string;
   auth?: { username: string; password: string };
 }
 
@@ -26,7 +28,7 @@ export function parseProxy(raw: string): ProxyRoute | null {
     return null;
   }
   if (!u.hostname) return null;
-  const route: ProxyRoute = { rules: `${u.protocol}//${u.host}` };
+  const route: ProxyRoute = { rules: `${u.protocol}//${u.host}`, host: u.host };
   if (u.username) {
     try {
       route.auth = { username: decodeURIComponent(u.username), password: decodeURIComponent(u.password) };
@@ -39,6 +41,41 @@ export function parseProxy(raw: string): ProxyRoute | null {
 
 let current: ProxyRoute | null = null;
 let loginHooked = false;
+
+/** A hand-typed proxy is meant to reach outside, and Emby servers usually live inside: measured here,
+ *  fixed_servers swallows 192.168.x.x (the request dies at the proxy) while 系统代理 answers it fine,
+ *  because Windows ticks "bypass proxy for local addresses". So manual mode bypasses the ranges a
+ *  server on the same network actually uses, or picking 手动代理 would break the library. */
+const LOCAL_BYPASS = 'localhost,*.local,127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,[::1]/128';
+
+/** Chromium asks the proxy for credentials per request, and app's login hook only covers what the
+ *  windows send: measured 2026-10-14 against a local proxy that demands Basic auth, a main-process
+ *  request made before any renderer one came back 407 even though the address carried the password,
+ *  and the identical request a moment later got through - the renderer's success had filled the
+ *  session's proxy-auth cache. So a route that carries credentials authenticates itself once, through
+ *  the ClientRequest API, which has its own login event. Any address will do: the proxy answers 407
+ *  before it forwards anything. */
+const PRIME_URL = 'https://www.cloudflare.com/cdn-cgi/trace';
+
+function primeProxyAuth(): void {
+  const auth = current?.auth;
+  if (!auth) return;
+  const req = net.request({ method: 'GET', url: PRIME_URL });
+  const timer = setTimeout(() => {
+    try {
+      req.abort();
+    } catch {
+      /* already finished */
+    }
+  }, 8000);
+  req.on('login', (_info, callback) => callback(auth.username, auth.password));
+  req.on('response', res => {
+    res.on('data', () => undefined);
+    res.on('end', () => clearTimeout(timer));
+  });
+  req.on('error', () => clearTimeout(timer));
+  req.end();
+}
 
 /** Throws when the typed 手动代理 address cannot be parsed, so the page can say the route did not move.
  *  An empty address is not an error: the mode was picked before anything was typed, and the route that
@@ -59,8 +96,12 @@ export async function applyProxy(s: Settings): Promise<void> {
       callback(current.auth.username, current.auth.password);
     });
   }
-  const proxyConfig = s.proxyMode === 'none' ? { mode: 'direct' as const } : s.proxyMode === 'system' ? { mode: 'system' as const } : { mode: 'fixed_servers' as const, proxyRules: route!.rules };
+  const proxyConfig = s.proxyMode === 'none' ? { mode: 'direct' as const } : s.proxyMode === 'system' ? { mode: 'system' as const } : { mode: 'fixed_servers' as const, proxyRules: route!.rules, proxyBypassRules: LOCAL_BYPASS };
   await session.defaultSession.setProxy(proxyConfig);
+  // Only once the route actually moved: an address that threw above must leave the old route's name on
+  // the timeout sentence, or the page would blame a proxy that is not in use.
+  setManualProxy(s.proxyMode === 'manual' ? route!.host : '');
+  primeProxyAuth();
 }
 
 /** Cloudflare's trace answers in ~40 bytes with the address it saw and the country it saw it from, which
