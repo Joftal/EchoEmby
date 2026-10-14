@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import type { LibraryItem, StudioRef } from '../../shared/types';
 import MediaCard from '../components/home/MediaCard.vue';
 import ListCard from '../components/home/ListCard.vue';
+import RowScroller from '../components/home/RowScroller.vue';
 import FilterBar from '../components/browse/FilterBar.vue';
 import { defaultSort, filterParams, fromQuery, isFiltered, localSort, sortParams, toQuery, type Filters } from '../lib/filters';
 import { useAppStore } from '../stores/app';
@@ -163,6 +164,46 @@ const shown = computed<LibraryItem[]>(() => {
   return localSort(cards, filters.value.sort);
 });
 
+/** The empty search page is a shop window, not a blank one. Two asks fill it: the films, and the
+ *  shows, which split into 剧集 and 番剧 by the genre each row already carries. The split has to be
+ *  local — ExcludeGenres is silently ignored on this gateway, measured byte-identical to asking
+ *  without it — and it is free, because 100 of 100 of the newest Series rows on both hosts answer
+ *  with their genres filled in. */
+const SHELF_WINDOW = 100;
+const SHELF_CARDS = 18;
+const isAnime = (x: LibraryItem): boolean => (x.genres || []).some(g => /动画|动漫|Anime/i.test(g));
+
+const shelves = ref<{ key: string; title: string; items: LibraryItem[] }[]>([]);
+const shelvesLoading = ref(false);
+/** Which ask still owns the page: two filter chips clicked in a row put two windows in flight, and
+ *  the slower one would otherwise land last and dress the shelves in the conditions just dropped. */
+let shelfSeq = 0;
+
+async function loadShelves(): Promise<void> {
+  const seq = ++shelfSeq;
+  shelvesLoading.value = true;
+  const picked = filters.value;
+  const base = { ...filterParams(picked), Recursive: true, SortBy: 'PremiereDate', SortOrder: 'Descending', Limit: SHELF_WINDOW };
+  const ask = (types: string) => window.echoemby.emby.items({ ...base, IncludeItemTypes: types });
+  // 类型 picks which shelves are on the topic at all, so the other one is not even asked for.
+  const [films, shows] = await Promise.all([
+    picked.type === 'Series' ? Promise.resolve(null) : ask('Movie'),
+    picked.type === 'Movie' ? Promise.resolve(null) : ask('Series'),
+  ]);
+  if (seq !== shelfSeq) return;
+  shelvesLoading.value = false;
+  // A term typed while the landing was still in flight owns the page now.
+  if (isSearch.value && term.value.trim()) return;
+  const series = shows?.ok ? shows.data || [] : [];
+  const rows = [
+    { key: 'movie', title: '电影', items: films?.ok ? films.data || [] : [] },
+    { key: 'series', title: '剧集', items: series.filter(x => !isAnime(x)) },
+    { key: 'anime', title: '番剧', items: series.filter(x => isAnime(x)) },
+  ];
+  shelves.value = rows.filter(r => r.items.length).map(r => ({ ...r, items: r.items.slice(0, SHELF_CARDS) }));
+  if (!films?.ok && !shows?.ok) error.value = films?.error || shows?.error || '加载失败';
+}
+
 /** The /Genres facet lives in the store, so a server that was slow on the first ask gets asked again. */
 const genreOptions = computed(() => store.genres);
 /** Companies come from the results themselves: they are the only ids the 公司 filter can be given,
@@ -195,8 +236,10 @@ async function load(reset: boolean): Promise<void> {
     error.value = '';
     loading.value = false;
     lastKey = JSON.stringify(params(0));
+    void loadShelves();
     return;
   }
+  shelves.value = [];
   busy.value = true;
   try {
     if (reset) {
@@ -408,8 +451,19 @@ onBeforeUnmount(() => {
         </template>
       </div>
 
+      <div v-else-if="shelvesLoading" class="shelves">
+        <div v-for="n in 2" :key="n" class="rsk">
+          <div class="hd"></div>
+          <div class="cards"><span v-for="m in 8" :key="m" class="cd"></span></div>
+        </div>
+      </div>
+
+      <div v-else-if="isSearch && !term.trim() && shelves.length" class="shelves">
+        <RowScroller v-for="r in shelves" :key="r.key" :title="r.title" :items="r.items" @play="onPlay" />
+      </div>
+
       <p v-else-if="kind === 'search'" class="empty">
-        {{ isFiltered(filters) && term.trim() ? '筛选后没有结果。' : term.trim() ? '没有匹配的结果。' : '输入片名开始搜索。' }}
+        {{ isFiltered(filters) ? '这个筛选条件下没有内容。' : term.trim() ? '没有匹配的结果。' : '输入片名开始搜索。' }}
       </p>
       <p v-else-if="isFiltered(filters)" class="empty">这个筛选条件下没有内容。</p>
       <p v-else class="empty">
@@ -485,6 +539,50 @@ h1 {
 /* The bar sits where the old three-button sort switch sat, so the header keeps its breathing room. */
 .fbar {
   margin: -14px 0 20px;
+}
+
+/* The landing shelves are the lobby's rows, which lay themselves out from --gutter/--tuck/--rail-x and
+   assume their container starts at the window edge — so this box pays the page padding back with
+   negative margins. --rail-x goes to 0 rather than the lobby's 12px: this page's content line already
+   sits a --side past the rail, and that is the line the title and the first poster have to meet. */
+.shelves {
+  --tuck: 214px;
+  --rail-x: 0px;
+  margin: 0 calc(0px - var(--side)) 0 calc(0px - var(--gutter));
+}
+.rsk {
+  /* Same split as the real row: 16 above the header, the header's 27.9 line box plus its 11 margin,
+     the track's 6 above the cards, 24 below them. */
+  padding: 16px var(--side) 24px calc(var(--gutter) - var(--rail-x));
+}
+.rsk .hd {
+  width: 150px;
+  height: 15px;
+  border-radius: var(--r-badge);
+  margin: 6.5px 0 17.4px;
+  background: var(--shimmer);
+  background-size: 220% 100%;
+  animation: sh 1.3s linear infinite;
+}
+.rsk .cards {
+  display: flex;
+  gap: 14px;
+  padding-top: 6px;
+  overflow: hidden;
+}
+.rsk .cd {
+  width: 190px;
+  flex: none;
+  aspect-ratio: 2 / 3;
+  /* .label's 9px of padding plus two text lines. */
+  margin-bottom: 49.3px;
+  border-radius: var(--radius);
+  background: var(--shimmer);
+  background-size: 220% 100%;
+  animation: sh 1.3s linear infinite;
+}
+.rsk .cd:nth-child(n + 7) {
+  opacity: 0.55;
 }
 
 .grid {
