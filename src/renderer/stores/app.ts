@@ -190,5 +190,15 @@ export const useAppStore = defineStore('app', () => {
     return url;
   }
 
-  return { config, account, rows, views, genres, loading, error, ready, counts, init, login, switchTo, remove, update, saveSettings, loadCounts, loadHome, loadViews, loadGenres, imageUrl, backdropUrl };
+  /** An Episode rarely has art of its own here: measured on the 在看 row, 48 of 60 rows carry no Primary tag
+   *  and asking the server for one answers 500 — while the series above them has both a poster and a
+   *  backdrop, which this gateway serves without ever needing a tag. So the series stands in for the episode,
+   *  wide art for a 16:9 frame and the poster for a 2:3 one; the letter placeholder is only for what has neither. */
+  async function itemArt(item: LibraryItem, width: number, wide = false): Promise<string> {
+    if (item.primaryImageTag) return imageUrl(item, width);
+    if (item.type !== 'Episode' || !item.parentId) return '';
+    return wide ? backdropUrl({ id: item.parentId }, width) : imageUrl({ id: item.parentId }, width);
+  }
+
+  return { config, account, rows, views, genres, loading, error, ready, counts, init, login, switchTo, remove, update, saveSettings, loadCounts, loadHome, loadViews, loadGenres, imageUrl, backdropUrl, itemArt };
 });

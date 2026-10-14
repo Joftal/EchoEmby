@@ -6,8 +6,8 @@ import { useAppStore } from '../../stores/app';
 import { fmtClock, fmtRuntime, ticksToMs } from '../../lib/format';
 
 const props = withDefaults(
-  defineProps<{ item: LibraryItem; variant?: 'poster' | 'still'; width?: number; index?: number; fallbackUrl?: string }>(),
-  { variant: 'poster', width: 200, index: 0, fallbackUrl: '' },
+  defineProps<{ item: LibraryItem; variant?: 'poster' | 'still'; width?: number; index?: number }>(),
+  { variant: 'poster', width: 200, index: 0 },
 );
 const emit = defineEmits<{ (e: 'play', item: LibraryItem): void }>();
 
@@ -48,26 +48,14 @@ onBeforeUnmount(() => {
 const url = computed(() => (src.value && tries.value ? `${src.value}&_r=${tries.value}` : src.value));
 
 watch(
-  () => [props.item.id, props.variant, props.width, near.value, props.fallbackUrl] as const,
+  () => [props.item.id, props.variant, props.width, near.value] as const,
   async () => {
     if (!near.value) return;
     loaded.value = false;
     tries.value = 0;
-    // Half the resume episodes carry no Primary tag on this server; the request
-    // can only fail, so an outside still takes the slot and the placeholder is the last resort.
-    if (!props.item.primaryImageTag) {
-      if (props.fallbackUrl) {
-        src.value = props.fallbackUrl;
-        return;
-      }
-      src.value = '';
-      failed.value = true;
-      return;
-    }
-    failed.value = false;
-    src.value = await store.imageUrl(props.item, props.variant === 'still' ? 520 : props.width * 2);
-    if (!src.value) src.value = props.fallbackUrl || '';
-    if (!src.value) failed.value = true;
+    const still = props.variant === 'still';
+    src.value = await store.itemArt(props.item, still ? 520 : props.width * 2, still);
+    failed.value = !src.value;
   },
   { immediate: true },
 );

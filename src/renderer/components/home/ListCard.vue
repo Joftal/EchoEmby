@@ -52,14 +52,8 @@ watch(
     if (!near.value) return;
     loaded.value = false;
     tries.value = 0;
-    if (!props.item.primaryImageTag) {
-      src.value = '';
-      failed.value = true;
-      return;
-    }
-    failed.value = false;
-    src.value = await store.imageUrl(props.item, 190);
-    if (!src.value) failed.value = true;
+    src.value = await store.itemArt(props.item, 190);
+    failed.value = !src.value;
   },
   { immediate: true },
 );
