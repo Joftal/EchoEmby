@@ -20,6 +20,10 @@ type Kind = 'resume' | 'unwatched' | 'favorites' | 'search' | 'view';
 /** A search is ordered by hand over whatever we hold, so its first page has to be worth ordering. */
 const PAGE = 48;
 const SEARCH_PAGE = 200;
+/** 在看 folds its rows into one card per show, and this server folds hard: measured 200 rows → 16 cards,
+ *  400 → 21, 1200 → 25 (one show, 乡村爱情, holds 849 of the rows). 48 rows would have painted 13 cards and
+ *  the next page would have added one or two. 200 rows is one request (~1.2s measured). */
+const RESUME_PAGE = 200;
 
 const kind = computed<Kind>(() => {
   const k = String(route.query.kind || '');
@@ -28,7 +32,7 @@ const kind = computed<Kind>(() => {
 });
 const viewId = computed(() => String(route.query.view || ''));
 const isSearch = computed(() => kind.value === 'search');
-const pageSize = computed(() => (isSearch.value ? SEARCH_PAGE : PAGE));
+const pageSize = computed(() => (isSearch.value ? SEARCH_PAGE : kind.value === 'resume' ? RESUME_PAGE : PAGE));
 const filters = ref<Filters>(fromQuery(route.query, defaultSort(isSearch.value)));
 const term = ref(String(route.query.q || ''));
 
@@ -140,13 +144,27 @@ async function rememberSeries(ids: string[]): Promise<void> {
  *  A film keeps the year, because 活着 (1994) and 活着 (2020) are two different films. */
 const cardKey = (x: LibraryItem): string => (x.type === 'Series' ? `S|${x.name}` : `${x.type}|${x.name}|${x.productionYear || ''}`);
 
+/** Which show a 在看 row belongs to. Name, not the server's series id: the library holds some shows
+ *  twice under two ids (measured on bangumi: 鬼灭之刃 as four Series rows), and one card is one show. */
+const resumeKey = (x: LibraryItem): string => (x.type === 'Episode' ? `S|${x.seriesName || x.parentId || x.id}` : x.id);
+
 /** 87 episodes of one show arrived as 87 cards. A library catalogue answers a title once, so an
- *  episode run folds into its Series card; the two watch-lists keep their per-episode rows because
- *  there the progress bar belongs to the episode, not the show.
+ *  episode run folds into its Series card; 在看 folds too, but keeps the episode — the card is the
+ *  thing to resume, so its art, its position and its play button all come from that row.
  *  The sort runs over the cards, not the rows they came from: an episode's own rating and name are
  *  not what the card displays, and sorting first put ★8.1 above the ★8.2 card that followed it. */
 const shown = computed<LibraryItem[]>(() => {
   const src = items.value;
+  if (kind.value === 'resume') {
+    // Newest-played first, so the first row of a show is the episode to resume — the home rail's rule.
+    const once = new Set<string>();
+    return src.filter(it => {
+      const k = resumeKey(it);
+      if (once.has(k)) return false;
+      once.add(k);
+      return true;
+    });
+  }
   if (!isSearch.value) return src;
   const onScreen = new Set(src.filter(x => x.type !== 'Episode').map(x => x.id));
   const taken = new Set<string>();

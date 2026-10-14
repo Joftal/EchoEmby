@@ -90,21 +90,27 @@ const watchedLabel = computed(() => {
   const ms = (ticksToMs(props.item.runTimeTicks) * played.value) / 100;
   return played.value > 0 && ms > 0 ? `看到 ${fmtClock(ms)}` : '';
 });
-const titleLine = computed(() =>
-  props.variant === 'still' && props.item.seriesName
-    ? `${props.item.seriesName}${sub.value ? ' ' + sub.value : ''}`
-    : props.item.name,
-);
+/** A folded card is the show, so the show's name carries the line; the episode it points at drops to
+ *  the tail, where a long 集名 can be cut without hiding what the card is. */
+const titleLine = computed(() => (props.variant === 'still' && props.item.seriesName ? props.item.seriesName : props.item.name));
 /** The gateway never answers UserData.LastPlayed, so the caption carries the length instead: the
     server name it used to print is already in the rail's account row, once per card was one copy too
     many, and 「看到 15:00」 on the frame is the position this line has to be read against. */
 const metaLine = computed(() => {
+  const i = props.item;
   if (props.variant !== 'still') {
     // An episode position is the useful half of a series caption; the premiere year pushes it into ellipsis.
-    const year = props.item.latestEpisode ? undefined : props.item.productionYear;
+    const year = i.latestEpisode ? undefined : i.productionYear;
     return [sub.value, year].filter(Boolean).join(' · ');
   }
-  return fmtRuntime(props.item.runTimeTicks);
+  if (i.seriesName && i.parentIndexNumber != null && i.indexNumber != null) {
+    // Half the episodes on this server have no title of their own and come named 「第 2 集」, which the
+    // position in front of it already says; the tail only carries a name that adds something.
+    const t = i.name.trim();
+    const positionOnly = /^第\s*[\d一二三四五六七八九十百千]+\s*[集话話]\s*$/.test(t) || /^\d+$/.test(t) || /^episode\s*\d+$/i.test(t);
+    return `第 ${i.parentIndexNumber} 季 · ${i.indexNumber} 集${t && !positionOnly ? ` · ${t}` : ''}`;
+  }
+  return fmtRuntime(i.runTimeTicks);
 });
 
 function open(): void {
