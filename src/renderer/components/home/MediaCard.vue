@@ -79,8 +79,8 @@ const rating = computed(() => {
 });
 const sub = computed(() => {
   const i = props.item;
-  if (i.latestEpisode) return `第 ${i.latestEpisode.season ?? 1} 季 · ${i.latestEpisode.episode} 集`;
-  if (i.parentIndexNumber != null && i.indexNumber != null) return `第 ${i.parentIndexNumber} 季 · ${i.indexNumber} 集`;
+  if (i.latestEpisode) return `第 ${i.latestEpisode.season ?? 1} 季 · 第 ${i.latestEpisode.episode} 集`;
+  if (i.parentIndexNumber != null && i.indexNumber != null) return `第 ${i.parentIndexNumber} 季 · 第 ${i.indexNumber} 集`;
   if (i.indexNumber != null) return `第 ${i.indexNumber} 集`;
   if (i.childCount) return `${i.childCount} 季`;
   return '';
@@ -108,7 +108,7 @@ const metaLine = computed(() => {
     // position in front of it already says; the tail only carries a name that adds something.
     const t = i.name.trim();
     const positionOnly = /^第\s*[\d一二三四五六七八九十百千]+\s*[集话話]\s*$/.test(t) || /^\d+$/.test(t) || /^episode\s*\d+$/i.test(t);
-    return `第 ${i.parentIndexNumber} 季 · ${i.indexNumber} 集${t && !positionOnly ? ` · ${t}` : ''}`;
+    return `第 ${i.parentIndexNumber} 季 · 第 ${i.indexNumber} 集${t && !positionOnly ? ` · ${t}` : ''}`;
   }
   return fmtRuntime(i.runTimeTicks);
 });

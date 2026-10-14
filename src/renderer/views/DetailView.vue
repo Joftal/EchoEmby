@@ -172,7 +172,7 @@ const playTargetLabel = computed(() => {
   const e = episodes.value.find(x => x.userData?.playedPercentage) || episodes.value[0];
   if (!e) return '';
   const s = e.parentIndexNumber ?? seasons.value.find(x => x.id === seasonId.value)?.indexNumber;
-  return s != null ? `第 ${s} 季 · ${e.indexNumber} 集` : `第 ${e.indexNumber} 集`;
+  return s != null ? `第 ${s} 季 · 第 ${e.indexNumber} 集` : `第 ${e.indexNumber} 集`;
 });
 
 const genres = computed(() => genreLabels(item.value?.genres));
