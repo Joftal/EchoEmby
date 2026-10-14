@@ -1,4 +1,4 @@
-import type { Account, AppConfig, BangumiScore, CsmGuide, FacetOption, ImdbRating, IpcResult, LibraryItem, LibraryRow, MetaKeys, PlayerState, RtScores, Settings, TmdbMeta, TmdbSimilar, TmdbStills, TraktScores } from './types';
+import type { Account, AppConfig, BangumiScore, CsmGuide, FacetOption, ImdbRating, IpcResult, LibraryItem, LibraryRow, MetaKeys, NetProbe, PlayerState, RtScores, Settings, TmdbMeta, TmdbSimilar, TmdbStills, TraktScores } from './types';
 
 export interface EchoEmbyApi {
   app: {
@@ -10,6 +10,10 @@ export interface EchoEmbyApi {
     accountCounts(accountId: string): Promise<IpcResult<{ movies: number; series: number }>>;
     switchAccount(accountId: string): Promise<IpcResult<boolean>>;
     setSettings(patch: Partial<Settings>): Promise<IpcResult<Settings>>;
+  };
+  net: {
+    /** One round trip to the gateway and one to an address echo, through the route that is live now. */
+    probe(): Promise<IpcResult<NetProbe>>;
   };
   emby: {
     views(): Promise<IpcResult<LibraryItem[]>>;

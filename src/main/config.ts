@@ -7,15 +7,20 @@ import type { Account, AppConfig, MetaKeys, Settings } from '../shared/types';
 const DEFAULT_SETTINGS: Settings = {
   maxStreamingBitrate: 140_000_000,
   hwdec: 'd3d11va',
+  proxyMode: 'system',
+  proxyUrl: '',
 };
 
 const HWDEC = ['d3d11va', 'cuda', 'auto', 'no'] as const;
+const PROXY_MODES = ['system', 'manual', 'none'] as const;
 
 /** Reads keep only the fields that still exist: the file outlives every knob we drop, and a
     leftover `hwdec` would end up in mpv's command line. */
 const pickSettings = (raw: Partial<Settings> | undefined): Settings => ({
   maxStreamingBitrate: typeof raw?.maxStreamingBitrate === 'number' && raw.maxStreamingBitrate > 0 ? raw.maxStreamingBitrate : DEFAULT_SETTINGS.maxStreamingBitrate,
   hwdec: raw?.hwdec && HWDEC.includes(raw.hwdec) ? raw.hwdec : DEFAULT_SETTINGS.hwdec,
+  proxyMode: raw?.proxyMode && PROXY_MODES.includes(raw.proxyMode) ? raw.proxyMode : DEFAULT_SETTINGS.proxyMode,
+  proxyUrl: typeof raw?.proxyUrl === 'string' ? raw.proxyUrl.trim().slice(0, 160) : '',
 });
 
 const file = () => path.join(app.getPath('userData'), 'config.json');

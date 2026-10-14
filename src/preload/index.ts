@@ -14,6 +14,9 @@ const api: EchoEmbyApi = {
     switchAccount: accountId => invoke('app:switchAccount', accountId),
     setSettings: patch => invoke('app:setSettings', patch),
   },
+  net: {
+    probe: () => invoke('net:probe'),
+  },
   emby: {
     views: () => invoke('emby:views'),
     homeRows: () => invoke('emby:homeRows'),

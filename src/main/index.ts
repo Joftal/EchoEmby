@@ -1,5 +1,7 @@
-import { app, BrowserWindow, session, shell } from 'electron';
+import { app, BrowserWindow, shell } from 'electron';
 import path from 'node:path';
+import * as config from './config';
+import { applyProxy } from './net';
 import { AppServices } from './ipc';
 
 const DEV_URL = process.env.VITE_DEV_URL || '';
@@ -52,13 +54,16 @@ if (!app.requestSingleInstanceLock()) {
     mainWindow?.focus();
   });
 
-  // Chromium's network stack picks up the system proxy; the direct route to this
-  // server measured 152 B/s vs 2.8 MB/s through the local proxy, so it is inherited.
+  // Chromium's network stack carries every request this app makes, so the saved proxy mode is applied
+  // to the session once here and again on each change; the direct route to this server measured
+  // 152 B/s vs 2.8 MB/s through the local proxy, which is why 系统代理 is the default.
   app.commandLine.appendSwitch('enable-gpu-rasterization');
   app.commandLine.appendSwitch('ignore-gpu-blocklist');
 
   app.whenReady().then(async () => {
-    await session.defaultSession.setProxy({ mode: 'system' }).catch(() => undefined);
+    const s = config.load().settings;
+    // A saved address that no longer parses must not leave the app without a route.
+    await applyProxy(s).catch(() => applyProxy({ ...s, proxyMode: 'system', proxyUrl: '' }).catch(() => undefined));
     services = new AppServices(getMainWindow, rendererUrl);
     services.register();
     createMainWindow();

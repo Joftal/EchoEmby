@@ -7,7 +7,9 @@ const CJK = /[一-鿿]/;
 // English bodies into a sentence that says which layer broke.
 const NET: Array<[RegExp, string]> = [
   [/err_name_not_resolved|enotfound|eai_again|no such host/, '地址解析不了，检查域名有没有写错'],
-  [/err_proxy|proxy connection/, '系统代理连不上，检查代理是否还开着'],
+  // Chromium reports a dead manual proxy with the same err_proxy code as a dead system proxy, so
+  // the sentence must not name one of them or it sends the user to the wrong settings row.
+  [/err_proxy|proxy connection/, '代理连不上，检查代理有没有开着、地址和端口有没有写错'],
   [/err_connection_refused|econnrefused/, '这个端口拒绝连接，检查地址和端口'],
   [/err_connection_reset|err_connection_aborted|err_empty_response|econnreset|epipe/, '连接被中断，多半是代理或网关断的'],
   [/err_cert|err_bad_ssl|self[- ]signed|unable to verify|certificate/, '证书没被系统信任'],

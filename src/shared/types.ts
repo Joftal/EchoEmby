@@ -14,6 +14,23 @@ export interface Settings {
   /** Cap offered to the server during PlaybackInfo negotiation, in bits/s. */
   maxStreamingBitrate: number;
   hwdec: 'd3d11va' | 'cuda' | 'auto' | 'no';
+  /** Which route the whole app takes to reach the server. Every request this client makes - API,
+   *  images, the playback bridge, the outside metadata services - goes through Chromium's net.fetch,
+   *  so one session proxy setting covers all of them. */
+  proxyMode: 'system' | 'manual' | 'none';
+  /** The 手动代理 address: `127.0.0.1:7897`, `http://host:port`, `socks5://host:port`, optionally with
+   *  `user:pass@` in front of the host. */
+  proxyUrl: string;
+}
+
+/** What the 连接测试 row answers with: one round trip to the gateway and one to an address echo, both
+ *  through whatever route is set right now. */
+export interface NetProbe {
+  serverMs: number | null;
+  egressIp: string;
+  egressRegion: string;
+  /** Already in Chinese, and only about the leg that failed; empty when both answered. */
+  error: string;
 }
 
 export interface AppConfig {

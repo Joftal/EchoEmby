@@ -11,6 +11,7 @@ import { csmGuide } from './meta/csm';
 import { MpvPlayer } from './player/mpv';
 import { StreamBridge } from './player/bridge';
 import { PlayerWindows } from './player/windows';
+import { applyProxy, probeNetwork } from './net';
 import { emptyPlayerState, type Account, type IpcResult, type PlayerState, type Settings } from '../shared/types';
 
 const wrap = async <T>(fn: () => Promise<T> | T): Promise<IpcResult<T>> => {
@@ -163,7 +164,14 @@ export class AppServices {
 
     ipcMain.handle('app:pingServer', (_e, baseUrl: string) => wrap(() => EmbyClient.publicInfo(baseUrl, this.identity())));
 
-    ipcMain.handle('app:setSettings', (_e, patch: Partial<Settings>) => wrap(() => config.saveSettings(patch)));
+    ipcMain.handle('app:setSettings', (_e, patch: Partial<Settings>) => wrap(async () => {
+      // The route is part of the setting, so it moves here rather than on next launch. Applying first
+      // means a rejected address never reaches the file, and the live route stays where it was.
+      await applyProxy({ ...config.get().settings, ...patch });
+      return config.saveSettings(patch);
+    }));
+
+    ipcMain.handle('net:probe', () => wrap(() => probeNetwork(this.identity())));
 
     // Every card shows its own server's totals, so this must read with that account's token, not the active one.
     ipcMain.handle('app:accountCounts', (_e, accountId: string) => wrap(async () => {
