@@ -44,6 +44,34 @@ const variant = computed(() => (kind.value === 'resume' ? 'still' : 'poster'));
 /** The two watch-lists keep their wide rows; search joins the grid so the art reads under the filters. */
 const layout = computed<'list' | 'grid'>(() => (kind.value === 'unwatched' || kind.value === 'favorites' ? 'list' : 'grid'));
 
+/** The gateway matches a title token by token, with its punctuation still inside the token: the
+ *  「骗骗喜欢你」 nobody types quotes for cannot reach 「“骗骗”喜欢你」, but 「骗骗 喜欢你」 lands on it
+ *  exactly. Measured here: opening the marks into a space found 14 of 14 real marked-up titles,
+ *  deleting them found none, and a cut at every gap recovered 4 of 6 titles typed clean.
+ *  Per-character cuts never match (「骗*骗*喜*欢*你」 answers with nothing), so the gaps are tried in
+ *  order and capped: an empty page is worth a few asks, not a scan of the term. */
+const MARKS = /[“”‘’「」『』《》〈〉（）()·．。，,！!？?：:；;—、\-~～\s]+/g;
+const openMarks = (t: string): string => t.replace(MARKS, ' ').trim();
+function retryShapes(t: string): string[] {
+  const flat = openMarks(t);
+  const out = flat && flat !== t ? [flat] : [];
+  const tight = flat.replace(/ /g, '');
+  for (let i = 1; i < tight.length && out.length < 8; i++) out.push(`${tight.slice(0, i)} ${tight.slice(i)}`);
+  return out;
+}
+/** What the running search actually asked for: the typed term, or the shape that answered it. Keyed
+ *  to the term, so re-sorting keeps the shape that got the rows while a new term starts fresh. */
+let askedTerm = '';
+let searchQuery = '';
+function effectiveQuery(): string {
+  const t = term.value.trim();
+  if (t !== askedTerm) {
+    askedTerm = t;
+    searchQuery = t;
+  }
+  return searchQuery;
+}
+
 function params(startIndex: number): Record<string, string | number | boolean> {
   const f = filterParams(filters.value);
   const s = sortParams(filters.value);
@@ -57,7 +85,7 @@ function params(startIndex: number): Record<string, string | number | boolean> {
   // twice because the library's container folder and the movie inside it are two different items.
   // The list has to be comma-joined here too — asked as `A|B` this server ignores it outright.
   if (kind.value === 'search')
-    return { Recursive: true, SearchTerm: term.value.trim(), IncludeItemTypes: 'Movie,Series,Episode,Video,BoxSet,Playlist', ...f, ...page };
+    return { Recursive: true, SearchTerm: effectiveQuery(), IncludeItemTypes: 'Movie,Series,Episode,Video,BoxSet,Playlist', ...f, ...page };
   return { ParentId: viewId.value, IncludeItemTypes: 'Movie,Series,BoxSet,Playlist,Video', Recursive: true, ...f, ...s, ...page };
 }
 
@@ -101,9 +129,6 @@ async function rememberSeries(ids: string[]): Promise<void> {
   seriesById.value = next;
 }
 
-/** A search the server cannot sort is sorted over the window we already fetched. */
-const sorted = computed(() => (isSearch.value ? localSort(items.value, filters.value.sort) : items.value));
-
 /** Two library folders can hold the same show twice (measured on bangumi: 鬼灭之刃 as four Series
  *  rows, three of which never answer an Ids query), so a second copy of the same card drops out.
  *  A show merges on its name alone — the duplicate rows disagree about the year, one carrying none.
@@ -112,14 +137,16 @@ const cardKey = (x: LibraryItem): string => (x.type === 'Series' ? `S|${x.name}`
 
 /** 87 episodes of one show arrived as 87 cards. A library catalogue answers a title once, so an
  *  episode run folds into its Series card; the two watch-lists keep their per-episode rows because
- *  there the progress bar belongs to the episode, not the show. */
+ *  there the progress bar belongs to the episode, not the show.
+ *  The sort runs over the cards, not the rows they came from: an episode's own rating and name are
+ *  not what the card displays, and sorting first put ★8.1 above the ★8.2 card that followed it. */
 const shown = computed<LibraryItem[]>(() => {
-  const src = sorted.value;
+  const src = items.value;
   if (!isSearch.value) return src;
   const onScreen = new Set(src.filter(x => x.type !== 'Episode').map(x => x.id));
   const taken = new Set<string>();
   const once = new Set<string>();
-  const out: LibraryItem[] = [];
+  const cards: LibraryItem[] = [];
   for (const it of src) {
     let card = it;
     const seriesId = it.type === 'Episode' ? it.parentId : '';
@@ -131,9 +158,9 @@ const shown = computed<LibraryItem[]>(() => {
     const key = cardKey(card);
     if (once.has(key)) continue;
     once.add(key);
-    out.push(card);
+    cards.push(card);
   }
-  return out;
+  return localSort(cards, filters.value.sort);
 });
 
 /** The /Genres facet lives in the store, so a server that was slow on the first ask gets asked again. */
@@ -150,9 +177,15 @@ function rememberStudios(batch: LibraryItem[], reset: boolean): void {
 
 /** The query this load was for; a route change that lands on the same query is only a re-order. */
 let lastKey = '';
+/** A reset asked for while a request is still in flight. Dropping it leaves the URL saying one term
+ *  over the previous term's grid, which is what a fast 加载更多-then-retype did on the live app. */
+let queued = false;
 
 async function load(reset: boolean): Promise<void> {
-  if (busy.value) return;
+  if (busy.value) {
+    queued = reset || queued;
+    return;
+  }
   // An empty SearchTerm is not 「搜这个空字符串」 but 「没有这个条件」: the gateway treats it as
   // unfiltered and dumps the library, which is what filled 搜索 with 「#活着」 before I typed a name.
   if (isSearch.value && !term.value.trim()) {
@@ -165,29 +198,51 @@ async function load(reset: boolean): Promise<void> {
     return;
   }
   busy.value = true;
-  if (reset) {
-    loading.value = true;
-    items.value = [];
-    error.value = '';
-    lastKey = JSON.stringify(params(0));
+  try {
+    if (reset) {
+      loading.value = true;
+      items.value = [];
+      error.value = '';
+      lastKey = JSON.stringify(params(0));
+    }
+    const from = reset ? 0 : items.value.length;
+    let r = await window.echoemby.emby.items(params(from));
+    let batch = r.ok ? r.data || [] : [];
+    // One retry pass, and only on an empty first page, so a term that already answers costs one request.
+    // The shapes go out together: measured on this gateway, eight of them come back in 198ms while
+    // asking one at a time takes 1380ms, and a dead-end query is what usually lands here.
+    if (isSearch.value && from === 0 && r.ok && !batch.length) {
+      const shapes = retryShapes(effectiveQuery());
+      const tries = await Promise.all(shapes.map(q => window.echoemby.emby.items({ ...params(0), SearchTerm: q })));
+      const hit = tries.findIndex(x => x.ok && (x.data || []).length > 0);
+      if (hit >= 0) {
+        searchQuery = shapes[hit];
+        lastKey = JSON.stringify(params(0));
+        r = tries[hit];
+        batch = r.data || [];
+      }
+    }
+    if (!r.ok) {
+      error.value = r.error || '加载失败';
+      return;
+    }
+    // Before the rows go on screen: the fold has to be settled or the episode card would swap into a
+    // show card under the user's cursor a beat after the grid paints.
+    if (isSearch.value) await rememberSeries(episodeShows(batch));
+    items.value = reset ? batch : [...items.value, ...batch];
+    hasMore.value = batch.length === pageSize.value;
+    if (!isFiltered(filters.value)) rememberStudios(batch, reset);
+    // The facet is allowed to fail with the server: once rows are in, the library is answering.
+    if (batch.length) void store.loadGenres();
+  } finally {
+    busy.value = false;
+    loading.value = false;
   }
-  const from = reset ? 0 : items.value.length;
-  const r = await window.echoemby.emby.items(params(from));
-  busy.value = false;
-  loading.value = false;
-  if (!r.ok) {
-    error.value = r.error || '加载失败';
-    return;
+  if (queued) {
+    const again = queued;
+    queued = false;
+    void load(again);
   }
-  const batch = r.data || [];
-  // Before the rows go on screen: the fold has to be settled or the episode card would swap into a
-  // show card under the user's cursor a beat after the grid paints.
-  if (isSearch.value) await rememberSeries(episodeShows(batch));
-  items.value = reset ? batch : [...items.value, ...batch];
-  hasMore.value = batch.length === pageSize.value;
-  if (!isFiltered(filters.value)) rememberStudios(batch, reset);
-  // The facet is allowed to fail with the server: once rows are in, the library is answering.
-  if (batch.length) void store.loadGenres();
 }
 
 const wrapEl = ref<HTMLElement | null>(null);
