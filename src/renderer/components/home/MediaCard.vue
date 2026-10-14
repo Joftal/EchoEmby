@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import type { LibraryItem } from '../../../shared/types';
 import { useAppStore } from '../../stores/app';
-import { fmtClock, fmtRuntime, ticksToMs } from '../../lib/format';
+import { fmtRuntime, seenLabel } from '../../lib/format';
 
 const props = withDefaults(
   defineProps<{ item: LibraryItem; variant?: 'poster' | 'still'; width?: number; index?: number }>(),
@@ -85,11 +85,8 @@ const sub = computed(() => {
   if (i.childCount) return `${i.childCount} 季`;
   return '';
 });
-/** Reference caption: how far in you got, not how far is left. */
-const watchedLabel = computed(() => {
-  const ms = (ticksToMs(props.item.runTimeTicks) * played.value) / 100;
-  return played.value > 0 && ms > 0 ? `看到 ${fmtClock(ms)}` : '';
-});
+/** How far in you got, not how far is left — the same read-out every other surface now uses. */
+const watchedLabel = computed(() => seenLabel(played.value, props.item.runTimeTicks));
 /** A folded card is the show, so the show's name carries the line; the episode it points at drops to
  *  the tail, where a long 集名 can be cut without hiding what the card is. */
 const titleLine = computed(() => (props.variant === 'still' && props.item.seriesName ? props.item.seriesName : props.item.name));
@@ -135,9 +132,12 @@ function open(): void {
 
       <span v-if="rating" class="rate">★ {{ rating }}</span>
 
+      <!-- The progress read-out belongs to the item, not to one card shape: 在看, 首页行, 资源库 and 收藏
+           all answer the same question — how far did I get. -->
+      <span v-if="watchedLabel" class="chip">{{ watchedLabel }}</span>
+      <div v-if="played > 0" class="prog"><i :style="{ width: played + '%' }"></i></div>
+
       <template v-if="variant === 'still'">
-        <span v-if="watchedLabel" class="chip">{{ watchedLabel }}</span>
-        <div v-if="played > 0" class="prog"><i :style="{ width: played + '%' }"></i></div>
         <span class="disc" role="presentation" @click.stop="emit('play', item)">
           <svg viewBox="0 0 24 24" width="20" height="20"><path d="M8 5l12 7-12 7z" fill="currentColor" /></svg>
         </span>

@@ -8,6 +8,16 @@ export const fmtClock = (ms: number): string => {
 
 export const ticksToMs = (ticks?: number): number => Math.round((ticks || 0) / 1e4);
 
+/** The app's one progress read-out, 「看到 27:06」. The gateway never answers StartPositionTicks (measured:
+ *  0 on every row, even right after a progress POST), so the position has to be rebuilt as percentage ×
+ *  runtime — the same arithmetic Emby's own web client does. Coverage is the server's, not ours: 3 of the
+ *  200 rows the 在看 query returns carry a percentage at all. */
+export const seenLabel = (pct?: number, runTimeTicks?: number): string => {
+  if (!pct || pct <= 0) return '';
+  const ms = (ticksToMs(runTimeTicks) * Math.min(100, pct)) / 100;
+  return ms > 0 ? `看到 ${fmtClock(ms)}` : '';
+};
+
 export const fmtRuntime = (ticks?: number): string => {
   const ms = ticksToMs(ticks);
   if (!ms) return '';

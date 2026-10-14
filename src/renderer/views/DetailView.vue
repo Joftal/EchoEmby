@@ -8,7 +8,7 @@ import ScoreStrip from '../components/ScoreStrip.vue';
 import { tmdbKind as kindOf, useScores } from '../lib/scores';
 import { usePlayerStore } from '../stores/player';
 import { useAppStore } from '../stores/app';
-import { fmtDate, fmtDateTime, fmtRuntime } from '../lib/format';
+import { fmtDate, fmtDateTime, fmtRuntime, seenLabel } from '../lib/format';
 import { genreLabels } from '../lib/genres';
 
 const props = defineProps<{ id: string }>();
@@ -160,20 +160,28 @@ watch(
 
 const heroBackdrop = ref('');
 
-const playableId = computed(() => {
-  if (!item.value) return '';
+/** The one item the play button is about: the episode still in progress, else the first of the season.
+ *  Everything under that button - its label, its caption, whether it says 继续播放 - reads from here, so
+ *  the three cannot disagree the way they did when each picked an episode on its own. */
+const playTarget = computed<LibraryItem | null>(() => {
+  if (!item.value) return null;
   if (isSeries.value || isSeason.value) {
-    return episodes.value.find(e => e.userData?.playedPercentage)?.id || episodes.value[0]?.id || '';
+    return episodes.value.find(e => e.userData?.playedPercentage) || episodes.value[0] || null;
   }
-  return item.value.id;
+  return item.value;
 });
-const playTargetLabel = computed(() => {
-  if (!isSeries.value && !isSeason.value) return '';
-  const e = episodes.value.find(x => x.userData?.playedPercentage) || episodes.value[0];
-  if (!e) return '';
-  const s = e.parentIndexNumber ?? seasons.value.find(x => x.id === seasonId.value)?.indexNumber;
-  return s != null ? `第 ${s} 季 · 第 ${e.indexNumber} 集` : `第 ${e.indexNumber} 集`;
+const playableId = computed(() => playTarget.value?.id || '');
+const resuming = computed(() => !!playTarget.value?.userData?.playedPercentage);
+const playCaption = computed(() => {
+  const t = playTarget.value;
+  if (!t) return '';
+  const seen = seenLabel(t.userData?.playedPercentage, t.runTimeTicks);
+  if (!isSeries.value && !isSeason.value) return seen;
+  const s = t.parentIndexNumber ?? seasons.value.find(x => x.id === seasonId.value)?.indexNumber;
+  const pos = s != null ? `第 ${s} 季 · 第 ${t.indexNumber} 集` : `第 ${t.indexNumber} 集`;
+  return seen ? `${pos} · ${seen}` : pos;
 });
+const epSeen = (e: LibraryItem): string => seenLabel(e.userData?.playedPercentage, e.runTimeTicks);
 
 const genres = computed(() => genreLabels(item.value?.genres));
 const premiered = computed(() => fmtDate(item.value?.premiereDate) || String(item.value?.productionYear || ''));
@@ -330,8 +338,8 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
                 <button class="play" :disabled="!playableId || player.busy" @click="play()">
                   <span class="tri"></span>
                   <span class="ptxt">
-                    <b>{{ player.busy ? '准备中…' : item.userData?.playedPercentage ? '继续播放' : '播放' }}</b>
-                    <i v-if="playTargetLabel">{{ playTargetLabel }}</i>
+                    <b>{{ player.busy ? '准备中…' : resuming ? '继续播放' : '播放' }}</b>
+                    <i v-if="playCaption">{{ playCaption }}</i>
                   </span>
                 </button>
                 <button class="iconb" :class="{ on: fav }" :disabled="favBusy" :title="fav ? '已收藏' : '收藏'" @click="toggleFav">
@@ -372,7 +380,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
                 <span v-if="e.premiereDate">{{ fmtDate(e.premiereDate) }}</span>
                 <span>第 {{ e.indexNumber }} 集</span>
                 <span>{{ fmtRuntime(e.runTimeTicks) }}</span>
-                <span v-if="e.userData?.playedPercentage" class="seen">已观看</span>
+                <span v-if="epSeen(e)" class="seen">{{ epSeen(e) }}</span>
               </p>
               <p class="etitle">{{ e.name }}</p>
               <p v-if="e.overview" class="eov">{{ e.overview }}</p>
@@ -722,7 +730,7 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
 .epi:hover .disc { opacity: 1; transform: none; }
 .einfo { min-width: 0; margin-top: 11px; }
 .emeta { margin: 0; display: flex; gap: 8px; flex-wrap: wrap; font-size: 13px; font-weight: 500; color: var(--text-dim); font-variant-numeric: tabular-nums; }
-.emeta .seen { color: var(--text-faint); }
+.emeta .seen { color: var(--accent); }
 .etitle { margin: 3px 0 0; font-size: 14px; font-weight: 650; color: var(--text); }
 .eov {
   margin: 4px 0 0;

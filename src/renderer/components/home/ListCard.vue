@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import type { LibraryItem } from '../../../shared/types';
 import { useAppStore } from '../../stores/app';
-import { fmtRuntime } from '../../lib/format';
+import { fmtRuntime, seenLabel } from '../../lib/format';
 import { genreLabels } from '../../lib/genres';
 
 const props = withDefaults(defineProps<{ item: LibraryItem; index?: number; matchedGenres?: string[] }>(), {
@@ -81,6 +81,7 @@ const meta = computed(() =>
     .join('  ·  '),
 );
 const runtime = computed(() => fmtRuntime(props.item.runTimeTicks));
+const seen = computed(() => seenLabel(props.item.userData?.playedPercentage, props.item.runTimeTicks));
 
 function open(): void {
   if (target.value) router.push(`/detail/${target.value}`);
@@ -103,6 +104,7 @@ function open(): void {
       <p v-if="meta" class="meta">{{ meta }}</p>
       <p class="ov">{{ item.overview || '暂无简介。' }}</p>
       <div class="badges">
+        <span v-if="seen" class="b seen">{{ seen }}</span>
         <span v-if="rating" class="b rate">★ {{ rating }}</span>
         <span v-if="item.officialRating" class="b cert">{{ item.officialRating }}</span>
         <span v-if="runtime" class="b time">{{ runtime }}</span>
@@ -275,5 +277,10 @@ h3 {
 .time {
   color: var(--text-dim);
   background: var(--chip);
+}
+/* The one badge in this row that is about *you*, so it is the one that carries the accent. */
+.seen {
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 </style>
