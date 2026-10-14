@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import type { BangumiScore, CsmGuide, ImdbRating, LibraryItem, MediaSourceInfo, MediaStreamInfo, RtScores, TmdbMeta, TmdbSimilar, TmdbStills, TraktScores } from '../../shared/types';
 import HScroller from '../components/detail/HScroller.vue';
@@ -140,6 +140,62 @@ const stillUrl = (ep: number | undefined): string =>
 const posterUrl = (p?: string): string => (p ? `https://image.tmdb.org/t/p/w342${p}` : '');
 const backdropUrl = (p: string): string => `https://image.tmdb.org/t/p/w780${p}`;
 
+/** One index into backdrops drives the whole viewer. Which way the last move went decides how the two
+ *  frames slide; 0 means the viewer just opened, so the first frame only fades up. */
+const viewer = ref<number | null>(null);
+const vdir = ref(0);
+const strip = ref<HTMLElement | null>(null);
+
+/** w1920 is the largest TMDB still serves and it is exactly what the window holds at DPR 1.25; the
+ *  row's own w780 stays underneath as the soft stand-in while the big frame arrives. */
+const bigUrl = (p: string): string => `https://image.tmdb.org/t/p/w1920${p}`;
+const current = computed(() => (viewer.value == null ? '' : backdrops.value[viewer.value] || ''));
+
+function openViewer(i: number): void {
+  vdir.value = 0;
+  viewer.value = i;
+}
+function stepViewer(dir: number): void {
+  const i = viewer.value;
+  const n = backdrops.value.length;
+  if (i == null || n < 2) return;
+  vdir.value = dir;
+  viewer.value = (i + dir + n) % n;
+}
+function jumpViewer(i: number): void {
+  const at = viewer.value;
+  if (at == null || i === at) return;
+  vdir.value = i > at ? 1 : -1;
+  viewer.value = i;
+}
+/** The strip is a horizontal rail, so a normal wheel over it should push it sideways rather than scroll nothing. */
+function onStripWheel(e: WheelEvent): void {
+  if (strip.value) strip.value.scrollLeft += e.deltaY || e.deltaX;
+}
+function onViewerKey(e: KeyboardEvent): void {
+  if (viewer.value == null) return;
+  if (e.key === 'Escape' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') e.stopPropagation();
+  if (e.key === 'Escape') viewer.value = null;
+  else if (e.key === 'ArrowLeft') stepViewer(-1);
+  else if (e.key === 'ArrowRight') stepViewer(1);
+}
+
+watch(viewer, i => {
+  if (i == null) return;
+  // The arrows ask for one of the two neighbours next, so pull them in while this frame is on screen.
+  const n = backdrops.value.length;
+  for (const d of [-1, 1]) {
+    const p = backdrops.value[(i + d + n) % n];
+    if (p) new Image().src = bigUrl(p);
+  }
+  void nextTick(() => (strip.value?.children[i] as HTMLElement | undefined)?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' }));
+});
+
+/* Capture phase, because the titlebar owns Esc as 「go home」 on the same window and registers before this
+   view mounts; listening in the bubble phase would close the still and bounce out of the page with it. */
+onMounted(() => window.addEventListener('keydown', onViewerKey, true));
+onBeforeUnmount(() => window.removeEventListener('keydown', onViewerKey, true));
+
 const faces = ref<Record<string, string>>({});
 watch(
   crew,
@@ -245,6 +301,7 @@ watch(
     similar.value = [];
     stills.value = {};
     backdrops.value = [];
+    viewer.value = null;
     heroBackdrop.value = '';
     item.value = null;
     seasons.value = [];
@@ -501,7 +558,9 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
         </section>
 
         <HScroller v-if="backdrops.length" class="block" title="剧照" :count="backdrops.length">
-          <img v-for="(b, i) in backdrops" :key="i" class="stillimg" :src="backdropUrl(b)" alt="" loading="lazy" decoding="async" />
+          <button v-for="(b, i) in backdrops" :key="i" type="button" class="still" @click="openViewer(i)">
+            <img class="stillimg" :src="backdropUrl(b)" alt="" loading="lazy" decoding="async" />
+          </button>
         </HScroller>
 
         <HScroller v-if="similar.length" class="block" title="相似作品" :count="similar.length">
@@ -516,6 +575,38 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
         </HScroller>
       </div>
     </template>
+
+    <Teleport to="body">
+      <Transition name="lightbox">
+        <div v-if="viewer !== null" class="lightbox" role="dialog" aria-modal="true" aria-label="剧照大图" @click.self="viewer = null" @wheel.prevent>
+          <button type="button" class="lb-x" aria-label="关闭" @click="viewer = null">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6.5 6.5 17.5 17.5M17.5 6.5 6.5 17.5" /></svg>
+          </button>
+
+          <div class="lb-stage" @click.self="viewer = null">
+            <img class="lb-lores" :src="current ? backdropUrl(current) : ''" alt="" decoding="async" />
+            <Transition :name="vdir > 0 ? 'lb-nx' : vdir < 0 ? 'lb-pv' : 'lb-fade'">
+              <img v-if="current" class="lb-img" :src="bigUrl(current)" alt="" decoding="async" />
+            </Transition>
+            <button v-if="backdrops.length > 1" type="button" class="lb-edge left" aria-label="上一张" @click.stop="stepViewer(-1)">
+              <svg viewBox="0 0 24 24" width="19" height="19"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            </button>
+            <button v-if="backdrops.length > 1" type="button" class="lb-edge right" aria-label="下一张" @click.stop="stepViewer(1)">
+              <svg viewBox="0 0 24 24" width="19" height="19"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            </button>
+          </div>
+
+          <footer class="lb-foot">
+            <div ref="strip" class="lb-strip" @wheel.prevent.stop="onStripWheel">
+              <button v-for="(b, i) in backdrops" :key="i" type="button" class="lb-th" :class="{ on: i === viewer }" @click="jumpViewer(i)">
+                <img :src="backdropUrl(b)" alt="" draggable="false" loading="lazy" decoding="async" />
+              </button>
+            </div>
+            <p class="lb-count">{{ (viewer ?? 0) + 1 }} / {{ backdrops.length }}</p>
+          </footer>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
@@ -852,7 +943,10 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
 .chips { display: flex; gap: 9px; flex-wrap: wrap; }
 .chip { padding: 6px 14px; border-radius: 999px; background: var(--chip); border: 1px solid var(--line); font-size: 13px; font-weight: 600; color: var(--text); }
 
-.stillimg { flex: none; width: 320px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: var(--radius); border: 1px solid var(--line); box-shadow: var(--shadow-sm); }
+.still { flex: none; padding: 0; border: 0; background: none; cursor: zoom-in; transition: transform var(--hov) var(--ease-out); }
+.still:hover { transform: translateY(-3px); }
+.still:active { transform: scale(0.982); }
+.stillimg { display: block; width: 320px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: var(--radius); border: 1px solid var(--line); box-shadow: var(--shadow-sm); }
 
 .sim { flex: none; width: 150px; }
 .sposter { position: relative; aspect-ratio: 2 / 3; border-radius: var(--radius); overflow: hidden; background: var(--bg-elev-2); border: 1px solid var(--line); box-shadow: var(--shadow-sm); }
@@ -865,4 +959,116 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
 .muted { color: var(--text-dim); font-weight: 500; font-size: 13px; }
 .err { color: var(--danger); }
 .banner { margin: 0 0 12px; padding: 0 44px; }
+
+/* 剧照大图: a photo manager rather than a dialog — the art is the whole surface, so the backdrop goes
+   dark enough to letterbox it and every control is a quiet light-on-dark affordance laid over it. */
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: grid;
+  /* Without a min-0 column the filmstrip's max-content width (145 thumbs here) becomes the page width. */
+  grid-template: minmax(0, 1fr) auto / minmax(0, 1fr);
+  padding: 20px 22px 16px;
+  background: rgba(8, 8, 12, 0.965);
+  backdrop-filter: blur(26px) saturate(150%);
+  cursor: zoom-out;
+}
+.lb-x {
+  position: absolute;
+  top: 18px;
+  right: 20px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  cursor: pointer;
+  transition: background var(--hov) var(--ease);
+}
+.lb-x:hover { background: rgba(255, 255, 255, 0.24); }
+.lb-stage { position: relative; overflow: hidden; }
+.lb-lores,
+.lb-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+}
+.lb-edge {
+  position: absolute;
+  top: 50%;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  cursor: pointer;
+  opacity: 0.55;
+  transform: translate3d(0, -50%, 0);
+  transition: opacity var(--hov) var(--ease), background var(--hov) var(--ease);
+}
+.lb-edge.left { left: 14px; }
+.lb-edge.right { right: 14px; }
+.lb-edge:hover { opacity: 1; background: rgba(255, 255, 255, 0.22); }
+.lb-edge:active { opacity: 1; background: rgba(255, 255, 255, 0.3); }
+.lb-foot { display: flex; flex-direction: column; align-items: center; gap: 10px; cursor: default; }
+.lb-strip {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 4px 2px;
+  scrollbar-width: none;
+  /* Same edge fade as the rail's list: a thumb clipped straight in half reads as broken, not as scrollable. */
+  mask-image: linear-gradient(90deg, transparent, #000 22px, #000 calc(100% - 22px), transparent);
+}
+.lb-strip::-webkit-scrollbar { height: 0; }
+.lb-th {
+  flex: none;
+  width: 92px;
+  aspect-ratio: 16 / 9;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  overflow: hidden;
+  background: none;
+  cursor: pointer;
+  opacity: 0.45;
+  transition: opacity var(--hov) var(--ease), transform var(--hov) var(--ease-out), border-color var(--hov) var(--ease);
+}
+.lb-th:hover { opacity: 0.8; transform: translateY(-2px); }
+.lb-th.on { opacity: 1; border-color: rgba(255, 255, 255, 0.9); transform: none; }
+.lb-th img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.lb-count { margin: 0; font-size: 13px; font-weight: 600; color: rgba(255, 255, 255, 0.72); font-variant-numeric: tabular-nums; letter-spacing: 0.03em; }
+
+.lightbox-enter-active,
+.lightbox-leave-active { transition: opacity 0.22s var(--ease); }
+.lightbox-enter-from,
+.lightbox-leave-to { opacity: 0; }
+/* Both frames of a step are on screen at once, so the row keeps its size and the art slides past itself. */
+.lb-fade-enter-active,
+.lb-nx-enter-active,
+.lb-pv-enter-active,
+.lb-fade-leave-active,
+.lb-nx-leave-active,
+.lb-pv-leave-active { transition: opacity var(--hov) var(--ease), transform 0.36s var(--ease-out); }
+.lb-fade-enter-from,
+.lb-fade-leave-to { opacity: 0; transform: scale(0.985); }
+.lb-nx-enter-from { opacity: 0; transform: translate3d(52px, 0, 0); }
+.lb-nx-leave-to { opacity: 0; transform: translate3d(-52px, 0, 0); }
+.lb-pv-enter-from { opacity: 0; transform: translate3d(-52px, 0, 0); }
+.lb-pv-leave-to { opacity: 0; transform: translate3d(52px, 0, 0); }
 </style>
