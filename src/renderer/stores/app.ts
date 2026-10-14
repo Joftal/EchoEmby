@@ -114,14 +114,26 @@ export const useAppStore = defineStore('app', () => {
   function loadViews(): Promise<void> {
     if (views.value.length) return Promise.resolve();
     if (!viewsPromise) {
-      viewsPromise = window.echoemby.emby
-        .views()
-        .then(r => {
-          if (r.ok) views.value = r.data || [];
-        })
-        .finally(() => {
-          viewsPromise = null;
-        });
+      viewsPromise = (async () => {
+        const r = await window.echoemby.emby.views();
+        if (!r.ok) return;
+        const all = r.data || [];
+        /** Views answers with every library the account may see, and a library that holds nothing
+         *  looks identical to one that is merely quiet (measured: 播放列表 is empty on both gateways).
+         *  Ask the same question the browse page will ask, and drop the ones that answer with nothing.
+         *  A failed probe keeps the library: only a proven-empty answer may hide it. */
+        const filled = await Promise.all(
+          all.map(v =>
+            window.echoemby.emby
+              .items({ ParentId: v.id, IncludeItemTypes: 'Movie,Series,BoxSet,Playlist,Video', Recursive: true, Limit: 1 })
+              .then(x => (x.ok ? (x.data || []).length > 0 : true))
+              .catch(() => true),
+          ),
+        );
+        views.value = all.filter((_, i) => filled[i]);
+      })().finally(() => {
+        viewsPromise = null;
+      });
     }
     return viewsPromise;
   }
@@ -149,8 +161,9 @@ export const useAppStore = defineStore('app', () => {
     if (loading.value) return;
     loading.value = true;
     error.value = '';
-    const [viewsRes, rowsRes] = await Promise.all([window.echoemby.emby.views(), window.echoemby.emby.homeRows()]);
-    if (viewsRes.ok) views.value = viewsRes.data || [];
+    // The rail's list comes from loadViews, not the raw Views reply: that one still carries the
+    // empty libraries, and writing it here would put them back after the rail had hidden them.
+    const [, rowsRes] = await Promise.all([loadViews(), window.echoemby.emby.homeRows()]);
     if (rowsRes.ok) rows.value = rowsRes.data || [];
     else error.value = rowsRes.error || '加载失败';
     loading.value = false;

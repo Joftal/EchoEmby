@@ -53,8 +53,11 @@ function params(startIndex: number): Record<string, string | number | boolean> {
   // Measured: this server answers an IsFavorite query with nothing at all unless it is told which
   // kinds to look for, so 收藏 carries its own default list rather than relying on the server's.
   if (kind.value === 'favorites') return { Recursive: true, Filters: 'IsFavorite', IncludeItemTypes: 'Movie,Series,Episode,Video,BoxSet,Playlist', ...f, ...s, ...page };
-  if (kind.value === 'search') return { Recursive: true, SearchTerm: term.value.trim(), ...f, ...page };
-  // IncludeItemTypes has to be comma-joined: asked as `A|B` this server ignores the parameter outright.
+  // Without this the search answers with Folder, Studio and Person rows: 「"骗骗"喜欢你」 showed up
+  // twice because the library's container folder and the movie inside it are two different items.
+  // The list has to be comma-joined here too — asked as `A|B` this server ignores it outright.
+  if (kind.value === 'search')
+    return { Recursive: true, SearchTerm: term.value.trim(), IncludeItemTypes: 'Movie,Series,Episode,Video,BoxSet,Playlist', ...f, ...page };
   return { ParentId: viewId.value, IncludeItemTypes: 'Movie,Series,BoxSet,Playlist,Video', Recursive: true, ...f, ...s, ...page };
 }
 
@@ -63,8 +66,75 @@ const loading = ref(false);
 const busy = ref(false);
 const error = ref('');
 const hasMore = ref(false);
+
+/** The Series behind a run of matching episodes, by series id. A list row for an Episode carries
+ *  「S01E05 …」 and the episode's own still, so the folded card cannot be built from it. */
+const seriesById = ref<Record<string, LibraryItem>>({});
+let seriesAccount = '';
+
+const episodeShows = (batch: LibraryItem[]): string[] => {
+  const ids = new Set<string>();
+  for (const it of batch) if (it.type === 'Episode' && it.parentId) ids.add(it.parentId);
+  return [...ids];
+};
+
+async function rememberSeries(ids: string[]): Promise<void> {
+  const account = store.account?.accountId || '';
+  // Ids are per-server, so a cache kept across an account switch would dress a show in the wrong art.
+  if (account !== seriesAccount) {
+    seriesById.value = {};
+    seriesAccount = account;
+  }
+  const need = ids.filter(id => !seriesById.value[id]);
+  if (!need.length) return;
+  const r = await window.echoemby.emby.items({ Ids: need.join(','), Limit: need.length });
+  const found = r.ok ? r.data || [] : [];
+  // Measured on bangumi: a show filed under two libraries exists as two Series rows there, and only
+  // one of them answers an Ids query — the item endpoint resolves both. So the misses get asked one
+  // by one, which keeps the batch for the servers that do answer it.
+  const missed = need.filter(id => !found.some(x => x.id === id));
+  const singles = await Promise.all(
+    missed.map(id => window.echoemby.emby.item(id).then(x => (x.ok ? x.data : null))),
+  );
+  const next = { ...seriesById.value };
+  for (const it of [...found, ...singles.filter((x): x is LibraryItem => !!x)]) next[it.id] = it;
+  seriesById.value = next;
+}
+
 /** A search the server cannot sort is sorted over the window we already fetched. */
-const shown = computed(() => (isSearch.value ? localSort(items.value, filters.value.sort) : items.value));
+const sorted = computed(() => (isSearch.value ? localSort(items.value, filters.value.sort) : items.value));
+
+/** Two library folders can hold the same show twice (measured on bangumi: 鬼灭之刃 as four Series
+ *  rows, three of which never answer an Ids query), so a second copy of the same card drops out.
+ *  A show merges on its name alone — the duplicate rows disagree about the year, one carrying none.
+ *  A film keeps the year, because 活着 (1994) and 活着 (2020) are two different films. */
+const cardKey = (x: LibraryItem): string => (x.type === 'Series' ? `S|${x.name}` : `${x.type}|${x.name}|${x.productionYear || ''}`);
+
+/** 87 episodes of one show arrived as 87 cards. A library catalogue answers a title once, so an
+ *  episode run folds into its Series card; the two watch-lists keep their per-episode rows because
+ *  there the progress bar belongs to the episode, not the show. */
+const shown = computed<LibraryItem[]>(() => {
+  const src = sorted.value;
+  if (!isSearch.value) return src;
+  const onScreen = new Set(src.filter(x => x.type !== 'Episode').map(x => x.id));
+  const taken = new Set<string>();
+  const once = new Set<string>();
+  const out: LibraryItem[] = [];
+  for (const it of src) {
+    let card = it;
+    const seriesId = it.type === 'Episode' ? it.parentId : '';
+    if (seriesId) {
+      if (onScreen.has(seriesId) || taken.has(seriesId)) continue;
+      taken.add(seriesId);
+      card = seriesById.value[seriesId] || it;
+    }
+    const key = cardKey(card);
+    if (once.has(key)) continue;
+    once.add(key);
+    out.push(card);
+  }
+  return out;
+});
 
 /** The /Genres facet lives in the store, so a server that was slow on the first ask gets asked again. */
 const genreOptions = computed(() => store.genres);
@@ -83,6 +153,17 @@ let lastKey = '';
 
 async function load(reset: boolean): Promise<void> {
   if (busy.value) return;
+  // An empty SearchTerm is not 「搜这个空字符串」 but 「没有这个条件」: the gateway treats it as
+  // unfiltered and dumps the library, which is what filled 搜索 with 「#活着」 before I typed a name.
+  if (isSearch.value && !term.value.trim()) {
+    items.value = [];
+    studioOptions.value = [];
+    hasMore.value = false;
+    error.value = '';
+    loading.value = false;
+    lastKey = JSON.stringify(params(0));
+    return;
+  }
   busy.value = true;
   if (reset) {
     loading.value = true;
@@ -99,6 +180,9 @@ async function load(reset: boolean): Promise<void> {
     return;
   }
   const batch = r.data || [];
+  // Before the rows go on screen: the fold has to be settled or the episode card would swap into a
+  // show card under the user's cursor a beat after the grid paints.
+  if (isSearch.value) await rememberSeries(episodeShows(batch));
   items.value = reset ? batch : [...items.value, ...batch];
   hasMore.value = batch.length === pageSize.value;
   if (!isFiltered(filters.value)) rememberStudios(batch, reset);
