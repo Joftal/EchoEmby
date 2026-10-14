@@ -19,13 +19,17 @@ watch(accounts, xs => xs.forEach(a => void store.loadCounts(a.accountId)), { imm
 onMounted(async () => {
   if (!store.ready) await store.init();
   if (!store.account) router.replace('/login');
-  window.addEventListener('keydown', onKey);
+  window.addEventListener('keydown', onKey, true);
 });
 
-onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
+onBeforeUnmount(() => window.removeEventListener('keydown', onKey, true));
 
+/* Capture phase, because the titlebar owns Esc as 「go home」 on the same window: in the bubble phase the
+   sheet closed and the page navigated away with it. */
 function onKey(e: KeyboardEvent): void {
-  if (e.key === 'Escape' && sheet.value) sheet.value = null;
+  if (e.key !== 'Escape' || !sheet.value) return;
+  e.stopPropagation();
+  sheet.value = null;
 }
 
 async function use(id: string): Promise<void> {
