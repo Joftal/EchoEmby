@@ -44,8 +44,11 @@ onBeforeUnmount(() => {
   io = null;
 });
 
-/** Gateway image replies flake under a burst, so art is fetched per slide and retried. */
-const url = computed(() => (src.value && tries.value ? `${src.value}&_r=${tries.value}` : src.value));
+/** Gateway image replies flake under a burst, so art is fetched per slide and retried. An episode's own
+ *  TMDB still has no query string, and appending `&_r=` to it would land in the path and 404. */
+const url = computed(() =>
+  src.value && tries.value ? `${src.value}${src.value.includes('?') ? '&' : '?'}_r=${tries.value}` : src.value,
+);
 
 watch(
   () => [props.item.id, props.variant, props.width, near.value] as const,

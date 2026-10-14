@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
-import type { AppConfig, FacetOption, LibraryItem, LibraryRow, Settings } from '../../shared/types';
+import type { AppConfig, FacetOption, LibraryItem, LibraryRow, Settings, TmdbStills } from '../../shared/types';
 
 export const useAppStore = defineStore('app', () => {
   const config = ref<AppConfig | null>(null);
@@ -190,14 +190,55 @@ export const useAppStore = defineStore('app', () => {
     return url;
   }
 
+  // Item ids are per-server, so both maps are keyed by account: a cache kept across a switch would
+  // dress one server's episode in another server's still.
+  const seriesTmdb = new Map<string, Promise<string>>();
+  const seasonStills = new Map<string, Promise<TmdbStills>>();
+
+  /** The episode's own frame from TMDB. One ask per (series, season) no matter how many episodes of it a
+   *  page shows: the 在看 window is 48 artless episodes over 6 seasons, and TMDB answers a season at a time. */
+  async function episodeStill(item: LibraryItem): Promise<string> {
+    const sid = item.parentId;
+    const season = item.parentIndexNumber;
+    const ep = item.indexNumber;
+    if (!sid || season == null || ep == null) return '';
+    const acct = `${account.value?.accountId}|`;
+    let tmdbId = seriesTmdb.get(acct + sid);
+    if (!tmdbId) {
+      tmdbId = window.echoemby.emby
+        .item(sid)
+        .then(r => (r.ok ? r.data?.providers?.tmdb || '' : ''))
+        .catch(() => '');
+      seriesTmdb.set(acct + sid, tmdbId);
+    }
+    const showId = await tmdbId;
+    // This gateway writes the string "None" for a provider it does not have, so only digits are an id.
+    if (!/^\d{1,8}$/.test(showId)) return '';
+    const key = `${acct}${showId}/${season}`;
+    let stills = seasonStills.get(key);
+    if (!stills) {
+      stills = window.echoemby.meta
+        .tmdbStills({ tmdbId: showId, season })
+        .then(x => (x.ok && x.data ? x.data.value : {}))
+        .catch(() => ({} as TmdbStills));
+      seasonStills.set(key, stills);
+    }
+    const path = (await stills)[ep];
+    // w500 is the size the detail page already uses for these; a card is 300 css px = 375 device px here.
+    return path ? `https://image.tmdb.org/t/p/w500${path}` : '';
+  }
+
   /** An Episode rarely has art of its own here: measured on the 在看 row, 48 of 60 rows carry no Primary tag
-   *  and asking the server for one answers 500 — while the series above them has both a poster and a
-   *  backdrop, which this gateway serves without ever needing a tag. So the series stands in for the episode,
-   *  wide art for a 16:9 frame and the poster for a 2:3 one; the letter placeholder is only for what has neither. */
+   *  and asking the server for one answers 500. Two stand-ins, best first: TMDB has the episode's own still
+   *  (measured on that page: 21 of those 48; the 27 misses are 物语系列, whose seasons this server numbers
+   *  11-13 while TMDB stops at 5), and the series above them always has a backdrop and a poster, which this
+   *  gateway serves without ever needing a tag. So a 16:9 frame asks for its own still and falls back to the
+   *  series backdrop, a 2:3 frame takes the series poster, and the letter placeholder is the last resort. */
   async function itemArt(item: LibraryItem, width: number, wide = false): Promise<string> {
     if (item.primaryImageTag) return imageUrl(item, width);
     if (item.type !== 'Episode' || !item.parentId) return '';
-    return wide ? backdropUrl({ id: item.parentId }, width) : imageUrl({ id: item.parentId }, width);
+    if (wide) return (await episodeStill(item)) || backdropUrl({ id: item.parentId }, width);
+    return imageUrl({ id: item.parentId }, width);
   }
 
   return { config, account, rows, views, genres, loading, error, ready, counts, init, login, switchTo, remove, update, saveSettings, loadCounts, loadHome, loadViews, loadGenres, imageUrl, backdropUrl, itemArt };
