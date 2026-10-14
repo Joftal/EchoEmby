@@ -606,7 +606,7 @@ h1 {
 /* The marks sit straight on the art, so the strip has to read as one line of numbers rather than a row
    of plates: no border, no plate, and the gap between groups barely wider than the gap inside one.
    Height, never width, is what they share — Bangumi ships only as a wordmark and stretches wide, and
-   TMDB's flower is mostly empty space, so it needs 3px more to weigh as much as IMDb's solid box. */
+   TMDB ships as a three-row lockup, so it needs 3px more before its letters clear 5px tall. */
 .b.score { gap: 5px; }
 .lg { height: 18px; width: auto; display: block; filter: drop-shadow(0 1px 5px rgba(0, 0, 0, 0.55)); }
 .tmdb .lg { height: 21px; }
