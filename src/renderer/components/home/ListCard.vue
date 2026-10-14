@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router';
 import type { LibraryItem } from '../../../shared/types';
 import { useAppStore } from '../../stores/app';
 import { fmtRuntime } from '../../lib/format';
+import { genreLabels } from '../../lib/genres';
 
 const props = withDefaults(defineProps<{ item: LibraryItem; index?: number }>(), { index: 0 });
 
@@ -77,7 +78,7 @@ const meta = computed(() =>
   [
     props.item.seriesName && props.item.seriesName !== props.item.name ? props.item.seriesName : '',
     props.item.productionYear ? String(props.item.productionYear) : '',
-    props.item.genres?.length ? props.item.genres.join(' / ') : '',
+    genreLabels(props.item.genres).join(' / '),
   ]
     .filter(Boolean)
     .join('  ·  '),

@@ -1,4 +1,5 @@
 import type { LibraryItem, StudioRef } from '../../shared/types';
+import { genreLabel, genreQuery } from './genres';
 
 /** Which sort is active. `relevance` means "leave the server's own order alone", which is the only
  *  sensible answer for a search: this server ignores SortBy the moment a SearchTerm is present. */
@@ -7,6 +8,7 @@ export type SortKey = 'relevance' | 'latest' | 'rating' | 'premiere' | 'name';
 export interface Filters {
   /** '' = 全部; otherwise an Emby type, Movie or Series. */
   type: string;
+  /** Chinese genre labels, folded by lib/genres; the query re-expands them to every spelling. */
   genres: string[];
   /** Four-digit years, in the order the user ticked them. */
   years: string[];
@@ -105,7 +107,7 @@ export const yearOptions = (): string[] => {
 export function filterParams(f: Filters): Record<string, string> {
   const p: Record<string, string> = {};
   if (f.type) p.IncludeItemTypes = f.type;
-  if (f.genres.length) p.Genres = f.genres.join('|');
+  if (f.genres.length) p.Genres = genreQuery(f.genres);
   if (f.years.length) p.Years = [...f.years].sort().join(',');
   if (f.studio?.id) p.StudioIds = f.studio.id;
   if (f.langs.length) p.AudioLanguages = f.langs.join(',');
@@ -143,7 +145,7 @@ export function fromQuery(q: Record<string, unknown>, sort: SortKey): Filters {
   const want = typeof q.sort === 'string' ? (q.sort as SortKey) : sort;
   return {
     type: typeof q.type === 'string' ? q.type : '',
-    genres: list(q.genres),
+    genres: list(q.genres).map(genreLabel),
     years: csv(q.years),
     studio: cut > 0 ? { id: raw.slice(0, cut), name: raw.slice(cut + 1) } : null,
     langs: csv(q.langs),

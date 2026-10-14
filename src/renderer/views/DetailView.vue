@@ -9,6 +9,7 @@ import { tmdbKind as kindOf, useScores } from '../lib/scores';
 import { usePlayerStore } from '../stores/player';
 import { useAppStore } from '../stores/app';
 import { fmtDate, fmtDateTime, fmtRuntime } from '../lib/format';
+import { genreLabels } from '../lib/genres';
 
 const props = defineProps<{ id: string }>();
 const router = useRouter();
@@ -174,7 +175,7 @@ const playTargetLabel = computed(() => {
   return s != null ? `第 ${s} 季 · ${e.indexNumber} 集` : `第 ${e.indexNumber} 集`;
 });
 
-const genres = computed(() => item.value?.genres || []);
+const genres = computed(() => genreLabels(item.value?.genres));
 const premiered = computed(() => fmtDate(item.value?.premiereDate) || String(item.value?.productionYear || ''));
 const metaLine = computed(() => {
   const parts = [premiered.value];

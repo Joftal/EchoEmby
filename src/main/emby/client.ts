@@ -310,9 +310,10 @@ export class EmbyClient {
     return (j.Items || []).map(mapItem);
   }
 
-  /** The library's whole genre list, in the server's own language. Measured: 50 rows on the gateway and
-   *  26 on nyamedia, both already Chinese, so the 分类 dropdown can be filled once per account rather than
-   *  shrinking to whatever the current page happens to hold. */
+  /** The library's whole genre list, exactly as the scraper wrote it. Measured: 50 rows on the gateway and
+   *  26 on nyamedia, and the gateway's are mixed — 23 中文, 25 English, 2 Japanese spellings of the same
+   *  genres. Folding them onto one Chinese label is the renderer's job (lib/genres), so the dropdown can be
+   *  filled once per account rather than shrinking to whatever the current page happens to hold. */
   async genres(): Promise<FacetOption[]> {
     const j = await this.get<any>(`/Genres`, { UserId: this.account.userId, Limit: 200 });
     return (j.Items || []).map((x: any) => ({ name: String(x.Name) }));

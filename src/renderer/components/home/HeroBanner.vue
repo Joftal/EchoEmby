@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { LibraryItem } from '../../../shared/types';
 import { fmtDate } from '../../lib/format';
+import { genreLabels } from '../../lib/genres';
 import ScoreStrip from '../ScoreStrip.vue';
 import { useAppStore } from '../../stores/app';
 
@@ -28,7 +29,7 @@ const runtime = computed(() => {
   if (!mins) return '';
   return mins >= 60 ? `${Math.floor(mins / 60)} 小时 ${mins % 60} 分` : `${mins} 分钟`;
 });
-const genres = computed(() => (current.value?.genres || []).join(' '));
+const genres = computed(() => genreLabels(current.value?.genres).join(' '));
 const date = computed(() => fmtDate(current.value?.premiereDate) || String(current.value?.productionYear || ''));
 
 async function fetchArt(it: LibraryItem, wide: boolean): Promise<void> {

@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import type { FacetOption, StudioRef } from '../../../shared/types';
 import { emptyFilters, isFiltered, LANG_OPTIONS, SORT_OPTIONS, TYPE_OPTIONS, yearOptions, type Filters, type SortKey } from '../../lib/filters';
+import { genreFacet } from '../../lib/genres';
 import FilterSelect from './FilterSelect.vue';
 
 const props = defineProps<{
@@ -19,7 +20,7 @@ const langs = computed(() => LANG_OPTIONS);
 const types = computed(() => TYPE_OPTIONS);
 const sorts = computed(() => SORT_OPTIONS.filter(o => props.isSearch || !o.searchOnly));
 const studios = computed(() => props.studioOptions.filter(s => s.id).map(s => ({ value: `${s.id}|${s.name}`, label: s.name })));
-const genres = computed(() => props.genreOptions.map(g => ({ value: g.name, label: g.name })));
+const genres = computed(() => genreFacet(props.genreOptions.map(g => g.name)));
 
 function patch(part: Partial<Filters>): void {
   emit('change', { ...props.filters, ...part });
