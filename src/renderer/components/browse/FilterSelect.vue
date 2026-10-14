@@ -1,3 +1,9 @@
+<script lang="ts">
+/** Which panel is open, across every instance of this control. It has to live outside setup(), or each
+ *  control gets its own copy and the shared answer means nothing. */
+let opened: { close(): void } | null = null;
+</script>
+
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 
@@ -19,6 +25,10 @@ const open = ref(false);
 const root = ref<HTMLElement | null>(null);
 const searchEl = ref<HTMLInputElement | null>(null);
 const term = ref('');
+
+/** One panel at a time: a mouse pointer that lands on another pill closes this one on its own, but
+ *  Enter on a keyboard fires no pointer, so two controls tabbed in sequence would stack two panels. */
+const self = { close: () => (open.value = false) };
 
 const chosen = computed<string[]>(() => (Array.isArray(props.modelValue) ? props.modelValue : props.modelValue ? [props.modelValue] : []));
 const shown = computed(() =>
@@ -46,6 +56,16 @@ function clear(): void {
   emit('update:modelValue', props.multi ? [] : '');
 }
 
+/** 不限 is a chip like any other, except it answers by emptying the list instead of adding itself. */
+const chipList = computed(() => (props.multi ? [{ value: '', label: '不限' }, ...shown.value] : shown.value));
+function isPicked(value: string): boolean {
+  return value ? chosen.value.includes(value) : chosen.value.length === 0;
+}
+function pick(value: string): void {
+  if (value) toggle(value);
+  else clear();
+}
+
 watch(open, async v => {
   if (!v) {
     term.value = '';
@@ -68,14 +88,18 @@ function onKey(e: KeyboardEvent): void {
 }
 watch(open, v => {
   if (v) {
+    opened?.close();
+    opened = self;
     document.addEventListener('pointerdown', onDocPointer, true);
     window.addEventListener('keydown', onKey, true);
   } else {
+    if (opened === self) opened = null;
     document.removeEventListener('pointerdown', onDocPointer, true);
     window.removeEventListener('keydown', onKey, true);
   }
 });
 onBeforeUnmount(() => {
+  if (opened === self) opened = null;
   document.removeEventListener('pointerdown', onDocPointer, true);
   window.removeEventListener('keydown', onKey, true);
 });
@@ -92,7 +116,7 @@ onBeforeUnmount(() => {
     </button>
 
     <Transition name="pop">
-      <div v-if="open" class="panel" :class="{ wide }">
+      <div v-if="open" class="panel" :class="{ wide, multi }">
         <label v-if="searchable" class="find">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
             <path d="M11 4.6a6.4 6.4 0 1 0 0 12.8 6.4 6.4 0 0 0 0-12.8Z" />
@@ -101,20 +125,30 @@ onBeforeUnmount(() => {
           <input ref="searchEl" v-model="term" type="text" placeholder="搜索" spellcheck="false" />
         </label>
 
-        <div class="list">
+        <div class="list" :class="{ chips: multi }">
           <button
-            v-for="o in shown"
-            :key="o.value"
-            class="row"
-            :class="{ picked: chosen.includes(o.value) }"
+            v-for="o in chipList"
+            :key="o.value || '*'"
+            class="opt"
+            :class="[multi ? 'chip' : 'row', { picked: isPicked(o.value) }]"
             type="button"
-            @click="toggle(o.value)"
+            :aria-pressed="multi ? isPicked(o.value) : undefined"
+            @click="pick(o.value)"
           >
-            <span v-if="multi" class="box">
-              <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M5 12.6 9.6 17 19 7" />
-              </svg>
-            </span>
+            <svg
+              v-if="multi"
+              class="chk"
+              viewBox="0 0 24 24"
+              width="12"
+              height="12"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="3.2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M5 12.6 9.6 17 19 7" />
+            </svg>
             <span class="name">{{ o.label }}</span>
             <svg
               v-if="!multi && chosen.includes(o.value)"
@@ -132,11 +166,6 @@ onBeforeUnmount(() => {
             </svg>
           </button>
           <p v-if="!shown.length" class="none">没有匹配项</p>
-        </div>
-
-        <div v-if="multi && chosen.length" class="foot">
-          <span>{{ chosen.length }} 项已选</span>
-          <button type="button" @click="clear">清空</button>
         </div>
       </div>
     </Transition>
@@ -224,6 +253,11 @@ onBeforeUnmount(() => {
 .panel.wide {
   width: 268px;
 }
+/* Chips need the extra measure: a wrapped cloud reads its labels in two columns, while the row list
+   only ever needed one. */
+.panel.multi {
+  width: 300px;
+}
 .find {
   display: flex;
   align-items: center;
@@ -254,16 +288,32 @@ onBeforeUnmount(() => {
   overscroll-behavior: contain;
   scrollbar-width: thin;
 }
-.row {
+/* Multi-choice is a chip cloud, not a checklist: the box in front of every name made you align two
+   things (box, label) to learn one bit, and a year list of 56 boxes is a wall. A chip is the bit. */
+.list.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 7px;
+  padding: 3px 2px 1px;
+}
+.opt {
   display: flex;
   align-items: center;
+  border: 0;
+  font-size: 13px;
+  text-align: left;
+  color: var(--text);
+}
+.opt:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.row {
   gap: 9px;
   width: 100%;
   padding: 8px 9px;
   border-radius: 9px;
-  font-size: 13px;
-  text-align: left;
-  color: var(--text);
   transition: background var(--hov) var(--ease);
 }
 .row:hover {
@@ -279,20 +329,54 @@ onBeforeUnmount(() => {
 .row.picked {
   font-weight: 650;
 }
-.box {
-  display: grid;
-  place-items: center;
-  width: 16px;
-  height: 16px;
-  flex: none;
-  border-radius: 5px;
-  border: 1.5px solid var(--line-strong);
-  color: transparent;
-  transition: background var(--hov) var(--ease), border-color var(--hov) var(--ease), color var(--hov) var(--ease);
+.chip {
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: var(--chip);
+  transition: color var(--hov) var(--ease), background var(--hov) var(--ease), transform var(--hov) var(--ease-out);
 }
-.picked .box {
-  background: var(--accent);
-  border-color: var(--accent);
+.chip:hover {
+  color: var(--text);
+  background: var(--chip-hi);
+}
+.chip:active {
+  transform: scale(0.94);
+  transition-duration: 0.1s;
+}
+.chip .name {
+  /* A genre is short, but a company name typed by nobody's hand is not. */
+  max-width: 168px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chip.picked {
+  color: var(--on-ink);
+  background: var(--ink);
+}
+.chip.picked:hover {
+  color: var(--on-ink);
+}
+/* The tick grows into the chip rather than appearing in a box that was waiting for it, so the label
+   slides the 17px it takes and the pill reads as the thing that changed. */
+.chk {
+  width: 0;
+  flex: none;
+  opacity: 0;
+  transition: width 0.22s var(--ease-out), margin-right 0.22s var(--ease-out), opacity 0.14s var(--ease);
+}
+.picked .chk {
+  width: 12px;
+  margin-right: 5px;
+  opacity: 1;
+}
+/* The pill's own chevron turns accent when something is picked, and that rule reaches every svg in
+   the subtree — a blue tick on an ink chip is 3:1 and reads as mud, so the tick keeps the chip's own
+   text colour. */
+.chip.picked .chk {
   color: var(--on-ink);
 }
 .tick {
@@ -305,21 +389,8 @@ onBeforeUnmount(() => {
   font-size: 13px;
   color: var(--text-dim);
 }
-.foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-top: 5px;
-  padding: 8px 9px 2px;
-  border-top: 1px solid var(--line);
-  font-size: 13px;
-  color: var(--text-dim);
-}
-.foot button {
-  font-size: 13px;
-  font-weight: 650;
-  color: var(--accent);
+.list.chips .none {
+  flex: 1 1 100%;
 }
 
 .pop-enter-active {
