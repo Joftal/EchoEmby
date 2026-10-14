@@ -1,18 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import type { BangumiScore, CsmGuide, ImdbRating, LibraryItem, MediaSourceInfo, MediaStreamInfo, RtScores, TmdbMeta, TmdbSimilar, TmdbStills, TraktScores } from '../../shared/types';
+import type { LibraryItem, MediaSourceInfo, MediaStreamInfo, TmdbSimilar, TmdbStills } from '../../shared/types';
 import HScroller from '../components/detail/HScroller.vue';
+import ScoreStrip from '../components/ScoreStrip.vue';
+import { tmdbKind as kindOf, useScores } from '../lib/scores';
 import { usePlayerStore } from '../stores/player';
 import { useAppStore } from '../stores/app';
 import { fmtDate, fmtDateTime, fmtRuntime } from '../lib/format';
-import logoTomatoFresh from '../assets/logos/rt-tomato-fresh.svg';
-import logoTomatoRotten from '../assets/logos/rt-tomato-rotten.svg';
-import logoPopcorn from '../assets/logos/rt-popcorn-good.svg';
-import logoImdb from '../assets/logos/imdb.svg';
-import logoTmdb from '../assets/logos/tmdb.svg';
-import logoTrakt from '../assets/logos/trakt.svg';
-import logoBangumi from '../assets/logos/bangumi.png';
 
 const props = defineProps<{ id: string }>();
 const router = useRouter();
@@ -28,12 +23,8 @@ const error = ref('');
 const playErr = ref('');
 const favBusy = ref(false);
 
-const rt = ref<RtScores | null>(null);
-const imdbScore = ref<ImdbRating | null>(null);
-const trakt = ref<TraktScores | null>(null);
-const bgm = ref<BangumiScore | null>(null);
-const tmdb = ref<TmdbMeta | null>(null);
-const csm = ref<CsmGuide | null>(null);
+/** The six score sources, asked once per title and shared with the hero's strip. */
+const scores = useScores(() => item.value);
 const similar = ref<TmdbSimilar[]>([]);
 const stills = ref<TmdbStills>({});
 const backdrops = ref<string[]>([]);
@@ -47,12 +38,7 @@ function onScroll(): void {
 
 const isSeries = computed(() => item.value?.type === 'Series');
 const isSeason = computed(() => item.value?.type === 'Season');
-const tmdbKind = computed<'movie' | 'tv' | null>(() => {
-  const t = item.value?.type;
-  if (t === 'Movie') return 'movie';
-  if (t === 'Series' || t === 'Season') return 'tv';
-  return null;
-});
+const tmdbKind = computed(() => kindOf(item.value));
 
 const people = computed(() => item.value?.people || []);
 const ROLE_LABEL: Record<string, string> = { Director: '导演', Writer: '编剧', Producer: '制片' };
@@ -70,62 +56,11 @@ const crew = computed<CrewRow[]>(() => {
   }
   // Server carries no writers for this library, so TMDB's fill the gap rather than losing the credit.
   if (!people.value.some(p => p.type === 'Writer')) {
-    for (const w of tmdb.value?.writers || []) out.push({ id: `tw:${w}`, name: w, sub: '编剧' });
+    for (const w of scores.value.tmdb?.writers || []) out.push({ id: `tw:${w}`, name: w, sub: '编剧' });
   }
   return out.slice(0, 30);
 });
-const overviewText = computed(() => item.value?.overview || tmdb.value?.overviewZh || '');
-const certText = computed(() => item.value?.officialRating || tmdb.value?.cert || '');
-
-interface ScoreBadge {
-  k: string;
-  logo: string;
-  text: string;
-  hint: string;
-  /** The platform's own page for this title, built from the ids that keyed the lookup. */
-  url: string;
-}
-
-/** Trakt's web app takes an IMDb id wherever its API does, so the badge needs no slug of its own. */
-const traktUrl = (kind: string, imdb: string): string =>
-  `https://trakt.tv/${kind === 'movie' ? 'movies' : 'shows'}/${imdb}`;
-
-/** One pill per platform that answered for this title: the platform's own mark, then its number. The
- *  mark carries the identity, so the counts that used to hang off these numbers — raters, in-watch
- *  lists, RT's Certified Fresh word — are gone from the strip. The tomato follows RT's own rule and
- *  turns red under 60%, since a green splat beside a 22% would be a lie. */
-const scoreBadges = computed<ScoreBadge[]>(() => {
-  const out: ScoreBadge[] = [];
-  const kind = tmdbKind.value;
-  const imdb = item.value?.providers?.imdb || '';
-  const tmdbId = item.value?.providers?.tmdb || '';
-  const tomato = rt.value?.tomatometer;
-  if (tomato != null)
-    out.push({
-      k: 'tomato',
-      logo: tomato >= 60 ? logoTomatoFresh : logoTomatoRotten,
-      text: `${tomato}%`,
-      hint: `烂番茄 影评人 ${tomato}%${rt.value?.tomatoCertified ? '（Certified Fresh）' : ''}`,
-      url: rt.value?.url || '',
-    });
-  if (rt.value?.popcorn != null)
-    out.push({ k: 'corn', logo: logoPopcorn, text: `${rt.value.popcorn}%`, hint: `烂番茄 观众 ${rt.value.popcorn}%`, url: rt.value.url || '' });
-  if (imdbScore.value)
-    out.push({ k: 'imdb', logo: logoImdb, text: imdbScore.value.rating.toFixed(1), hint: 'IMDb 评分', url: `https://www.imdb.com/title/${imdb}/` });
-  if (tmdb.value?.voteAverage)
-    out.push({
-      k: 'tmdb',
-      logo: logoTmdb,
-      text: tmdb.value.voteAverage.toFixed(1),
-      hint: 'TMDB 评分',
-      url: kind && tmdbId ? `https://www.themoviedb.org/${kind}/${tmdbId}` : '',
-    });
-  if (trakt.value?.rating != null)
-    out.push({ k: 'trakt', logo: logoTrakt, text: trakt.value.rating.toFixed(1), hint: 'Trakt 评分', url: kind && imdb ? traktUrl(kind, imdb) : '' });
-  if (bgm.value)
-    out.push({ k: 'bgm', logo: logoBangumi, text: bgm.value.score.toFixed(1), hint: `Bangumi《${bgm.value.name}》`, url: `https://bgm.tv/subject/${bgm.value.subjectId}` });
-  return out;
-});
+const overviewText = computed(() => item.value?.overview || scores.value.tmdb?.overviewZh || '');
 
 const source = computed<MediaSourceInfo | undefined>(() => item.value?.sources?.[0]);
 const vstream = computed(() => source.value?.video);
@@ -292,12 +227,6 @@ watch(
   async id => {
     loading.value = true;
     error.value = '';
-    rt.value = null;
-    imdbScore.value = null;
-    trakt.value = null;
-    bgm.value = null;
-    tmdb.value = null;
-    csm.value = null;
     similar.value = [];
     stills.value = {};
     backdrops.value = [];
@@ -322,29 +251,12 @@ watch(
       heroBackdrop.value = await app.imageUrl({ id: it.id, primaryImageTag: it.primaryImageTag }, 1000);
     }
 
-    const imdb = it.providers?.imdb;
+    // The six score sources come through useScores, which keys them by item id and answers once.
     const kind = tmdbKind.value;
-    if (imdb) {
-      void window.echoemby.meta.rt(imdb).then(x => (props.id === id ? (rt.value = x.ok ? x.data || null : null) : undefined));
-      void window.echoemby.meta.imdb(imdb).then(x => (props.id === id ? (imdbScore.value = x.ok ? x.data || null : null) : undefined));
-      if (kind) void window.echoemby.meta.trakt({ kind, imdb }).then(x => (props.id === id ? (trakt.value = x.ok ? x.data || null : null) : undefined));
-    }
-
     const tmdbId = it.providers?.tmdb;
     if (kind && tmdbId) {
-      void window.echoemby.meta.tmdb({ kind, tmdbId }).then(x => (props.id === id ? (tmdb.value = x.ok ? x.data || null : null) : undefined));
       void window.echoemby.meta.tmdbSimilar({ kind, tmdbId }).then(x => (props.id === id ? (similar.value = x.ok ? x.data || [] : []) : undefined));
       void window.echoemby.meta.tmdbImages({ kind, tmdbId }).then(x => (props.id === id ? (backdrops.value = x.ok ? x.data || [] : []) : undefined));
-    }
-    // CSM reverse-looks-up by title slug, so it needs the Latin original title when we have one.
-    const csmTitle = it.originalTitle || it.name;
-    if (kind && csmTitle) {
-      void window.echoemby.meta.csm({ kind, title: csmTitle }).then(x => (props.id === id ? (csm.value = x.ok ? x.data || null : null) : undefined));
-    }
-    // Bangumi is the opposite half: its search only reaches CJK names, and it is where the anime and
-    // domestic-drama titles this server holds are actually reviewed.
-    if (kind && it.name) {
-      void window.echoemby.meta.bangumi(it.name).then(x => (props.id === id ? (bgm.value = x.ok ? x.data || null : null) : undefined));
     }
 
     if (it.type === 'Series') {
@@ -408,23 +320,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
               <h1>{{ item.name }}</h1>
               <p v-if="item.tagline" class="tagline">{{ item.tagline }}</p>
               <div class="line">{{ metaLine }}</div>
-              <div class="badges">
-                <a
-                  v-for="s in scoreBadges"
-                  :key="s.k"
-                  class="b score"
-                  :class="[s.k, s.url ? 'go' : '']"
-                  :title="s.hint"
-                  :href="s.url || undefined"
-                  :target="s.url ? '_blank' : undefined"
-                  rel="noreferrer"
-                >
-                  <img class="lg" :src="s.logo" alt="" /><i>{{ s.text }}</i>
-                </a>
-                <span v-if="!scoreBadges.length && item.communityRating" class="b rate">★ {{ item.communityRating.toFixed(1) }}</span>
-                <span v-if="certText" class="b cert">{{ certText }}</span>
-                <span v-if="csm?.minAge" class="b cert">{{ csm.minAge }}+</span>
-              </div>
+              <ScoreStrip :item="item" class="badges" />
               <p class="overview">{{ overviewText || '暂无简介。' }}</p>
               <div class="actions">
                 <button class="play" :disabled="!playableId || player.busy" @click="play()">
@@ -541,10 +437,10 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
           </div>
         </HScroller>
 
-        <section v-if="csm?.categories.length" class="block">
+        <section v-if="scores.csm?.categories.length" class="block">
           <h2>家长指南</h2>
           <div class="pg">
-            <div v-for="c in csm.categories" :key="c.key" class="pgi">
+            <div v-for="c in scores.csm.categories" :key="c.key" class="pgi">
               <p class="pgt">{{ c.label }}</p>
               <div class="pgdots"><i v-for="n in 5" :key="n" :class="{ on: n <= c.level }"></i></div>
               <p class="pgw">{{ LEVEL_WORD[c.level] || '' }}</p>
@@ -709,33 +605,8 @@ h1 {
 }
 .tagline { margin: 0 0 8px; font-size: 14px; font-style: italic; color: rgba(255, 255, 255, 0.82); }
 .line { font-size: 13.5px; font-weight: 500; color: rgba(255, 255, 255, 0.86); margin-bottom: 12px; font-variant-numeric: tabular-nums; }
-.badges { display: flex; align-items: center; flex-wrap: wrap; gap: 7px 13px; margin-bottom: 14px; }
-.b {
-  display: inline-flex;
-  align-items: center;
-  font-size: 13px;
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
-  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.7);
-}
-.rate { color: #ffe08a; }
-/* The marks sit straight on the art, so the strip has to read as one line of numbers rather than a row
-   of plates: no border, no plate, and the gap between groups barely wider than the gap inside one.
-   What they share is the height of the *drawn* mark, not of the file it ships in — measured ink-to-box
-   is 1.0 for IMDb's chip, TMDB's lockup and Trakt's square, but 0.91 for the popcorn bucket, 0.72 for
-   the tomato (its stem is hairline) and 0.62 for Bangumi, whose letters sit under an antenna. One
-   shared height would have kept the row ragged. */
-.b.score { gap: 5px; --body: 16px; }
-.lg { height: calc(var(--body) / var(--fill, 1)); width: auto; display: block; filter: drop-shadow(0 1px 5px rgba(0, 0, 0, 0.55)); }
-.corn { --fill: 0.907; }
-.tomato { --fill: 0.72; }
-.bgm { --fill: 0.618; }
-/* Bangumi's letters sit low in its image, so centring the file centres the antenna above them. */
-.bgm .lg { transform: translateY(-2.8px); }
-.b.score i { font-style: normal; color: #fff; }
-.b.score.go { text-decoration: none; transition: opacity var(--hov) var(--ease), transform var(--hov) var(--ease-out); }
-.b.score.go:hover { opacity: 0.86; transform: translateY(-1px); }
-.cert { color: rgba(255, 255, 255, 0.92); }
+/* Only the gap around the strip is this page's business; the marks themselves are ScoreStrip's. */
+.badges { margin-bottom: 14px; }
 .overview {
   font-size: 14px;
   line-height: 1.65;

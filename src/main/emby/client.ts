@@ -50,11 +50,13 @@ const authHeader = (id: Identity, token?: string): string =>
   `MediaBrowser Client="${id.clientName}", Device="${id.deviceName}", DeviceId="${id.deviceId}", Version="${id.clientVersion}"${token ? `, Token="${token}"` : ''}`;
 
 const FIELDS =
-  'BasicSyncInfo,CanDelete,CanDownload,PrimaryImageAspectRatio,ProductionYear,Status,EndDate,CommunityRating,OfficialRating,Overview,MediaStreams,Container,Bitrate,VideoRange,Width,Height,SeriesName,SeriesId,ParentId,ChildCount,Genres,PremiereDate,Studio,ProviderIds';
+  'BasicSyncInfo,CanDelete,CanDownload,PrimaryImageAspectRatio,ProductionYear,Status,EndDate,CommunityRating,OfficialRating,Overview,MediaStreams,Container,Bitrate,VideoRange,Width,Height,SeriesName,SeriesId,ParentId,ChildCount,Genres,PremiereDate,Studio,ProviderIds,OriginalTitle';
 
 /** People is a detail-only field: on the list endpoints it would multiply every row by the cast size.
- *  MediaSources, DateCreated and Taglines only exist on the single-item call, so they ride here too. */
-const DETAIL_FIELDS = FIELDS + ',People,DateCreated,Taglines,OriginalTitle';
+ *  MediaSources, DateCreated and Taglines only exist on the single-item call, so they ride here too.
+ *  OriginalTitle moved up to the shared list: the hero's score strip keys one source off it, and a row
+ *  without it would ask that source with the Chinese name and silently lose the plate the page shows. */
+const DETAIL_FIELDS = FIELDS + ',People,DateCreated,Taglines';
 
 // Measured on this server: 40/40 items carry a Tmdb id and 35/40 an Imdb id, so outside sources can
 // be keyed off ids instead of guessing from a Chinese title.

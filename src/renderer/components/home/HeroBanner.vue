@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { LibraryItem } from '../../../shared/types';
 import { fmtDate } from '../../lib/format';
+import ScoreStrip from '../ScoreStrip.vue';
 import { useAppStore } from '../../stores/app';
 
 const props = defineProps<{ items: LibraryItem[]; scroll: number }>();
@@ -26,10 +27,6 @@ const runtime = computed(() => {
   const mins = Math.round((current.value?.runTimeTicks || 0) / 1e7 / 60);
   if (!mins) return '';
   return mins >= 60 ? `${Math.floor(mins / 60)} 小时 ${mins % 60} 分` : `${mins} 分钟`;
-});
-const rating = computed(() => {
-  const r = current.value?.communityRating;
-  return r ? r.toFixed(1) : '';
 });
 const genres = computed(() => (current.value?.genres || []).join(' '));
 const date = computed(() => fmtDate(current.value?.premiereDate) || String(current.value?.productionYear || ''));
@@ -158,10 +155,7 @@ watch(
           <span v-if="runtime">{{ runtime }}</span>
         </div>
         <p class="ov">{{ current.overview || '' }}</p>
-        <div v-if="rating || current.officialRating" class="badges">
-          <span v-if="rating" class="b rate">★ {{ rating }}</span>
-          <span v-if="current.officialRating" class="b cert">{{ current.officialRating }}</span>
-        </div>
+        <ScoreStrip v-if="current" :item="current" />
         <div class="cta">
           <button v-if="playable" class="primary" @click="emit('play', current)">
             <svg viewBox="0 0 24 24" width="15" height="15"><path d="M8 5l12 7-12 7z" fill="currentColor" /></svg>
@@ -345,32 +339,6 @@ h1 {
 .kind {
   font-weight: 600;
   color: #fff;
-}
-.badges {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-.b {
-  display: inline-flex;
-  align-items: center;
-  height: 21px;
-  padding: 0 7px;
-  /* 6px like every other badge in the app; only the surface changes with what is behind it.
-     13px/21 needs the extra 2px of height: at 12px in a 19px plate a CJK rating like 「少儿」 loses its
-     top stroke row, and the glyph then reads as cut off. */
-  border-radius: var(--r-badge);
-  font-size: 13px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-.rate {
-  color: #ffd98a;
-  background: rgba(255, 202, 94, 0.2);
-}
-.cert {
-  color: #eceef4;
-  border: 1px solid rgba(255, 255, 255, 0.36);
 }
 .ov {
   margin: 0 0 10px;
