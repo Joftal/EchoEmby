@@ -41,7 +41,7 @@ function setStudio(v: string | string[]): void {
 
 <template>
   <div class="bar">
-    <FilterSelect label="类型" :options="types" :model-value="filters.type" @update:model-value="setType" />
+    <FilterSelect label="类型" :options="types" :model-value="filters.type" :cell="56" :cols="2" @update:model-value="setType" />
     <FilterSelect
       label="分类"
       :options="genres"
@@ -56,9 +56,18 @@ function setStudio(v: string | string[]): void {
       :model-value="filters.years"
       multi
       searchable
+      :cell="76"
       @update:model-value="patch({ years: Array.isArray($event) ? $event : [] })"
     />
-    <FilterSelect label="排序" :options="sorts" :model-value="filters.sort" neutral @update:model-value="setSort" />
+    <FilterSelect
+      label="排序"
+      :options="sorts"
+      :model-value="filters.sort"
+      neutral
+      :cell="76"
+      :cols="3"
+      @update:model-value="setSort"
+    />
     <FilterSelect
       v-if="studios.length"
       label="公司"
@@ -72,6 +81,7 @@ function setStudio(v: string | string[]): void {
       :options="langs"
       :model-value="filters.langs"
       multi
+      :cell="76"
       @update:model-value="patch({ langs: Array.isArray($event) ? $event : [] })"
     />
 
@@ -97,7 +107,7 @@ function setStudio(v: string | string[]): void {
   gap: 5px;
   height: 34px;
   padding: 0 12px;
-  border-radius: 999px;
+  border-radius: var(--radius);
   font-size: 13px;
   font-weight: 600;
   color: var(--text-dim);

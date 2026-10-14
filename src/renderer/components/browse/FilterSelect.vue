@@ -18,8 +18,15 @@ const props = withDefaults(
     bare?: boolean;
     /** A mode always carries a value — the sort key, the season — so it must never read as a filter being on. */
     neutral?: boolean;
+    /** Set for a list whose entries are all the same shape (years, seasons, languages): the options lay
+     *  out as a matrix of cells this wide instead of a cloud. A cloud of names of different lengths
+     *  (genres, companies) has nothing to line up. */
+    cell?: number;
+    /** Columns the matrix asks for. It never exceeds the number of options, so a two-option list is two
+     *  cells wide rather than a row of cells and a row of slack. */
+    cols?: number;
   }>(),
-  { multi: false, searchable: false, bare: false, neutral: false },
+  { multi: false, searchable: false, bare: false, neutral: false, cell: 0, cols: 4 },
 );
 const emit = defineEmits<{ (e: 'update:modelValue', v: string | string[]): void }>();
 
@@ -45,6 +52,9 @@ const engaged = computed(() => chosen.value.length > 0 && !props.neutral);
 
 /** 不限 is a chip like any other, except it answers by emptying the list instead of adding itself. */
 const chipList = computed(() => (props.multi ? [{ value: '', label: '不限' }, ...shown.value] : shown.value));
+const grid = computed(() => props.cell > 0);
+/** The panel and the list take these two numbers and derive the whole box from them. */
+const vars = computed(() => (grid.value ? { '--cell': `${props.cell}px`, '--cols': String(Math.min(props.cols, chipList.value.length)) } : undefined));
 function isPicked(value: string): boolean {
   return value ? chosen.value.includes(value) : chosen.value.length === 0;
 }
@@ -127,7 +137,7 @@ onBeforeUnmount(() => {
     </button>
 
     <Transition name="pop">
-      <div v-if="open" class="panel" :class="{ more }">
+      <div v-if="open" class="panel" :class="{ more, grid }" :style="vars">
         <label v-if="searchable" class="find">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
             <path d="M11 4.6a6.4 6.4 0 1 0 0 12.8 6.4 6.4 0 0 0 0-12.8Z" />
@@ -136,7 +146,7 @@ onBeforeUnmount(() => {
           <input ref="searchEl" v-model="term" type="text" placeholder="搜索" spellcheck="false" />
         </label>
 
-        <div ref="listEl" class="list" @scroll="measure">
+        <div ref="listEl" class="list" :class="{ grid }" @scroll="measure">
           <button
             v-for="o in chipList"
             :key="o.value || '*'"
@@ -146,9 +156,6 @@ onBeforeUnmount(() => {
             :aria-pressed="multi ? isPicked(o.value) : undefined"
             @click="pick(o.value)"
           >
-            <svg class="chk" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M5 12.6 9.6 17 19 7" />
-            </svg>
             <span class="name">{{ o.label }}</span>
           </button>
           <p v-if="!shown.length" class="none">没有匹配项</p>
@@ -170,8 +177,10 @@ onBeforeUnmount(() => {
   gap: 7px;
   height: 34px;
   max-width: 330px;
-  padding: 0 11px 0 13px;
-  border-radius: 999px;
+  padding: 0 11px 0 12px;
+  /* A rounded rectangle, not a stadium: the panel that pours out of its bottom edge rounds the same
+     way, so trigger and menu read as one card rather than a capsule welded to a box. */
+  border-radius: var(--radius);
   font-size: 13px;
   font-weight: 600;
   color: var(--text-dim);
@@ -248,11 +257,10 @@ onBeforeUnmount(() => {
   flex-direction: column;
   max-height: 322px;
   padding: 6px;
-  border-radius: 0 0 var(--r-row) var(--r-row);
+  border-radius: 0 0 var(--radius) var(--radius);
   background: var(--bg-elev);
   border: 1px solid var(--line);
   box-shadow: var(--shadow);
-  transform-origin: top center;
 }
 .panel::after {
   content: '';
@@ -261,7 +269,7 @@ onBeforeUnmount(() => {
   right: 1px;
   bottom: 1px;
   height: 26px;
-  border-radius: 0 0 var(--r-row) var(--r-row);
+  border-radius: 0 0 var(--radius) var(--radius);
   background: linear-gradient(to bottom, transparent, var(--bg-elev) 72%);
   opacity: 0;
   pointer-events: none;
@@ -269,6 +277,11 @@ onBeforeUnmount(() => {
 }
 .panel.more::after {
   opacity: 1;
+}
+/* A matrix panel is exactly as wide as the cells it asked for plus their gaps and padding — nothing
+   is left for the columns to drift into. */
+.panel.grid {
+  width: calc(var(--cols) * var(--cell) + (var(--cols) - 1) * 6px + 14px);
 }
 .find {
   display: flex;
@@ -304,10 +317,21 @@ onBeforeUnmount(() => {
   padding: 3px 2px 1px;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-width: thin;
+  /* No gutter: a scrollbar would eat the last column of a matrix, and the fade at the bottom already
+     says there is more below. The wheel and the arrow keys still scroll it. */
+  scrollbar-width: none;
+}
+/* A matrix: every option the same cell, so a year sits in the same slot whether or not it is picked,
+   and the columns line up down the panel instead of ending in a ragged right edge. */
+.list.grid {
+  display: grid;
+  grid-template-columns: repeat(var(--cols), var(--cell));
+  gap: 7px 6px;
+  padding: 3px 1px 1px;
 }
 /* One vocabulary for every picker: the answer is the dark chip, so a season list and a genre list are
-   the same object. The box in front of each name only made you align two things to learn one bit. */
+   the same object. Nothing about a chip changes when it is picked — the tick that used to grow into it
+   pushed every later option half a slot along, which is what made the list jump under the cursor. */
 .chip {
   display: flex;
   align-items: center;
@@ -322,6 +346,11 @@ onBeforeUnmount(() => {
   background: var(--chip);
   transition: color var(--hov) var(--ease), background var(--hov) var(--ease), transform var(--hov) var(--ease-out);
 }
+.grid .chip {
+  min-width: 0;
+  padding: 0 8px;
+  justify-content: center;
+}
 .chip:hover {
   color: var(--text);
   background: var(--chip-hi);
@@ -335,6 +364,7 @@ onBeforeUnmount(() => {
   outline-offset: 1px;
 }
 .chip .name {
+  min-width: 0;
   max-width: 232px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -347,25 +377,6 @@ onBeforeUnmount(() => {
 .chip.picked:hover {
   color: var(--on-ink);
 }
-/* The tick grows into the chip rather than appearing in a box that was waiting for it, so the label
-   slides the 17px it takes and the chip reads as the thing that changed. */
-.chk {
-  width: 0;
-  flex: none;
-  opacity: 0;
-  transition: width 0.22s var(--ease-out), margin-right 0.22s var(--ease-out), opacity 0.14s var(--ease);
-}
-.picked .chk {
-  width: 12px;
-  margin-right: 5px;
-  opacity: 1;
-}
-/* The pill's own chevron turns accent when something is picked, and that rule reaches every svg in
-   the subtree — a blue tick on an ink chip is 3:1 and reads as mud, so the tick keeps the chip's own
-   text colour. */
-.chip.picked .chk {
-  color: var(--on-ink);
-}
 .none {
   flex: 1 1 100%;
   margin: 14px 0;
@@ -373,16 +384,26 @@ onBeforeUnmount(() => {
   font-size: 13px;
   color: var(--text-dim);
 }
+.grid .none {
+  grid-column: 1 / -1;
+}
 
+/* The panel is masked from the seam downward rather than scaled: a scaleY menu squashes the very
+   labels you are about to read, and it stretches the rounded corners into ovals mid-flight. The
+   negative insets on the other three sides leave room for the drop shadow so it does not pop in at
+   the end of the reveal. */
 .pop-enter-active {
-  transition: transform 0.26s var(--ease-out), opacity 0.14s var(--ease);
+  transition: clip-path 0.28s var(--ease-out);
 }
 .pop-leave-active {
-  transition: transform 0.16s var(--ease), opacity 0.12s var(--ease);
+  transition: clip-path 0.18s var(--ease);
 }
 .pop-enter-from,
 .pop-leave-to {
-  opacity: 0;
-  transform: scaleY(0.6);
+  clip-path: inset(-60px -60px 100% -60px);
+}
+.pop-enter-to,
+.pop-leave-from {
+  clip-path: inset(-60px);
 }
 </style>

@@ -351,6 +351,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
                 bare
                 neutral
                 label="季"
+                :cell="76"
                 :options="seasonOptions"
                 :model-value="seasonId"
                 @update:model-value="onSeason"
