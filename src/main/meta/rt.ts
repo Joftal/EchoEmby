@@ -117,6 +117,11 @@ const resolveSlug = async (imdb: string): Promise<{ slug: string | null; answere
   return { slug: s.slugs[imdb], answered: true };
 };
 
+/** The slug bridge resolved is what turns a score into a page worth linking to. It is attached on the
+ *  way out instead of being stored, so a cache written before this existed still gains the link. */
+const page = (s: Store, imdb: string, v: RtScores): RtScores =>
+  s.slugs[imdb] ? { ...v, url: `https://www.rottentomatoes.com/${s.slugs[imdb]}` } : v;
+
 /** Null means "no RT numbers for this id", which the UI renders as the absence of a badge. */
 export async function rtScores(imdb: string): Promise<RtScores | null> {
   // The id goes into a query string, so anything that is not shaped like one is refused here.
@@ -124,7 +129,7 @@ export async function rtScores(imdb: string): Promise<RtScores | null> {
   const s = load();
   const hit = s.rt[imdb];
   if (hit && Date.now() - hit.fetchedAt < ('missing' in hit ? MISS_TTL : SCORE_TTL)) {
-    return 'missing' in hit ? null : hit;
+    return 'missing' in hit ? null : page(s, imdb, hit);
   }
   const miss = () => {
     s.rt[imdb] = { missing: true, fetchedAt: Date.now() };
@@ -144,5 +149,5 @@ export async function rtScores(imdb: string): Promise<RtScores | null> {
   }
   s.rt[imdb] = parsed;
   persist();
-  return parsed;
+  return page(s, imdb, parsed);
 }

@@ -82,7 +82,13 @@ interface ScoreBadge {
   logo: string;
   text: string;
   hint: string;
+  /** The platform's own page for this title, built from the ids that keyed the lookup. */
+  url: string;
 }
+
+/** Trakt's web app takes an IMDb id wherever its API does, so the badge needs no slug of its own. */
+const traktUrl = (kind: string, imdb: string): string =>
+  `https://trakt.tv/${kind === 'movie' ? 'movies' : 'shows'}/${imdb}`;
 
 /** One pill per platform that answered for this title: the platform's own mark, then its number. The
  *  mark carries the identity, so the counts that used to hang off these numbers — raters, in-watch
@@ -90,6 +96,9 @@ interface ScoreBadge {
  *  turns red under 60%, since a green splat beside a 22% would be a lie. */
 const scoreBadges = computed<ScoreBadge[]>(() => {
   const out: ScoreBadge[] = [];
+  const kind = tmdbKind.value;
+  const imdb = item.value?.providers?.imdb || '';
+  const tmdbId = item.value?.providers?.tmdb || '';
   const tomato = rt.value?.tomatometer;
   if (tomato != null)
     out.push({
@@ -97,17 +106,24 @@ const scoreBadges = computed<ScoreBadge[]>(() => {
       logo: tomato >= 60 ? logoTomatoFresh : logoTomatoRotten,
       text: `${tomato}%`,
       hint: `烂番茄 影评人 ${tomato}%${rt.value?.tomatoCertified ? '（Certified Fresh）' : ''}`,
+      url: rt.value?.url || '',
     });
   if (rt.value?.popcorn != null)
-    out.push({ k: 'corn', logo: logoPopcorn, text: `${rt.value.popcorn}%`, hint: `烂番茄 观众 ${rt.value.popcorn}%` });
+    out.push({ k: 'corn', logo: logoPopcorn, text: `${rt.value.popcorn}%`, hint: `烂番茄 观众 ${rt.value.popcorn}%`, url: rt.value.url || '' });
   if (imdbScore.value)
-    out.push({ k: 'imdb', logo: logoImdb, text: imdbScore.value.rating.toFixed(1), hint: 'IMDb 评分' });
+    out.push({ k: 'imdb', logo: logoImdb, text: imdbScore.value.rating.toFixed(1), hint: 'IMDb 评分', url: `https://www.imdb.com/title/${imdb}/` });
   if (tmdb.value?.voteAverage)
-    out.push({ k: 'tmdb', logo: logoTmdb, text: tmdb.value.voteAverage.toFixed(1), hint: 'TMDB 评分' });
+    out.push({
+      k: 'tmdb',
+      logo: logoTmdb,
+      text: tmdb.value.voteAverage.toFixed(1),
+      hint: 'TMDB 评分',
+      url: kind && tmdbId ? `https://www.themoviedb.org/${kind}/${tmdbId}` : '',
+    });
   if (trakt.value?.rating != null)
-    out.push({ k: 'trakt', logo: logoTrakt, text: trakt.value.rating.toFixed(1), hint: 'Trakt 评分' });
+    out.push({ k: 'trakt', logo: logoTrakt, text: trakt.value.rating.toFixed(1), hint: 'Trakt 评分', url: kind && imdb ? traktUrl(kind, imdb) : '' });
   if (bgm.value)
-    out.push({ k: 'bgm', logo: logoBangumi, text: bgm.value.score.toFixed(1), hint: `Bangumi《${bgm.value.name}》` });
+    out.push({ k: 'bgm', logo: logoBangumi, text: bgm.value.score.toFixed(1), hint: `Bangumi《${bgm.value.name}》`, url: `https://bgm.tv/subject/${bgm.value.subjectId}` });
   return out;
 });
 
@@ -336,9 +352,18 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
               <p v-if="item.tagline" class="tagline">{{ item.tagline }}</p>
               <div class="line">{{ metaLine }}</div>
               <div class="badges">
-                <span v-for="s in scoreBadges" :key="s.k" class="b score" :class="s.k" :title="s.hint">
+                <a
+                  v-for="s in scoreBadges"
+                  :key="s.k"
+                  class="b score"
+                  :class="[s.k, s.url ? 'go' : '']"
+                  :title="s.hint"
+                  :href="s.url || undefined"
+                  :target="s.url ? '_blank' : undefined"
+                  rel="noreferrer"
+                >
                   <img class="lg" :src="s.logo" alt="" /><i>{{ s.text }}</i>
-                </span>
+                </a>
                 <span v-if="!scoreBadges.length && item.communityRating" class="b rate">★ {{ item.communityRating.toFixed(1) }}</span>
                 <span v-if="certText" class="b cert">{{ certText }}</span>
                 <span v-if="csm?.minAge" class="b cert">{{ csm.minAge }}+</span>
@@ -605,12 +630,20 @@ h1 {
 .rate { color: #ffe08a; }
 /* The marks sit straight on the art, so the strip has to read as one line of numbers rather than a row
    of plates: no border, no plate, and the gap between groups barely wider than the gap inside one.
-   Height, never width, is what they share — Bangumi ships only as a wordmark and stretches wide, and
-   TMDB ships as a three-row lockup, so it needs 3px more before its letters clear 5px tall. */
-.b.score { gap: 5px; }
-.lg { height: 18px; width: auto; display: block; filter: drop-shadow(0 1px 5px rgba(0, 0, 0, 0.55)); }
-.tmdb .lg { height: 21px; }
+   What they share is the height of the *drawn* mark, not of the file it ships in — measured ink-to-box
+   is 1.0 for IMDb's chip, TMDB's lockup and Trakt's square, but 0.91 for the popcorn bucket, 0.72 for
+   the tomato (its stem is hairline) and 0.62 for Bangumi, whose letters sit under an antenna. One
+   shared height would have kept the row ragged. */
+.b.score { gap: 5px; --body: 16px; }
+.lg { height: calc(var(--body) / var(--fill, 1)); width: auto; display: block; filter: drop-shadow(0 1px 5px rgba(0, 0, 0, 0.55)); }
+.corn { --fill: 0.907; }
+.tomato { --fill: 0.72; }
+.bgm { --fill: 0.618; }
+/* Bangumi's letters sit low in its image, so centring the file centres the antenna above them. */
+.bgm .lg { transform: translateY(-2.8px); }
 .b.score i { font-style: normal; color: #fff; }
+.b.score.go { text-decoration: none; transition: opacity var(--hov) var(--ease), transform var(--hov) var(--ease-out); }
+.b.score.go:hover { opacity: 0.86; transform: translateY(-1px); }
 .cert { color: rgba(255, 255, 255, 0.92); }
 .overview {
   font-size: 14px;

@@ -94,6 +94,9 @@ export interface RtScores {
   tomatometer?: number;
   tomatoCertified?: boolean;
   popcorn?: number;
+  /** The title's own RT page, from the slug the Wikidata bridge resolved. Absent only for a cache
+   *  written before slugs were kept, where the badge still shows but has nowhere to link. */
+  url?: string;
   fetchedAt: number;
 }
 
