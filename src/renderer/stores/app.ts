@@ -1,11 +1,12 @@
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
-import type { AppConfig, LibraryItem, LibraryRow, Settings } from '../../shared/types';
+import type { AppConfig, FacetOption, LibraryItem, LibraryRow, Settings } from '../../shared/types';
 
 export const useAppStore = defineStore('app', () => {
   const config = ref<AppConfig | null>(null);
   const rows = ref<LibraryRow[]>([]);
   const views = ref<LibraryItem[]>([]);
+  const genres = ref<FacetOption[]>([]);
   const loading = ref(false);
   const error = ref('');
   const ready = ref(false);
@@ -42,6 +43,8 @@ export const useAppStore = defineStore('app', () => {
     rows.value = [];
     views.value = [];
     viewsPromise = null;
+    genres.value = [];
+    genresPromise = null;
   }
 
   async function switchTo(accountId: string): Promise<boolean> {
@@ -123,6 +126,25 @@ export const useAppStore = defineStore('app', () => {
     return viewsPromise;
   }
 
+  let genresPromise: Promise<void> | null = null;
+
+  /** The 分类 dropdown reads the library's own genre labels. Held here rather than in the view so a
+   *  server that was slow on the first ask gets asked again on the next page, not never again. */
+  function loadGenres(): Promise<void> {
+    if (genres.value.length) return Promise.resolve();
+    if (!genresPromise) {
+      genresPromise = window.echoemby.emby
+        .genres()
+        .then(r => {
+          if (r.ok) genres.value = r.data || [];
+        })
+        .finally(() => {
+          genresPromise = null;
+        });
+    }
+    return genresPromise;
+  }
+
   async function loadHome(): Promise<void> {
     if (loading.value) return;
     loading.value = true;
@@ -155,5 +177,5 @@ export const useAppStore = defineStore('app', () => {
     return url;
   }
 
-  return { config, account, rows, views, loading, error, ready, counts, init, login, switchTo, remove, update, saveSettings, loadCounts, loadHome, loadViews, imageUrl, backdropUrl };
+  return { config, account, rows, views, genres, loading, error, ready, counts, init, login, switchTo, remove, update, saveSettings, loadCounts, loadHome, loadViews, loadGenres, imageUrl, backdropUrl };
 });

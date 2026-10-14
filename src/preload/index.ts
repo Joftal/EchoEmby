@@ -18,6 +18,7 @@ const api: EchoEmbyApi = {
     views: () => invoke('emby:views'),
     homeRows: () => invoke('emby:homeRows'),
     items: params => invoke('emby:items', params),
+    genres: () => invoke('emby:genres'),
     item: id => invoke('emby:item', id),
     seasons: seriesId => invoke('emby:seasons', seriesId),
     episodes: params => invoke('emby:episodes', params),

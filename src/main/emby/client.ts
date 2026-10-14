@@ -1,5 +1,5 @@
 import { net } from 'electron';
-import type { Account, LibraryItem, LibraryRow, MediaSourceInfo, MediaStreamInfo, Person, PlaybackResult, Providers, Settings } from '../../shared/types';
+import type { Account, FacetOption, LibraryItem, LibraryRow, MediaSourceInfo, MediaStreamInfo, Person, PlaybackResult, Providers, Settings, StudioRef } from '../../shared/types';
 import { buildDeviceProfile } from './deviceProfile';
 
 export interface Identity {
@@ -50,13 +50,12 @@ const authHeader = (id: Identity, token?: string): string =>
   `MediaBrowser Client="${id.clientName}", Device="${id.deviceName}", DeviceId="${id.deviceId}", Version="${id.clientVersion}"${token ? `, Token="${token}"` : ''}`;
 
 const FIELDS =
-  'BasicSyncInfo,CanDelete,CanDownload,PrimaryImageAspectRatio,ProductionYear,Status,EndDate,CommunityRating,OfficialRating,Overview,MediaStreams,Container,Bitrate,VideoRange,Width,Height,SeriesName,SeriesId,ParentId,ChildCount,Genres,PremiereDate,Studio,ProviderIds,OriginalTitle';
+  'BasicSyncInfo,CanDelete,CanDownload,PrimaryImageAspectRatio,ProductionYear,Status,EndDate,CommunityRating,OfficialRating,Overview,MediaStreams,Container,Bitrate,VideoRange,Width,Height,SeriesName,SeriesId,ParentId,ChildCount,Genres,PremiereDate,Studio,Studios,ProviderIds,OriginalTitle,DateCreated';
 
-/** People is a detail-only field: on the list endpoints it would multiply every row by the cast size.
- *  MediaSources, DateCreated and Taglines only exist on the single-item call, so they ride here too.
- *  OriginalTitle moved up to the shared list: the hero's score strip keys one source off it, and a row
- *  without it would ask that source with the Chinese name and silently lose the plate the page shows. */
-const DETAIL_FIELDS = FIELDS + ',People,DateCreated,Taglines';
+/** People and Taglines are detail-only: on the list endpoints People would multiply every row by the
+ *  cast size. DateCreated does come back on a list row when it is asked for, and the search page's
+ *  最近加入 has nothing else to order by — the server will not sort a SearchTerm query at all. */
+const DETAIL_FIELDS = FIELDS + ',People,Taglines';
 
 // Measured on this server: 40/40 items carry a Tmdb id and 35/40 an Imdb id, so outside sources can
 // be keyed off ids instead of guessing from a Chinese title.
@@ -79,6 +78,16 @@ const mapPeople = (raw: any): Person[] | undefined => {
 const studioName = (r: any): string | undefined => {
   const s = r.StudioItems?.[0] ?? r.Studios?.[0];
   return typeof s === 'string' ? s : s?.Name;
+};
+
+/** The 公司 filter takes StudioIds, and the only place to learn an id without a second round trip is the
+ *  item that already carries it. Both shapes appear on this server: name strings on the list endpoints,
+ *  {Name,Id} rows elsewhere, so the id is simply absent where the server did not give one. */
+const mapStudios = (r: any): StudioRef[] | undefined => {
+  const raw = r.StudioItems?.length ? r.StudioItems : r.Studios;
+  if (!Array.isArray(raw) || !raw.length) return undefined;
+  const out = raw.map((s: any): StudioRef => (typeof s === 'string' ? { name: s } : { name: s.Name, id: s.Id != null ? String(s.Id) : undefined })).filter((s: StudioRef) => s.name);
+  return out.length ? out : undefined;
 };
 
 const mapSources = (raw: any): MediaSourceInfo[] | undefined => {
@@ -128,6 +137,7 @@ const mapItem = (r: any): LibraryItem => ({
   communityRating: r.CommunityRating,
   genres: r.Genres?.length ? r.Genres.slice(0, 3) : undefined,
   studio: studioName(r),
+  studios: mapStudios(r),
   premiereDate: r.PremiereDate,
   overview: r.Overview,
   runTimeTicks: r.RunTimeTicks,
@@ -298,6 +308,14 @@ export class EmbyClient {
   async items(params: Record<string, string | number | boolean | undefined>): Promise<LibraryItem[]> {
     const j = await this.get<any>(`/Users/${this.account.userId}/Items`, { Fields: FIELDS, ImageTypeLimit: 1, EnableImageTypes: 'Primary,Backdrop,Thumb', ...params });
     return (j.Items || []).map(mapItem);
+  }
+
+  /** The library's whole genre list, in the server's own language. Measured: 50 rows on the gateway and
+   *  26 on nyamedia, both already Chinese, so the 分类 dropdown can be filled once per account rather than
+   *  shrinking to whatever the current page happens to hold. */
+  async genres(): Promise<FacetOption[]> {
+    const j = await this.get<any>(`/Genres`, { UserId: this.account.userId, Limit: 200 });
+    return (j.Items || []).map((x: any) => ({ name: String(x.Name) }));
   }
 
   async item(id: string): Promise<LibraryItem> {

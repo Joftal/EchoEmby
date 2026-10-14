@@ -180,6 +180,7 @@ export class AppServices {
     ipcMain.handle('emby:views', () => wrap(() => this.client().views()));
     ipcMain.handle('emby:homeRows', () => wrap(() => this.client().homeRows()));
     ipcMain.handle('emby:items', (_e, params) => wrap(() => this.client().items(params)));
+    ipcMain.handle('emby:genres', () => wrap(() => this.client().genres()));
     ipcMain.handle('emby:item', (_e, id: string) => wrap(() => this.client().item(id)));
     ipcMain.handle('emby:seasons', (_e, id: string) => wrap(() => this.client().seasons(id)));
     ipcMain.handle('emby:episodes', (_e, { seriesId, seasonId }: { seriesId: string; seasonId: string }) => wrap(() => this.client().episodes(seriesId, seasonId)));

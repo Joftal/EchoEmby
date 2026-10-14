@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import type { LibraryItem } from '../../shared/types';
+import type { LibraryItem, StudioRef } from '../../shared/types';
 import MediaCard from '../components/home/MediaCard.vue';
 import ListCard from '../components/home/ListCard.vue';
+import FilterBar from '../components/browse/FilterBar.vue';
+import { defaultSort, filterParams, fromQuery, isFiltered, localSort, sortParams, toQuery, type Filters } from '../lib/filters';
 import { useAppStore } from '../stores/app';
 import { usePlayerStore } from '../stores/player';
 
@@ -12,15 +14,11 @@ const player = usePlayerStore();
 const route = useRoute();
 const router = useRouter();
 
-const PAGE = 48;
 type Kind = 'resume' | 'unwatched' | 'favorites' | 'search' | 'view';
-type Sort = 'name' | 'latest' | 'rating';
 
-const SORTS: Record<Sort, Record<string, string>> = {
-  name: { SortBy: 'SortName', SortOrder: 'Ascending' },
-  latest: { SortBy: 'DateCreated', SortOrder: 'Descending' },
-  rating: { SortBy: 'CommunityRating', SortOrder: 'Descending' },
-};
+/** A search is ordered by hand over whatever we hold, so its first page has to be worth ordering. */
+const PAGE = 48;
+const SEARCH_PAGE = 200;
 
 const kind = computed<Kind>(() => {
   const k = String(route.query.kind || '');
@@ -28,8 +26,9 @@ const kind = computed<Kind>(() => {
   return 'view';
 });
 const viewId = computed(() => String(route.query.view || ''));
-/** Alphabetical order puts this server's artless leftover episodes first, so 待看 leads with 最新. */
-const sort = ref<Sort>('latest');
+const isSearch = computed(() => kind.value === 'search');
+const pageSize = computed(() => (isSearch.value ? SEARCH_PAGE : PAGE));
+const filters = ref<Filters>(fromQuery(route.query, defaultSort(isSearch.value)));
 const term = ref(String(route.query.q || ''));
 
 const titles: Record<Exclude<Kind, 'view'>, string> = {
@@ -39,19 +38,24 @@ const titles: Record<Exclude<Kind, 'view'>, string> = {
   search: '搜索',
 };
 const title = computed(() => (kind.value === 'view' ? decodeURIComponent(String(route.query.name || '')) || '资源库' : titles[kind.value]));
-const sortable = computed(() => kind.value === 'view' || kind.value === 'unwatched' || kind.value === 'favorites');
+/** 在看 is a playback queue, not a shelf: nothing about it wants narrowing. */
+const showBar = computed(() => kind.value !== 'resume');
 const variant = computed(() => (kind.value === 'resume' ? 'still' : 'poster'));
-/** Lists the reference shows as wide rows: the two watch-lists and search. */
-const layout = computed<'list' | 'grid'>(() => (kind.value === 'resume' || kind.value === 'view' ? 'grid' : 'list'));
+/** The two watch-lists keep their wide rows; search joins the grid so the art reads under the filters. */
+const layout = computed<'list' | 'grid'>(() => (kind.value === 'unwatched' || kind.value === 'favorites' ? 'list' : 'grid'));
 
 function params(startIndex: number): Record<string, string | number | boolean> {
-  const s = sortable.value ? SORTS[sort.value] : {};
-  const page = { StartIndex: startIndex, Limit: PAGE };
+  const f = filterParams(filters.value);
+  const s = sortParams(filters.value);
+  const page = { StartIndex: startIndex, Limit: pageSize.value };
   if (kind.value === 'resume') return { Recursive: true, MediaTypes: 'Video', IsResumable: true, SortBy: 'DatePlayed', SortOrder: 'Descending', ...page };
-  if (kind.value === 'unwatched') return { Recursive: true, MediaTypes: 'Video', Filters: 'IsUnplayed', ...s, ...page };
-  if (kind.value === 'favorites') return { Recursive: true, Filters: 'IsFavorite', ...s, ...page };
-  if (kind.value === 'search') return { Recursive: true, SearchTerm: term.value.trim(), ...page };
-  return { ParentId: viewId.value, IncludeItemTypes: 'Movie|Series|BoxSet|Playlist|Video', Recursive: true, ...s, ...page };
+  if (kind.value === 'unwatched') return { Recursive: true, MediaTypes: 'Video', Filters: 'IsUnplayed', ...f, ...s, ...page };
+  // Measured: this server answers an IsFavorite query with nothing at all unless it is told which
+  // kinds to look for, so 收藏 carries its own default list rather than relying on the server's.
+  if (kind.value === 'favorites') return { Recursive: true, Filters: 'IsFavorite', IncludeItemTypes: 'Movie,Series,Episode,Video,BoxSet,Playlist', ...f, ...s, ...page };
+  if (kind.value === 'search') return { Recursive: true, SearchTerm: term.value.trim(), ...f, ...page };
+  // IncludeItemTypes has to be comma-joined: asked as `A|B` this server ignores the parameter outright.
+  return { ParentId: viewId.value, IncludeItemTypes: 'Movie,Series,BoxSet,Playlist,Video', Recursive: true, ...f, ...s, ...page };
 }
 
 const items = ref<LibraryItem[]>([]);
@@ -59,6 +63,23 @@ const loading = ref(false);
 const busy = ref(false);
 const error = ref('');
 const hasMore = ref(false);
+/** A search the server cannot sort is sorted over the window we already fetched. */
+const shown = computed(() => (isSearch.value ? localSort(items.value, filters.value.sort) : items.value));
+
+/** The /Genres facet lives in the store, so a server that was slow on the first ask gets asked again. */
+const genreOptions = computed(() => store.genres);
+/** Companies come from the results themselves: they are the only ids the 公司 filter can be given,
+ *  and remembering them only while unfiltered keeps a picked genre from emptying the dropdown. */
+const studioOptions = ref<StudioRef[]>([]);
+
+function rememberStudios(batch: LibraryItem[], reset: boolean): void {
+  const map = new Map<string, StudioRef>(reset ? [] : studioOptions.value.map(s => [s.id || s.name, s]));
+  for (const it of batch) for (const s of it.studios || []) if (s.id) map.set(s.id, s);
+  studioOptions.value = [...map.values()];
+}
+
+/** The query this load was for; a route change that lands on the same query is only a re-order. */
+let lastKey = '';
 
 async function load(reset: boolean): Promise<void> {
   if (busy.value) return;
@@ -67,6 +88,7 @@ async function load(reset: boolean): Promise<void> {
     loading.value = true;
     items.value = [];
     error.value = '';
+    lastKey = JSON.stringify(params(0));
   }
   const from = reset ? 0 : items.value.length;
   const r = await window.echoemby.emby.items(params(from));
@@ -78,7 +100,10 @@ async function load(reset: boolean): Promise<void> {
   }
   const batch = r.data || [];
   items.value = reset ? batch : [...items.value, ...batch];
-  hasMore.value = batch.length === PAGE;
+  hasMore.value = batch.length === pageSize.value;
+  if (!isFiltered(filters.value)) rememberStudios(batch, reset);
+  // The facet is allowed to fail with the server: once rows are in, the library is answering.
+  if (batch.length) void store.loadGenres();
 }
 
 const wrapEl = ref<HTMLElement | null>(null);
@@ -112,17 +137,32 @@ watch(term, () => {
   if (deb !== null) window.clearTimeout(deb);
   deb = window.setTimeout(() => {
     const q = term.value.trim();
-    const cur = router.currentRoute.value.query;
-    if ((cur.q || '') !== q) void router.replace({ path: '/browse', query: { kind: 'search', ...(q ? { q } : {}) } });
-    void load(true);
+    if ((router.currentRoute.value.query.q || '') !== q) void go({ q });
   }, 420);
 });
 
+/** The URL is the one source of truth for what is on screen, so both the filters and the term
+ *  move by rewriting it and letting the route watcher do the fetching. */
+function go(part: Record<string, string>): void {
+  void router.replace({ path: '/browse', query: { ...route.query, ...part } });
+}
+
+function onFilters(next: Filters): void {
+  filters.value = next;
+  // The old filter keys have to come off the query, not just be overwritten: clearing a filter
+  // writes fewer keys than it removes, and a merge would leave the ones it no longer mentions.
+  const { type, genres, years, studio, langs, sort, ...rest } = route.query;
+  void router.replace({ path: '/browse', query: { ...rest, ...toQuery(next) } });
+}
+
 watch(
-  () => [route.fullPath, sort.value],
+  () => route.fullPath,
   () => {
     if (route.name !== 'browse') return;
     if (kind.value === 'search') term.value = String(route.query.q || '');
+    filters.value = fromQuery(route.query, defaultSort(isSearch.value));
+    // Picking a sort on a search only re-orders the window we hold; the query is unchanged.
+    if (JSON.stringify(params(0)) === lastKey) return;
     void load(true);
   },
 );
@@ -156,6 +196,7 @@ onMounted(async () => {
     return;
   }
   void store.loadViews();
+  void store.loadGenres();
   await nextTick();
   fit();
   if (window.ResizeObserver && wrapEl.value) {
@@ -186,13 +227,18 @@ onBeforeUnmount(() => {
           </svg>
           <input v-model="term" type="search" placeholder="搜索片名、剧集" spellcheck="false" />
         </label>
-        <div v-if="sortable" class="seg">
-          <button v-for="s in (['name', 'latest', 'rating'] as const)" :key="s" :class="{ on: sort === s }" @click="sort = s">
-            {{ s === 'name' ? '名称' : s === 'latest' ? '最新' : '评分' }}
-          </button>
-        </div>
       </div>
     </header>
+
+    <FilterBar
+      v-if="showBar"
+      class="fbar"
+      :filters="filters"
+      :genre-options="genreOptions"
+      :studio-options="studioOptions"
+      :is-search="isSearch"
+      @change="onFilters"
+    />
 
     <div ref="wrapEl" class="body">
       <p v-if="error" class="err">{{ error }} <button @click="load(true)">重试</button></p>
@@ -206,13 +252,13 @@ onBeforeUnmount(() => {
         </template>
       </div>
 
-      <div v-else-if="items.length" class="grid in" :class="{ list: layout === 'list' }" :style="gridStyle">
+      <div v-else-if="shown.length" class="grid in" :class="{ list: layout === 'list' }" :style="gridStyle">
         <template v-if="layout === 'list'">
-          <ListCard v-for="(it, i) in items" :key="`${it.id}-${i}`" :item="it" :index="i % 12" />
+          <ListCard v-for="(it, i) in shown" :key="`${it.id}-${i}`" :item="it" :index="i % 12" />
         </template>
         <template v-else>
           <MediaCard
-            v-for="(it, i) in items"
+            v-for="(it, i) in shown"
             :key="`${it.id}-${i}`"
             :item="it"
             :variant="variant"
@@ -223,7 +269,10 @@ onBeforeUnmount(() => {
         </template>
       </div>
 
-      <p v-else-if="kind === 'search'" class="empty">{{ term.trim() ? '没有匹配的结果。' : '输入片名开始搜索。' }}</p>
+      <p v-else-if="kind === 'search'" class="empty">
+        {{ isFiltered(filters) && term.trim() ? '筛选后没有结果。' : term.trim() ? '没有匹配的结果。' : '输入片名开始搜索。' }}
+      </p>
+      <p v-else-if="isFiltered(filters)" class="empty">这个筛选条件下没有内容。</p>
       <p v-else class="empty">
         {{ kind === 'favorites' ? '还没有收藏的内容。' : '这个列表目前是空的。' }}
       </p>
@@ -294,33 +343,9 @@ h1 {
   font-size: 14px;
   color: var(--text);
 }
-.seg {
-  display: inline-flex;
-  gap: 2px;
-  padding: 4px;
-  border-radius: 999px;
-  background: var(--bg-elev);
-  border: 1px solid var(--line);
-  box-shadow: var(--shadow-sm);
-}
-.seg button {
-  padding: 6px 14px;
-  border-radius: 999px;
-  font-size: 13px;
-  color: var(--text-dim);
-  transition: color var(--hov) var(--ease), background var(--hov) var(--ease), transform var(--hov) var(--ease-out);
-}
-.seg button:hover {
-  color: var(--text);
-}
-.seg button.on {
-  color: var(--text);
-  font-weight: 600;
-  background: var(--chip-hi);
-}
-.seg button:active {
-  transform: scale(0.96);
-  transition-duration: 0.1s;
+/* The bar sits where the old three-button sort switch sat, so the header keeps its breathing room. */
+.fbar {
+  margin: -14px 0 20px;
 }
 
 .grid {

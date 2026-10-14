@@ -33,6 +33,19 @@ export interface MetaKeys {
   traktClientId?: string;
 }
 
+/** One choice in a filter dropdown. Genres filter by name and Studios by id, so a facet row carries both. */
+export interface FacetOption {
+  name: string;
+  id?: string;
+}
+
+/** A production company as the server names it. Both servers answer `{Name,Id}` rows on the list
+ *  endpoints; the id is optional because the filter needs it and a bare-string answer would not have one. */
+export interface StudioRef {
+  name: string;
+  id?: string;
+}
+
 export interface LibraryItem {
   id: string;
   type: string;
@@ -45,6 +58,8 @@ export interface LibraryItem {
   communityRating?: number;
   genres?: string[];
   studio?: string;
+  /** Every company the server credits, ids included: the 公司 filter is built from these and sent back as StudioIds. */
+  studios?: StudioRef[];
   /** ISO string as the server returns it; the UI decides how much of it to show. */
   premiereDate?: string;
   overview?: string;

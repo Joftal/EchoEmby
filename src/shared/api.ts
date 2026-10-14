@@ -1,4 +1,4 @@
-import type { Account, AppConfig, BangumiScore, CsmGuide, ImdbRating, IpcResult, LibraryItem, LibraryRow, MetaKeys, PlayerState, RtScores, Settings, TmdbMeta, TmdbSimilar, TmdbStills, TraktScores } from './types';
+import type { Account, AppConfig, BangumiScore, CsmGuide, FacetOption, ImdbRating, IpcResult, LibraryItem, LibraryRow, MetaKeys, PlayerState, RtScores, Settings, TmdbMeta, TmdbSimilar, TmdbStills, TraktScores } from './types';
 
 export interface EchoEmbyApi {
   app: {
@@ -15,6 +15,8 @@ export interface EchoEmbyApi {
     views(): Promise<IpcResult<LibraryItem[]>>;
     homeRows(): Promise<IpcResult<LibraryRow[]>>;
     items(params: Record<string, string | number | boolean>): Promise<IpcResult<LibraryItem[]>>;
+    /** The library's own genre labels, used to fill the 分类 dropdown. */
+    genres(): Promise<IpcResult<FacetOption[]>>;
     item(id: string): Promise<IpcResult<LibraryItem>>;
     seasons(seriesId: string): Promise<IpcResult<LibraryItem[]>>;
     episodes(params: { seriesId: string; seasonId: string }): Promise<IpcResult<LibraryItem[]>>;
