@@ -29,7 +29,7 @@ const runtime = computed(() => {
   if (!mins) return '';
   return mins >= 60 ? `${Math.floor(mins / 60)} 小时 ${mins % 60} 分` : `${mins} 分钟`;
 });
-const genres = computed(() => genreLabels(current.value?.genres).join(' '));
+const genres = computed(() => genreLabels(current.value?.genres).slice(0, 3).join(' '));
 const date = computed(() => fmtDate(current.value?.premiereDate) || String(current.value?.productionYear || ''));
 
 async function fetchArt(it: LibraryItem, wide: boolean): Promise<void> {

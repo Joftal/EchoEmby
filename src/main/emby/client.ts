@@ -135,7 +135,10 @@ const mapItem = (r: any): LibraryItem => ({
   productionYear: r.ProductionYear,
   officialRating: r.OfficialRating,
   communityRating: r.CommunityRating,
-  genres: r.Genres?.length ? r.Genres.slice(0, 3) : undefined,
+  // All of them, not the first three: a row kept behind a genre tag sitting at position 4 of the server's
+  // array showed no trace of that tag on screen, so filtering 奇幻 answered with 16 of 48 cards that did not
+  // say 奇幻 anywhere. Narrowing to three is a per-layout decision (ListCard, HeroBanner), not a data decision.
+  genres: r.Genres?.length ? r.Genres : undefined,
   studio: studioName(r),
   studios: mapStudios(r),
   premiereDate: r.PremiereDate,

@@ -37,14 +37,21 @@ const ALIAS: Record<string, string> = {
 /** The Chinese label a server spelling folds into. */
 export const genreLabel = (name: string): string => ALIAS[name] ?? name;
 
-/** Mapped and deduplicated: one item can carry both spellings of the same genre. */
-export const genreLabels = (names?: string[]): string[] => [...new Set((names || []).map(genreLabel))];
-
 /** The other spellings of each Chinese label, read off the table above. */
 const FAMILY: Record<string, string[]> = Object.entries(ALIAS).reduce((acc, [raw, cn]) => {
   (acc[cn] ||= []).push(raw);
   return acc;
 }, {} as Record<string, string[]>);
+
+/** Mapped and deduplicated: one item can carry both spellings of the same genre. `prefer` (the Chinese labels
+ *  a page is currently filtered by) is pulled to the front so a card answering a 分类 filter always names the
+ *  genre it was matched on, even where the server's own array put it fifth of six. */
+export const genreLabels = (names?: string[], prefer: string[] = []): string[] => {
+  const folded = [...new Set((names || []).map(genreLabel))];
+  if (!prefer.length) return folded;
+  const top = prefer.filter(p => folded.includes(p));
+  return [...top, ...folded.filter(g => !top.includes(g))];
+};
 
 /** The dropdown: one row per label, all of them Chinese, in the server's own order. */
 export function genreFacet(names: string[]): { value: string; label: string }[] {

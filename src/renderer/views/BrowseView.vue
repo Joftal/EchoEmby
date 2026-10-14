@@ -78,7 +78,11 @@ function params(startIndex: number): Record<string, string | number | boolean> {
   const s = sortParams(filters.value);
   const page = { StartIndex: startIndex, Limit: pageSize.value };
   if (kind.value === 'resume') return { Recursive: true, MediaTypes: 'Video', IsResumable: true, SortBy: 'DatePlayed', SortOrder: 'Descending', ...page };
-  if (kind.value === 'unwatched') return { Recursive: true, MediaTypes: 'Video', Filters: 'IsUnplayed', ...f, ...s, ...page };
+  // `MediaTypes=Video` cannot carry a genre: measured on this gateway, adding Genres to it answers HTTP 500
+  // for every label, while the same window asked by item type is byte-identical to it (48 of 48 rows, same
+  // order, on both accounts) and does take Genres. 待看 has a 分类 dropdown, so it asks by type; 在看 has none
+  // and keeps the media type, so it never sends the pair that breaks.
+  if (kind.value === 'unwatched') return { Recursive: true, IncludeItemTypes: 'Movie,Episode,Video', Filters: 'IsUnplayed', ...f, ...s, ...page };
   // Measured: this server answers an IsFavorite query with nothing at all unless it is told which
   // kinds to look for, so 收藏 carries its own default list rather than relying on the server's.
   if (kind.value === 'favorites') return { Recursive: true, Filters: 'IsFavorite', IncludeItemTypes: 'Movie,Series,Episode,Video,BoxSet,Playlist', ...f, ...s, ...page };
@@ -436,7 +440,7 @@ onBeforeUnmount(() => {
 
       <div v-else-if="shown.length" class="grid in" :class="{ list: layout === 'list' }" :style="gridStyle">
         <template v-if="layout === 'list'">
-          <ListCard v-for="(it, i) in shown" :key="`${it.id}-${i}`" :item="it" :index="i % 12" />
+          <ListCard v-for="(it, i) in shown" :key="`${it.id}-${i}`" :item="it" :index="i % 12" :matched-genres="filters.genres" />
         </template>
         <template v-else>
           <MediaCard
