@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import type { LibraryItem } from '../../../shared/types';
 import { useAppStore } from '../../stores/app';
-import { fmtRuntime, seenLabel } from '../../lib/format';
+import { episodePosition, fmtRuntime, isPositionOnlyName, seenLabel } from '../../lib/format';
 
 const props = withDefaults(
   defineProps<{ item: LibraryItem; variant?: 'poster' | 'still'; width?: number; index?: number }>(),
@@ -79,9 +79,8 @@ const rating = computed(() => {
 });
 const sub = computed(() => {
   const i = props.item;
-  if (i.latestEpisode) return `第 ${i.latestEpisode.season ?? 1} 季 · 第 ${i.latestEpisode.episode} 集`;
-  if (i.parentIndexNumber != null && i.indexNumber != null) return `第 ${i.parentIndexNumber} 季 · 第 ${i.indexNumber} 集`;
-  if (i.indexNumber != null) return `第 ${i.indexNumber} 集`;
+  if (i.latestEpisode) return episodePosition(i.latestEpisode.season ?? 1, i.latestEpisode.episode);
+  if (i.indexNumber != null) return episodePosition(i.parentIndexNumber, i.indexNumber);
   if (i.childCount) return `${i.childCount} 季`;
   return '';
 });
@@ -100,12 +99,11 @@ const metaLine = computed(() => {
     const year = i.latestEpisode ? undefined : i.productionYear;
     return [sub.value, year].filter(Boolean).join(' · ');
   }
-  if (i.seriesName && i.parentIndexNumber != null && i.indexNumber != null) {
-    // Half the episodes on this server have no title of their own and come named 「第 2 集」, which the
-    // position in front of it already says; the tail only carries a name that adds something.
+  if (i.seriesName && i.indexNumber != null) {
+    // A title that only repeats the position is not a title; the tail carries a name that adds something.
     const t = i.name.trim();
-    const positionOnly = /^第\s*[\d一二三四五六七八九十百千]+\s*[集话話]\s*$/.test(t) || /^\d+$/.test(t) || /^episode\s*\d+$/i.test(t);
-    return `第 ${i.parentIndexNumber} 季 · 第 ${i.indexNumber} 集${t && !positionOnly ? ` · ${t}` : ''}`;
+    const pos = episodePosition(i.parentIndexNumber, i.indexNumber);
+    return `${pos}${t && !isPositionOnlyName(t) ? ` · ${t}` : ''}`;
   }
   return fmtRuntime(i.runTimeTicks);
 });

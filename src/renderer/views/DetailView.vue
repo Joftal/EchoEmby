@@ -8,7 +8,7 @@ import ScoreStrip from '../components/ScoreStrip.vue';
 import { tmdbKind as kindOf, useScores } from '../lib/scores';
 import { usePlayerStore } from '../stores/player';
 import { useAppStore } from '../stores/app';
-import { fmtDate, fmtDateTime, fmtRuntime, seenLabel } from '../lib/format';
+import { episodePosition, fmtDate, fmtDateTime, fmtRuntime, isPositionOnlyName, seenLabel } from '../lib/format';
 import { genreLabels } from '../lib/genres';
 
 const props = defineProps<{ id: string }>();
@@ -172,16 +172,28 @@ const playTarget = computed<LibraryItem | null>(() => {
 });
 const playableId = computed(() => playTarget.value?.id || '');
 const resuming = computed(() => !!playTarget.value?.userData?.playedPercentage);
+/** The season the row is asking about: an episode carries its own number when the gateway feels like
+ *  answering, otherwise the season tab that is open - or this page itself, when it is a Season item. */
+const seasonOf = (e: LibraryItem): number | null =>
+  e.parentIndexNumber ?? seasons.value.find(x => x.id === seasonId.value)?.indexNumber ?? item.value?.indexNumber ?? null;
+const epPos = (e: LibraryItem): string => episodePosition(seasonOf(e), e.indexNumber) || (e.name || '').trim();
+/** The row's headline is the position, not the server's episode name: the name is what duplicates the
+ *  「第 2 集」 the position already spells out, and it only earns its place when it says more. */
+const epTitle = (e: LibraryItem): string => {
+  const name = (e.name || '').trim();
+  const pos = epPos(e);
+  return !name || name === pos || isPositionOnlyName(name) ? pos : `${pos} · ${name}`;
+};
+const epSeen = (e: LibraryItem): string => seenLabel(e.userData?.playedPercentage, e.runTimeTicks);
+const epPlayed = (e: LibraryItem): number => Math.min(100, e.userData?.playedPercentage || 0);
 const playCaption = computed(() => {
   const t = playTarget.value;
   if (!t) return '';
-  const seen = seenLabel(t.userData?.playedPercentage, t.runTimeTicks);
+  const seen = epSeen(t);
   if (!isSeries.value && !isSeason.value) return seen;
-  const s = t.parentIndexNumber ?? seasons.value.find(x => x.id === seasonId.value)?.indexNumber;
-  const pos = s != null ? `第 ${s} 季 · 第 ${t.indexNumber} 集` : `第 ${t.indexNumber} 集`;
+  const pos = epPos(t);
   return seen ? `${pos} · ${seen}` : pos;
 });
-const epSeen = (e: LibraryItem): string => seenLabel(e.userData?.playedPercentage, e.runTimeTicks);
 
 const genres = computed(() => genreLabels(item.value?.genres));
 const premiered = computed(() => fmtDate(item.value?.premiereDate) || String(item.value?.productionYear || ''));
@@ -374,15 +386,15 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
               <img v-if="epArt[e.id] || stillUrl(e.indexNumber)" :src="epArt[e.id] || stillUrl(e.indexNumber)" alt="" loading="lazy" decoding="async" />
               <span v-else class="ph">{{ (e.name || '?').slice(0, 1) }}</span>
               <span class="disc" role="presentation"><svg viewBox="0 0 24 24" width="18" height="18"><path d="M8 5l12 7-12 7z" fill="currentColor" /></svg></span>
+              <span v-if="epSeen(e)" class="echip">{{ epSeen(e) }}</span>
+              <div v-if="epPlayed(e) > 0" class="eprog"><i :style="{ width: epPlayed(e) + '%' }"></i></div>
             </div>
             <div class="einfo">
+              <p class="etitle">{{ epTitle(e) }}</p>
               <p class="emeta">
                 <span v-if="e.premiereDate">{{ fmtDate(e.premiereDate) }}</span>
-                <span>第 {{ e.indexNumber }} 集</span>
                 <span>{{ fmtRuntime(e.runTimeTicks) }}</span>
-                <span v-if="epSeen(e)" class="seen">{{ epSeen(e) }}</span>
               </p>
-              <p class="etitle">{{ e.name }}</p>
               <p v-if="e.overview" class="eov">{{ e.overview }}</p>
             </div>
           </button>
@@ -728,10 +740,27 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
   transition: opacity var(--hov) var(--ease), transform var(--hov) var(--ease-out);
 }
 .epi:hover .disc { opacity: 1; transform: none; }
+/* Same plate as the 在看 cards: the progress read-out lives on the frame it belongs to, not in the text
+   under it - the two used to sit so far apart they read as two different episodes. */
+.ethumb .echip {
+  position: absolute;
+  left: 9px;
+  bottom: 10px;
+  padding: 2px 7px;
+  border-radius: var(--r-badge);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+  background: rgba(16, 16, 22, 0.74);
+  backdrop-filter: blur(8px);
+}
+.ethumb .eprog { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255, 255, 255, 0.32); overflow: hidden; }
+.ethumb .eprog i { display: block; height: 100%; background: #fff; box-shadow: 0 0 0 1px rgba(18, 18, 26, 0.08); }
 .einfo { min-width: 0; margin-top: 11px; }
-.emeta { margin: 0; display: flex; gap: 8px; flex-wrap: wrap; font-size: 13px; font-weight: 500; color: var(--text-dim); font-variant-numeric: tabular-nums; }
-.emeta .seen { color: var(--accent); }
-.etitle { margin: 3px 0 0; font-size: 14px; font-weight: 650; color: var(--text); }
+.emeta { margin: 6px 0 0; display: flex; gap: 8px; flex-wrap: wrap; font-size: 13px; font-weight: 500; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.etitle { margin: 0; font-size: 14px; font-weight: 650; color: var(--text); }
 .eov {
   margin: 4px 0 0;
   font-size: 13px;

@@ -18,6 +18,21 @@ export const seenLabel = (pct?: number, runTimeTicks?: number): string => {
   return ms > 0 ? `看到 ${fmtClock(ms)}` : '';
 };
 
+/** Where the show is - 「第 1 季 · 第 2 集」 - the one wording every episode surface reads. A row that
+ *  does not say which season it sits in drops that half rather than guessing. Counts (「8 集」、「3 季」)
+ *  are not positions and stay bare. */
+export const episodePosition = (season?: number | null, episode?: number | null): string => {
+  if (episode == null) return '';
+  return season != null ? `第 ${season} 季 · 第 ${episode} 集` : `第 ${episode} 集`;
+};
+
+/** Half the episodes on this server have no title of their own and come named 「第 2 集」, 「27」 or
+ *  「Episode 3」 - which the position in front of them already says. */
+export const isPositionOnlyName = (name: string): boolean => {
+  const t = name.trim();
+  return /^第\s*[\d一二三四五六七八九十百千]+\s*[集话話]\s*$/.test(t) || /^\d+$/.test(t) || /^episode\s*\d+$/i.test(t);
+};
+
 export const fmtRuntime = (ticks?: number): string => {
   const ms = ticksToMs(ticks);
   if (!ms) return '';
