@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router';
 import type { LibraryItem, MediaSourceInfo, MediaStreamInfo, TmdbSimilar, TmdbStills } from '../../shared/types';
 import HScroller from '../components/detail/HScroller.vue';
+import FilterSelect from '../components/browse/FilterSelect.vue';
 import ScoreStrip from '../components/ScoreStrip.vue';
 import { tmdbKind as kindOf, useScores } from '../lib/scores';
 import { usePlayerStore } from '../stores/player';
@@ -212,14 +213,16 @@ async function fetchParentTmdbId(seriesId: string): Promise<string> {
   return id;
 }
 
-/** The dropdown reads 「第1季」 from the season's index, falling back to its server name. */
+/** The picker reads 「第1季」 from the season's index, falling back to its server name. */
 const seasonLabel = (s: LibraryItem): string => (s.indexNumber != null ? `第 ${s.indexNumber} 季` : s.name);
+const seasonOptions = computed(() => seasons.value.map(s => ({ value: s.id, label: seasonLabel(s) })));
 const activeSeasonLabel = computed(() => {
   const s = seasons.value.find(x => x.id === seasonId.value);
   return s ? seasonLabel(s) : item.value?.name || '本季';
 });
-function onSeason(ev: Event): void {
-  void loadEpisodes((ev.target as HTMLSelectElement).value);
+function onSeason(v: string | string[]): void {
+  // A season always has one, so re-picking the current one (which answers with '') changes nothing.
+  if (typeof v === 'string' && v) void loadEpisodes(v);
 }
 
 watch(
@@ -343,12 +346,15 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
         <HScroller v-if="episodes.length" class="block">
           <template #header>
             <div class="ep-head">
-              <label v-if="seasons.length > 1" class="pick">
-                <select :value="seasonId" @change="onSeason">
-                  <option v-for="s in seasons" :key="s.id" :value="s.id">{{ seasonLabel(s) }}</option>
-                </select>
-                <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
-              </label>
+              <FilterSelect
+                v-if="seasons.length > 1"
+                bare
+                neutral
+                label="季"
+                :options="seasonOptions"
+                :model-value="seasonId"
+                @update:model-value="onSeason"
+              />
               <h2 v-else>{{ activeSeasonLabel }}</h2>
               <span class="count">{{ episodes.length }} 集</span>
             </div>
@@ -670,27 +676,6 @@ h1 {
 h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px; color: var(--text); }
 
 .ep-head { display: flex; align-items: baseline; gap: 12px; flex: 1; min-width: 0; }
-.pick {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  select {
-    appearance: none;
-    -webkit-appearance: none;
-    padding: 6px 30px 6px 14px;
-    border-radius: 999px;
-    background: var(--bg-elev);
-    border: 1px solid var(--line);
-    box-shadow: var(--shadow-sm);
-    font-size: 14px;
-    font-weight: 650;
-    color: var(--text);
-    cursor: pointer;
-    transition: border-color var(--hov) var(--ease), background var(--hov) var(--ease);
-  }
-  select:hover { border-color: var(--line-strong); }
-  svg { position: absolute; right: 10px; pointer-events: none; color: var(--text-dim); }
-}
 
 .epi {
   flex: none;
@@ -811,8 +796,9 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
 .pgdots i.on { background: #f0913a; }
 .pgw { margin: 0; font-size: 13px; color: var(--text-dim); }
 
-.chips { display: flex; gap: 9px; flex-wrap: wrap; }
-.chip { padding: 6px 14px; border-radius: 999px; background: var(--chip); border: 1px solid var(--line); font-size: 13px; font-weight: 600; color: var(--text); }
+.chips { display: flex; gap: 7px; flex-wrap: wrap; }
+/* Same recipe as the picker chips, so a genre tag and a filter option read as one vocabulary. */
+.chip { display: inline-flex; align-items: center; height: 30px; padding: 0 12px; border-radius: 999px; background: var(--chip); font-size: 13px; font-weight: 600; color: var(--text-dim); }
 
 .still { flex: none; padding: 0; border: 0; background: none; cursor: zoom-in; transition: transform var(--hov) var(--ease-out); }
 .still:hover { transform: translateY(-3px); }

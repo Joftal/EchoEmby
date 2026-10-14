@@ -58,13 +58,12 @@ function setStudio(v: string | string[]): void {
       searchable
       @update:model-value="patch({ years: Array.isArray($event) ? $event : [] })"
     />
-    <FilterSelect label="排序" :options="sorts" :model-value="filters.sort" @update:model-value="setSort" />
+    <FilterSelect label="排序" :options="sorts" :model-value="filters.sort" neutral @update:model-value="setSort" />
     <FilterSelect
       v-if="studios.length"
       label="公司"
       :options="studios"
       :model-value="filters.studio?.id ? `${filters.studio.id}|${filters.studio.name}` : ''"
-      wide
       searchable
       @update:model-value="setStudio"
     />
