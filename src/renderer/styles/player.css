@@ -63,6 +63,13 @@
   color: var(--pl-text);
   white-space: nowrap;
 }
+/* The live rate changes unit as it crosses a megabyte, so the capsule is sized for the widest reading it
+   can hold rather than the current one; tabular digits keep a refresh from nudging the number sideways. */
+.pl-pill.live {
+  min-width: 9ch;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
 /* One capsule for the whole facts strip. Six outlined pills meant six borders to look at and no order of
    reading; inside a single capsule the hairlines do the separating and only the colour-coded facts carry
    weight. */
