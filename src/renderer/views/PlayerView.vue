@@ -367,11 +367,25 @@ onUnmounted(() => {
 .surface {
   position: absolute;
   inset: 0;
+  /* Not `background: none`: a layered window is hit-tested by pixel alpha, and where the controls layer is
+     fully transparent Windows skips the window and the mouse lands on the mpv host underneath it. Measured
+     with WindowFromPoint over the picture: it answered with the host's render widget, so the page never saw
+     a mousemove and a hover could not wake the chrome - no button was reachable. 2/255 of black is invisible
+     over video and makes the whole window take the mouse. */
+  background: rgba(0, 0, 0, 0.008);
 }
 .hitzone {
   position: absolute;
   inset: 0;
   z-index: 1;
+}
+/* A player that has put its chrome away puts the pointer away with it - the mouse still brings the bar
+   back, but an arrowhead frozen in the middle of the film is not what a real player shows. */
+.stage.hidden {
+  cursor: none;
+}
+.stage.hidden .hitzone {
+  cursor: none;
 }
 .pl-top {
   position: absolute;

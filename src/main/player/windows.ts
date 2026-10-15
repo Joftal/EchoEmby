@@ -82,7 +82,10 @@ export class PlayerWindows {
       backgroundColor: '#00000000',
       show: false,
       skipTaskbar: true,
-      resizable: false,
+      // Resizable like the picture window: the controls layer covers the host's border, and since the page
+      // paints a pixel of tint over the whole frame (see PlayerView's .surface) it now takes the mouse
+      // everywhere. Leave this false and the resize grips belong to a window that can no longer be reached.
+      resizable: true,
       movable: true,
       focusable: true,
       hasShadow: false,
