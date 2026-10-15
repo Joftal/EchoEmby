@@ -73,12 +73,13 @@ const badges = computed(() => {
 });
 
 /** The live read-out in the corner: what this app is pulling off the network right now, over a three
- *  second window - the player's stream plus any posters or metadata still arriving behind it.
+ *  second window - the player's stream plus any posters or metadata still arriving behind it. It stays
+ *  mounted at zero while nothing is arriving, so the corner never jumps when a transfer starts or ends.
  *  Under a megabyte the one-decimal MB reading collapses to `0.3 MB/s`, which is exactly the range where
  *  the difference between starving and merely slow matters, so the unit follows the number there. */
 const rate = computed(() => {
   const b = s.value.netBytesPerSec;
-  if (!b || s.value.status !== 'playing') return '';
+  if (!b) return '0 KB/s';
   if (b < 1048576) return `${(b / 1024).toFixed(b < 10240 ? 1 : 0)} KB/s`;
   return `${(b / 1048576).toFixed(1)} MB/s`;
 });
@@ -260,7 +261,7 @@ onUnmounted(() => {
         <TitleArt class="art" :urls="titleUrls" :name="session?.name || '播放器'" />
       </div>
       <div class="no-drag ends">
-        <span v-if="rate" class="pl-pill live" title="本应用当前的下载速度">{{ rate }}</span>
+        <span class="pl-pill live" title="本应用当前的下载速度">{{ rate }}</span>
         <button class="ib close" title="关闭播放器" @click="player.close()">
           <X :size="20" />
         </button>
