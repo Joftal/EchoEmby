@@ -184,11 +184,14 @@ export const usePlayerStore = defineStore('player', () => {
 
   watch(() => [session.value?.danmaku?.itemId || '', prefs.value.enabled === true], () => seedDanmaku());
 
-  /** Turning the layer off drops the comments but keeps the candidate list, so switching back on inside
-   *  the same episode does not ask the service the same question twice. */
+  /** The layer's teardown drops the list *and* the answer it came from. Both `search` and `track` are read
+   *  from the disk cache first, so re-enabling costs no network round trip — while a stale 「已问过」 flag did
+   *  cost the whole list: 关掉再打开 came back to a blank canvas with the row still marked as picked. */
   async function closeDanmaku(): Promise<void> {
     dmComments.value = [];
     dmTrackId.value = '';
+    dmCandidates.value = [];
+    dmAsked.value = false;
   }
 
   /** `session` is a deep ref, so its `danmaku` field is a reactive proxy, and the IPC bridge structured-clones
