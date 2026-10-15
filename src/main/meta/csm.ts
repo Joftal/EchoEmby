@@ -2,6 +2,7 @@ import { app } from 'electron';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import * as https from 'node:https';
 import path from 'node:path';
+import { addBytes } from '../netmeter';
 import type { CsmGuide } from '../../shared/types';
 
 /**
@@ -86,7 +87,11 @@ const get = (url: string, depth = 0): Promise<string | null> =>
           return;
         }
         const chunks: Buffer[] = [];
-        res.on('data', c => chunks.push(c as Buffer));
+        // Outside webRequest's reach, so the meter is told about this body by hand.
+        res.on('data', c => {
+          addBytes((c as Buffer).length);
+          chunks.push(c as Buffer);
+        });
         res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
         res.on('error', () => resolve(null));
       },

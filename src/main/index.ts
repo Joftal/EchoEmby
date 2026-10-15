@@ -2,6 +2,7 @@ import { app, BrowserWindow, shell } from 'electron';
 import path from 'node:path';
 import * as config from './config';
 import { applyProxy } from './net';
+import { startNetMeter } from './netmeter';
 import { AppServices } from './ipc';
 
 const DEV_URL = process.env.VITE_DEV_URL || '';
@@ -61,6 +62,7 @@ if (!app.requestSingleInstanceLock()) {
   app.commandLine.appendSwitch('ignore-gpu-blocklist');
 
   app.whenReady().then(async () => {
+    startNetMeter();
     const s = config.load().settings;
     // A saved address that no longer parses must not leave the app without a route, and must not stay in
     // the file either. Measured 2026-10-14 by hand-poisoning config.json: the fallback kept traffic

@@ -2,6 +2,7 @@ import * as config from '../config';
 import { QUALITY_TIERS } from '../config';
 import { EmbyClient, type Identity, type ProgressInput } from '../emby/client';
 import { explain } from '../emby/errors';
+import { appBytesPerSec } from '../netmeter';
 import {
   emptyPlayerMedia,
   emptyPlayerState,
@@ -274,8 +275,12 @@ export class PlayerController {
   }
 
   private onKernelState(s: PlayerState): void {
-    this.state = s;
-    this.out.state(s);
+    // The read-out answers "what is this app pulling right now", and the posters on screen belong to that
+    // answer even though they never pass through the player. mpv's own counter is the video; this is
+    // everything else on Chromium's stack, refreshed on the same tick the player reports.
+    const merged: PlayerState = { ...s, netBytesPerSec: s.netBytesPerSec + Math.round(appBytesPerSec()) };
+    this.state = merged;
+    this.out.state(merged);
     if (s.status === 'ended') void this.onEnded().catch(e => this.fail(e));
   }
 

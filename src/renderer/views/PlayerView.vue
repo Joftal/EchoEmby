@@ -79,7 +79,8 @@ const badges = computed(() => {
   return out;
 });
 
-/** The live read-out in the corner: what the demuxer is pulling right now, over a three second window. */
+/** The live read-out in the corner: what this app is pulling off the network right now, over a three
+ *  second window - the player's stream plus any posters or metadata still arriving behind it. */
 const rate = computed(() => {
   const b = s.value.netBytesPerSec;
   if (!b || s.value.status !== 'playing') return '';
@@ -236,7 +237,7 @@ onUnmounted(() => {
         <span v-if="session?.line" class="line">{{ session.line }}</span>
       </div>
       <div class="no-drag ends">
-        <span v-if="rate" class="pl-pill live">{{ rate }}</span>
+        <span v-if="rate" class="pl-pill live" title="本应用当前的下载速度">{{ rate }}</span>
         <button class="ib close" title="关闭播放器" @click="player.close()">
           <X :size="20" />
         </button>

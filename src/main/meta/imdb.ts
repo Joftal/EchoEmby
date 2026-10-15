@@ -1,5 +1,6 @@
 import * as https from 'node:https';
 import type { ImdbRating } from '../../shared/types';
+import { addBytes } from '../netmeter';
 import { sourceCache } from './cache';
 
 /**
@@ -47,7 +48,11 @@ const ask = (imdb: string): Promise<{ rating: number | null } | null> =>
           return;
         }
         const chunks: Buffer[] = [];
-        res.on('data', c => chunks.push(c as Buffer));
+        // Outside webRequest's reach, so the meter is told about this body by hand.
+        res.on('data', c => {
+          addBytes((c as Buffer).length);
+          chunks.push(c as Buffer);
+        });
         res.on('end', () => {
           let v: unknown;
           try {
