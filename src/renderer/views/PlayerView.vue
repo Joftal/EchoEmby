@@ -157,7 +157,10 @@ function nudgeSpeed(dir: number): void {
   void player.cmd({ action: 'speed', value: next });
 }
 
+/** Any volume gesture - slider drag or arrow key - also lifts mute, the way a hardware rocker does:
+ *  reaching for the level means wanting to hear it. */
 function volumeTo(v: number): void {
+  if (s.value.muted) void player.cmd({ action: 'mute', value: false });
   void player.cmd({ action: 'volume', value: Math.min(VOLUME_MAX, Math.max(0, Math.round(v))) });
 }
 
@@ -322,9 +325,9 @@ onUnmounted(() => {
               type="range"
               :min="0"
               :max="VOLUME_MAX"
-              :value="s.volume"
+              :value="s.muted ? 0 : s.volume"
               :style="{ '--p': `${((s.muted ? 0 : s.volume) / VOLUME_MAX) * 100}%` }"
-              :aria-label="`音量 ${s.volume}`"
+              :aria-label="`音量 ${s.muted ? 0 : s.volume}`"
               @input="e => volumeTo(Number((e.target as HTMLInputElement).value))"
             />
             <span class="vnum">{{ s.muted ? 0 : s.volume }}</span>
