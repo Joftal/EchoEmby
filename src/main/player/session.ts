@@ -37,7 +37,6 @@ export interface PlayerOut {
 interface Current {
   itemId: string;
   name: string;
-  line: string;
   seriesId?: string;
   seasonId?: string;
   sources: PlaybackSource[];
@@ -117,7 +116,6 @@ export class PlayerController {
     return {
       itemId: c.itemId,
       name: c.name,
-      line: c.line,
       sourceId: c.sources[c.sourceIndex]?.id || '',
       sources: c.sources,
       sourceIndex: c.sourceIndex,
@@ -167,7 +165,6 @@ export class PlayerController {
     this.current = {
       itemId,
       name: item.name,
-      line: this.lineOf(item),
       seriesId: item.seriesId,
       seasonId: item.type === 'Episode' ? item.seasonId || item.parentId : undefined,
       sources: neg.sources,
@@ -194,17 +191,6 @@ export class PlayerController {
     }
     void this.report('start');
     this.startTicker();
-  }
-
-  /** The one line under a title: the season and episode for a show, the year for everything else. */
-  private lineOf(item: LibraryItem): string {
-    if (item.type === 'Episode') {
-      const s = item.parentIndexNumber;
-      const e = item.indexNumber;
-      if (e == null) return item.seriesName || item.name;
-      return [item.seriesName, s != null ? `第 ${s} 季` : '', `第 ${e} 集`].filter(Boolean).join(' · ');
-    }
-    return [item.productionYear ? String(item.productionYear) : '', item.officialRating || ''].filter(Boolean).join(' · ');
   }
 
   /** What a danmaku service is asked about. An episode called 「第 3 集」 matches nothing, so the series

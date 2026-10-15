@@ -261,7 +261,6 @@ onUnmounted(() => {
     <header class="pl-top drag">
       <div class="topin no-drag">
         <TitleArt class="art" :urls="titleUrls" :name="session?.name || '播放器'" />
-        <span v-if="session?.line" class="line">{{ session.line }}</span>
       </div>
       <div class="no-drag ends">
         <span v-if="rate" class="pl-pill live" title="本应用当前的下载速度">{{ rate }}</span>
@@ -459,13 +458,6 @@ onUnmounted(() => {
   letter-spacing: 0;
   line-height: 1.3;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8), 0 3px 14px rgba(0, 0, 0, 0.6);
-}
-.line {
-  font-size: 14px;
-  color: var(--pl-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .pl-pill.live {
   font-variant-numeric: tabular-nums;

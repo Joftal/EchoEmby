@@ -373,8 +373,6 @@ export interface PlayerNav {
 export interface PlayerSession {
   itemId: string;
   name: string;
-  /** 「第 1 季 · 第 2 集」 for an episode, 「2019」 for a movie: the same wording the detail page uses. */
-  line: string;
   sourceId: string;
   sources: PlaybackSource[];
   sourceIndex: number;
