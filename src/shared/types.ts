@@ -419,9 +419,11 @@ export interface DanmakuTrack {
 
 export type PlayerStatus = 'idle' | 'opening' | 'playing' | 'paused' | 'ended' | 'error';
 
-/** mpv's own ceiling: the slider runs to it and the kernel clamps to it, so neither end can disagree
- *  about what 200% means. */
-export const VOLUME_MAX = 200;
+/** 100% is the file's own level - what the operating system would play - so the slider and the system
+ *  volume mixer mean the same number. mpv's software boost above unity is switched off rather than
+ *  exposed: the slider runs to this ceiling and the kernel clamps to it, so neither end can disagree
+ *  about what 100% means. */
+export const VOLUME_MAX = 100;
 
 /** The transport half of the player: what the clock says. */
 export interface PlayerState {
