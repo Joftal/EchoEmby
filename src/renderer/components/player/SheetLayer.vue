@@ -201,7 +201,7 @@ watch(
           </button>
         </div>
         <div ref="bodyEl" class="pl-body" @scroll.passive="measure">
-          <component :is="current.comp" v-if="current" v-bind="current.props" />
+          <component :is="current.comp" v-if="current" :key="player.panel" v-bind="current.props" />
         </div>
       </div>
       <i class="pl-arrow" aria-hidden="true"></i>

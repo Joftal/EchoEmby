@@ -137,7 +137,7 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  transition: transform 0.26s cubic-bezier(0.32, 0.72, 0, 1);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 /* The arrow is the sheet's own bottom edge, so the card floats one arrow-height over the button and the
    line between them stays `--ax` pixels from the card's left edge however far the card was pushed to stay
@@ -154,7 +154,7 @@
 .pl-panel {
   position: relative;
   width: fit-content;
-  min-width: 272px;
+  min-width: 236px;
   max-width: min(440px, calc(100vw - 24px));
   max-height: var(--room, 420px);
   display: flex;
@@ -166,7 +166,7 @@
   box-shadow: var(--pl-sheet-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.09);
   /* Everything that resizes this card grows out of the button it came from, so the origin is the arrow. */
   transform-origin: var(--ax, 50%) 100%;
-  transition: transform 0.2s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.2s var(--ease);
+  transition: transform 0.26s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.18s var(--ease);
 }
 /* The card is a dialog, not a control - its rows carry the focus ring, and a rectangle around the whole
    menu would say 「nothing is chosen」 at the moment the user is choosing something. */
@@ -178,7 +178,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 10px 4px;
+  padding: 9px 9px 3px;
   flex: none;
 }
 .pl-title {
@@ -217,7 +217,7 @@
   flex: 0 1 auto;
   overflow: auto;
   overscroll-behavior: contain;
-  padding: 0 7px 7px;
+  padding: 0 6px 6px;
   scrollbar-width: none;
 }
 .pl-body::-webkit-scrollbar {
@@ -243,9 +243,9 @@
   font-size: 13px;
   font-weight: 600;
   color: var(--pl-faint);
-  padding: 9px 5px 3px;
+  padding: 8px 6px 2px;
 }
-/* 36px: a click target for a mouse aiming at it over video, while the 15px label keeps its size - the
+/* 34px: a click target for a mouse aiming at it over video, while the 15px label keeps its size - the
    card got smaller by giving back its padding, not its type. A ten-row menu at this size still fits the
    body's cap, which is what the 播放资源 sheet is. */
 .pl-row {
@@ -253,8 +253,8 @@
   align-items: center;
   gap: 8px;
   width: 100%;
-  min-height: 36px;
-  padding: 4px 7px;
+  min-height: 34px;
+  padding: 3px 7px;
   border-radius: 10px;
   color: var(--pl-dim);
   text-align: left;
@@ -330,7 +330,7 @@
 .pl-note {
   font-size: 13px;
   color: var(--pl-faint);
-  padding: 2px 5px 8px;
+  padding: 2px 6px 7px;
   line-height: 1.5;
 }
 .pl-sep {
@@ -378,7 +378,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 44px;
+  min-height: 40px;
   padding: 4px 7px;
   font-size: 15px;
   color: var(--pl-dim);
@@ -452,19 +452,21 @@
   border-radius: 999px;
 }
 
-/* A row of equal-width choices (倍速, 预设). */
+/* A row of equal-width choices (倍速, 预设). The cap is what makes a long list wrap into a block
+   instead of stretching the card to its one-line width. */
 .pl-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 4px 7px 9px;
+  max-width: 332px;
+  padding: 3px 6px 7px;
 }
 .pl-chip {
-  padding: 8px 13px;
+  padding: 6px 12px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.1);
   color: var(--pl-dim);
-  font-size: 15px;
+  font-size: 14px;
   transition: background var(--hov) var(--ease), color var(--hov) var(--ease), transform var(--hov) var(--ease-out);
 }
 .pl-chip:hover {
@@ -487,10 +489,10 @@
   gap: 3px;
 }
 .pl-seg button {
-  padding: 7px 13px;
+  padding: 6px 12px;
   border-radius: 999px;
   color: var(--pl-dim);
-  font-size: 15px;
+  font-size: 14px;
   transition: background var(--hov) var(--ease), color var(--hov) var(--ease);
 }
 .pl-seg button.on {
@@ -504,7 +506,7 @@
   align-items: center;
   gap: 10px;
   width: 100%;
-  min-height: 44px;
+  min-height: 40px;
   padding: 4px 7px;
   border-radius: 10px;
   color: var(--pl-dim);
@@ -554,7 +556,7 @@
 .pl-empty {
   font-size: 14px;
   color: var(--pl-faint);
-  padding: 10px 8px;
+  padding: 8px;
   text-align: center;
 }
 
@@ -672,7 +674,8 @@
    transform origin is the arrow and the only thing that moves is scale. Position is deliberately not
    transitioned here: the sheet's own glide is switched off for the duration of an enter, because the
    placement is corrected on the frame after the content lands and a card that slid sideways while it
-   faded in read as a window being dragged rather than a menu being opened. */
+   faded in read as a window being dragged rather than a menu being opened. The scale starts close to
+   rest - a card that popped in at four fifths of its size read as a jump, not a rise. */
 .pl-sheet-enter-active {
   transition: opacity 0.18s var(--ease);
 }
@@ -680,7 +683,7 @@
   opacity: 0;
 }
 .pl-sheet-enter-from .pl-panel {
-  transform: scale(0.82);
+  transform: scale(0.9);
 }
 .pl-sheet-leave-active {
   transition: opacity 0.14s var(--ease);
@@ -689,15 +692,26 @@
   opacity: 0;
 }
 .pl-sheet-leave-to .pl-panel {
-  transform: scale(0.86);
+  transform: scale(0.92);
+}
+
+/* Swapping the menu inside the card fades the new list in over the resize, so the rows never pop into
+   a box that is still settling. Opacity only: anything that moved here would fight the card's morph. */
+.pl-body > * {
+  animation: pl-swap 0.16s var(--ease);
+}
+@keyframes pl-swap {
+  from {
+    opacity: 0;
+  }
 }
 
 /* A drill-in comes in from the side its parent row's chevron points to, and goes back the way it came. */
 .pl-sub-enter-active {
-  transition: transform 0.22s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.16s var(--ease);
+  transition: transform 0.24s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.16s var(--ease);
 }
 .pl-sub-enter-from {
-  transform: translate3d(26px, 0, 0);
+  transform: translate3d(20px, 0, 0);
   opacity: 0;
 }
 /* The leaving level steps out of the layout so the card can be sized by whatever is arriving underneath
@@ -706,10 +720,10 @@
 .pl-sub-leave-active {
   position: absolute;
   inset: 0;
-  transition: transform 0.2s var(--ease), opacity 0.14s var(--ease);
+  transition: transform 0.18s var(--ease), opacity 0.14s var(--ease);
 }
 .pl-sub-leave-to {
-  transform: translate3d(26px, 0, 0);
+  transform: translate3d(20px, 0, 0);
   opacity: 0;
 }
 

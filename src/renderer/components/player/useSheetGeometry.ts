@@ -48,7 +48,12 @@ export function useSheetGeometry(cardEl: Ref<HTMLElement | null>, anchor: Ref<{ 
 
   /** Growing and shrinking both travel out of the arrow, which is where the card came from. The first
    *  measurement is not a change, and a box that measured 0 is the card appearing at all - that has its
-   *  own enter transition. */
+   *  own enter transition.
+   *
+   *  Each axis is clamped to a fifth of stretch either way: between two menus of different shape
+   *  (272x487 to 440x244 measured) the true ratio started the morph at 0.62x by 2.0x, and rows that
+   *  spent a fifth of a second twice as tall as they are is what made switching menus look jumpy. The
+   *  clamped settle plus the list's own fade-in reads as one move instead. */
   function morph(): void {
     const el = cardEl.value;
     if (!el) return;
@@ -56,9 +61,11 @@ export function useSheetGeometry(cardEl: Ref<HTMLElement | null>, anchor: Ref<{ 
     const prev = was;
     was = next;
     if (prev.w <= 0 || prev.h <= 0 || (prev.w === next.w && prev.h === next.h)) return;
-    el.animate([{ transform: `scale(${prev.w / next.w}, ${prev.h / next.h})` }, { transform: 'none' }], {
-      duration: 200,
-      easing: 'cubic-bezier(0.32, 0.72, 0, 1)',
+    const sx = clamp(0.8, prev.w / next.w, 1.2);
+    const sy = clamp(0.8, prev.h / next.h, 1.2);
+    el.animate([{ transform: `scale(${sx}, ${sy})` }, { transform: 'none' }], {
+      duration: 260,
+      easing: 'cubic-bezier(0.4, 0, 0.2, 1)',
     });
   }
 

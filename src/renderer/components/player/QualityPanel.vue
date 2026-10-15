@@ -45,11 +45,6 @@ function pickSource(index: number): void {
 </script>
 
 <template>
-  <div class="pl-head-line">
-    <span class="now">{{ session?.tiers.find(t => t.bitrate === session?.tier)?.label || '—' }}</span>
-    <span class="via">{{ session?.method ? METHOD_CN[session.method] : '未谈定' }}</span>
-  </div>
-
   <div class="pl-sect">清晰度</div>
   <button v-for="t in session?.tiers || []" :key="t.bitrate" class="pl-row" :class="{ on: session?.tier === t.bitrate }" @click="setTier(t.bitrate)">
     <span class="mark"></span>
@@ -106,23 +101,3 @@ function pickSource(index: number): void {
     <p class="pl-note">关掉时 mpv 把 HDR 压成 SDR 显示；打开后如果屏幕不支持 HDR，画面会发灰。改动在下一次播放生效。</p>
   </SubPopover>
 </template>
-
-<style scoped>
-/* The reference says which rung is in play once, at the top of the menu, instead of repeating it on the
-   row that happens to be selected. */
-.pl-head-line {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  padding: 2px 6px 8px;
-}
-.now {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--pl-text);
-}
-.via {
-  font-size: 14px;
-  color: var(--pl-faint);
-}
-</style>
