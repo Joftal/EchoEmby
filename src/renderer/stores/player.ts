@@ -94,15 +94,26 @@ export const usePlayerStore = defineStore('player', () => {
 
   function openPanel(kind: PanelKind): void {
     panel.value = panel.value === kind ? '' : kind;
+    sub.value = '';
+  }
+
+  /** Which submenu is unfolded beside the open panel. It lives in the store rather than in the panel
+   *  component because Escape has to close the submenu first and the drawer second. */
+  const sub = ref('');
+
+  function toggleSub(name: string): void {
+    sub.value = sub.value === name ? '' : name;
   }
 
   function closePanel(): void {
     panel.value = '';
+    sub.value = '';
   }
 
   async function close(): Promise<void> {
     await window.echoemby.player.close();
     panel.value = '';
+    sub.value = '';
     state.value = emptyPlayerState();
     session.value = null;
     media.value = emptyPlayerMedia();
@@ -215,6 +226,7 @@ export const usePlayerStore = defineStore('player', () => {
     media,
     prefs,
     panel,
+    sub,
     busy,
     error,
     progress,
@@ -230,6 +242,7 @@ export const usePlayerStore = defineStore('player', () => {
     play,
     cmd,
     openPanel,
+    toggleSub,
     closePanel,
     close,
     seedDanmaku,

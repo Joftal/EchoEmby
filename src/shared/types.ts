@@ -430,6 +430,10 @@ export interface PlayerState {
   durationMs: number;
   /** Where the demuxer has read to, so the bar can show what a seek would be free. */
   bufferedMs: number;
+  /** What the demuxer is pulling off the wire right now, measured over a few seconds of its byte counter.
+   *  0 while paused or before the first samples land. Measured on the bundled 0.41 build: the cumulative
+   *  counter inside `demuxer-cache-state` is `total-bytes`; `raw-bytes` does not exist there. */
+  netBytesPerSec: number;
   paused: boolean;
   volume: number;
   muted: boolean;
@@ -473,6 +477,7 @@ export const emptyPlayerState = (): PlayerState => ({
   positionMs: 0,
   durationMs: 0,
   bufferedMs: 0,
+  netBytesPerSec: 0,
   paused: true,
   volume: 100,
   muted: false,

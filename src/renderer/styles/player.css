@@ -1,43 +1,150 @@
 /* The player's own dark surfaces. Every rule here sits over video, so nothing can borrow the page's
    light tokens: --pl-* is the same scale re-derived for a transparent window with no opaque ground.
-   Text steps are chosen for contrast against the frosted panels (rgba(20,20,26,.88)) rather than
-   against black, and no size in the player goes below 13px. */
+   Text steps are chosen for contrast against the frosted panels rather than against black, and no size
+   in the player goes below 13px.
+
+   The vocabulary is the one the reference player uses: a control bar made of two floating capsules,
+   menus that pop open above the icon that called them, nested submenus that unfold to the left of
+   their parent, and rows whose selected state is a filled blue band - never a size change. */
 :root {
-  --pl-glass: rgba(20, 20, 26, 0.88);
+  --pl-glass: rgba(18, 18, 24, 0.66);
+  --pl-glass-solid: rgba(18, 18, 24, 0.92);
   --pl-glass-hi: rgba(255, 255, 255, 0.12);
-  --pl-line: rgba(255, 255, 255, 0.16);
+  --pl-line: rgba(255, 255, 255, 0.18);
   --pl-text: #ffffff;
-  --pl-dim: rgba(255, 255, 255, 0.86);
-  --pl-faint: rgba(255, 255, 255, 0.62);
+  --pl-dim: rgba(255, 255, 255, 0.9);
+  --pl-faint: rgba(255, 255, 255, 0.66);
   --pl-hi: #7ab3ff;
-  --pl-fill: #4d86f0;
-  --pl-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+  --pl-fill: #2f7dfd;
+  --pl-shadow: 0 20px 54px rgba(0, 0, 0, 0.6);
+  --pl-r: 16px;
 }
+
+/* ---- chrome: two capsules on the bottom, badges and a read-out pill on top of them ---- */
+
+/* A very light scrim under the bar: the timeline is a 4px line of white over whatever the film paints,
+   and on snow it disappears without one. The capsules themselves need no help - they are frosted. */
+.pl-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 0 18px 16px;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.5), transparent);
+  /* A menu has to clear the whole bar, not just the icon that called it: the timeline and the badges sit
+     between the icon and the bar's top edge, and a popover parked at 12px above the icon landed on the
+     seek line and made it un-draggable while a menu was open. 72px is that stack (capsule padding, the
+     badge row, the timeline) measured on the built page. */
+  --pl-pop: 72px;
+  z-index: 3;
+}
+/* Both chrome pieces leave the same way: the menus live inside the bar, so a bar that faded on its own
+   timer would strand an open popover with nothing left to close it. `show()` refuses to hide while a
+   menu is up for exactly that reason. The rules that do the hiding are at the bottom of this file, next
+   to the transition they use. */
+.pl-bar,
+.pl-top {
+  transition: opacity 0.26s var(--ease), transform 0.26s var(--ease);
+}
+.pl-badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px 10px;
+  min-width: 0;
+  overflow: hidden;
+}
+.pl-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(10, 10, 14, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(10px);
+  font-size: 13px;
+  color: var(--pl-text);
+  white-space: nowrap;
+}
+.pl-pill.hdr {
+  background: rgba(255, 176, 32, 0.22);
+  border-color: rgba(255, 176, 32, 0.4);
+  color: #ffdf9e;
+}
+.pl-pill.orig {
+  background: rgba(74, 222, 128, 0.18);
+  border-color: rgba(74, 222, 128, 0.34);
+  color: #9df0bd;
+}
+.pl-caps {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: var(--pl-glass);
+  backdrop-filter: blur(26px) saturate(1.7);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: var(--pl-shadow);
+}
+.pl-rowline {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 14px;
+}
+.pl-time {
+  padding: 0 10px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--pl-text);
+  white-space: nowrap;
+}
+.pl-time .dash {
+  opacity: 0.55;
+  margin: 0 3px;
+}
+/* The trigger icon and the menu it calls share one positioned box, so the popover lands above the
+   button that opened it the way the reference does - no measurement, no drift on resize. */
+.pl-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+/* ---- popovers ---- */
 
 .pl-panel {
   position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 336px;
-  max-width: 78vw;
+  bottom: calc(100% + var(--pl-pop, 12px));
+  width: var(--pl-w, 300px);
+  max-width: calc(100vw - 24px);
   display: flex;
   flex-direction: column;
   color: var(--pl-text);
   background: var(--pl-glass);
-  backdrop-filter: blur(18px) saturate(1.2);
-  border-left: 1px solid var(--pl-line);
+  backdrop-filter: blur(30px) saturate(1.8);
+  border: 1px solid var(--pl-line);
+  border-radius: var(--pl-r);
   box-shadow: var(--pl-shadow);
+  z-index: 4;
+}
+.pl-panel.anchor-left {
+  left: 0;
+}
+.pl-panel.anchor-right {
+  right: 0;
 }
 .pl-head {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 18px 18px 12px;
+  padding: 12px 14px 6px;
 }
 .pl-title {
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 600;
+  color: var(--pl-faint);
   flex: 1;
   min-width: 0;
   white-space: nowrap;
@@ -45,27 +152,31 @@
   text-overflow: ellipsis;
 }
 .pl-body {
-  flex: 1;
+  /* 66vh: the 播放资源 menu is ten rows plus a head-line, and at 56vh its last three rows - the only
+     entry points to 播放源, 解码与渲染 and 动态范围 - fell below the fold at the default window size.
+     The popover still clears the bar: the tallest menu measured 480px against 545px of room. */
+  max-height: min(66vh, 470px);
   min-height: 0;
   overflow: auto;
-  /* The control bar is 34px tall and sits 14px off the bottom edge, so the last row of a list has to stop
-     above that band or it lands under the buttons. */
-  padding: 0 12px 60px;
+  overscroll-behavior: contain;
+  padding: 0 8px 8px;
 }
 .pl-sect {
   font-size: 13px;
   font-weight: 600;
   color: var(--pl-faint);
-  padding: 14px 6px 6px;
+  padding: 10px 6px 4px;
 }
+/* 32px, not 40: the reference's own lists pack ~30px per row (its 画面比例 submenu shows seventeen of them
+   in one popover), and a looser row is what pushed a ten-row menu off the bottom of the screen. */
 .pl-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
-  min-height: 40px;
-  padding: 7px 10px;
-  border-radius: var(--r-row);
+  min-height: 32px;
+  padding: 5px 8px;
+  border-radius: 10px;
   color: var(--pl-dim);
   text-align: left;
   font-size: 13px;
@@ -78,9 +189,35 @@
 .pl-row:active {
   transform: scale(0.99);
 }
+/* The tick column exists whether or not this row is the chosen one, so selecting a row colours it
+   without moving anything - a check that appeared on demand reflowed every label under it. The mark
+   itself is drawn here rather than per row: a selected row is the only thing that has to say so. */
+.pl-row .mark {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  position: relative;
+}
+.pl-row.on .mark::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 1px;
+  width: 11px;
+  height: 6px;
+  border-left: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+}
 .pl-row.on {
-  color: var(--pl-hi);
-  background: rgba(122, 179, 255, 0.14);
+  color: #fff;
+  background: var(--pl-fill);
+}
+.pl-row.on .mark {
+  opacity: 1;
+}
+.pl-row.on .meta {
+  color: rgba(255, 255, 255, 0.82);
 }
 .pl-row .label {
   flex: 1;
@@ -89,59 +226,155 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.pl-row .sub {
+  display: block;
+  font-size: 13px;
+  color: var(--pl-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pl-row.on .sub {
+  color: rgba(255, 255, 255, 0.8);
+}
 .pl-row .meta {
   font-size: 13px;
   color: var(--pl-faint);
   white-space: nowrap;
 }
-.pl-row.on .meta {
-  color: var(--pl-hi);
-  opacity: 0.8;
+.pl-row .go {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.7;
 }
 .pl-note {
   font-size: 13px;
   color: var(--pl-faint);
-  padding: 4px 8px 10px;
+  padding: 2px 8px 10px;
   line-height: 1.5;
 }
+.pl-sep {
+  height: 1px;
+  margin: 6px 6px;
+  background: var(--pl-line);
+}
 
-/* One slider row: label, the range itself, and the value it currently holds. */
-.pl-slide {
-  display: grid;
-  grid-template-columns: 74px 1fr 54px;
+/* A submenu unfolds to the left of the popover that called it, bottom-aligned so both share a base. */
+.pl-sub {
+  position: absolute;
+  right: calc(100% + 8px);
+  bottom: 0;
+  width: var(--pl-w, 286px);
+  max-width: calc(100vw - 24px);
+  display: flex;
+  flex-direction: column;
+  background: var(--pl-glass-solid);
+  backdrop-filter: blur(30px) saturate(1.8);
+  border: 1px solid var(--pl-line);
+  border-radius: var(--pl-r);
+  box-shadow: var(--pl-shadow);
+  z-index: 5;
+}
+.pl-sub .pl-body {
+  max-height: min(52vh, 420px);
+}
+/* A submenu that would fall off the left edge opens to the right of its parent instead. */
+.pl-sub.flip {
+  right: auto;
+  left: calc(100% + 8px);
+}
+
+/* ---- controls inside rows ---- */
+
+/* Label left, control right, the way the reference's 微调 sheet reads: one row per knob. */
+.pl-line {
+  display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 10px;
+  min-height: 42px;
+  padding: 4px 8px;
   font-size: 13px;
   color: var(--pl-dim);
 }
+.pl-line .label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pl-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.pl-step button {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--pl-text);
+  font-size: 15px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--hov) var(--ease), transform var(--hov) var(--ease-out);
+}
+.pl-step button:hover {
+  background: rgba(255, 255, 255, 0.26);
+}
+.pl-step button:active {
+  transform: scale(0.9);
+}
+.pl-step .v {
+  min-width: 52px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--pl-text);
+}
+.pl-slide {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 4px 8px;
+  font-size: 13px;
+  color: var(--pl-dim);
+}
+.pl-slide .label {
+  flex: 1;
+  min-width: 0;
+}
 .pl-slide input[type='range'] {
-  width: 100%;
+  width: 118px;
   accent-color: var(--pl-fill);
 }
 .pl-slide .val {
+  width: 48px;
   text-align: right;
   font-variant-numeric: tabular-nums;
   color: var(--pl-text);
 }
 
-/* A row of equal-width choices (倍速, 比例). */
+/* A row of equal-width choices (倍速, 预设). */
 .pl-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 4px 10px 10px;
+  padding: 4px 8px 10px;
 }
 .pl-chip {
   padding: 7px 11px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.1);
   color: var(--pl-dim);
   font-size: 13px;
   transition: background var(--hov) var(--ease), color var(--hov) var(--ease), transform var(--hov) var(--ease-out);
 }
 .pl-chip:hover {
-  background: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.18);
   color: var(--pl-text);
 }
 .pl-chip:active {
@@ -151,15 +384,35 @@
   background: var(--pl-fill);
   color: #fff;
 }
+/* The segmented strip the reference uses for 预设: choices inside one rounded track. */
+.pl-seg {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  gap: 2px;
+}
+.pl-seg button {
+  padding: 5px 12px;
+  border-radius: 999px;
+  color: var(--pl-dim);
+  font-size: 13px;
+  transition: background var(--hov) var(--ease), color var(--hov) var(--ease);
+}
+.pl-seg button.on {
+  background: rgba(255, 255, 255, 0.92);
+  color: #14141a;
+  font-weight: 600;
+}
 
 .pl-switch {
   display: flex;
   align-items: center;
   gap: 10px;
   width: 100%;
-  min-height: 40px;
-  padding: 7px 10px;
-  border-radius: var(--r-row);
+  min-height: 42px;
+  padding: 4px 8px;
+  border-radius: 10px;
   color: var(--pl-dim);
   font-size: 13px;
   text-align: left;
@@ -167,11 +420,18 @@
 .pl-switch:hover {
   background: var(--pl-glass-hi);
 }
+.pl-switch .label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .pl-switch .track {
-  width: 38px;
-  height: 22px;
+  width: 40px;
+  height: 24px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.24);
   position: relative;
   flex: none;
   transition: background var(--hov) var(--ease);
@@ -180,32 +440,157 @@
   position: absolute;
   top: 3px;
   left: 3px;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   background: #fff;
   transition: transform var(--hov) var(--ease-out);
 }
 .pl-switch.on .track {
-  background: var(--pl-fill);
+  background: #6ddc8f;
 }
 .pl-switch.on .track i {
   transform: translate3d(16px, 0, 0);
+}
+.pl-text {
+  color: var(--pl-hi);
+  font-size: 13px;
 }
 
 .pl-empty {
   font-size: 13px;
   color: var(--pl-faint);
-  padding: 16px 10px;
+  padding: 14px 10px;
   text-align: center;
 }
 
-.pl-enter-active,
-.pl-leave-active {
-  transition: transform 0.26s var(--ease), opacity 0.26s var(--ease);
+/* ---- 播放源 cards, 选集 strip ---- */
+
+.pl-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 4px 2px 8px;
 }
-.pl-enter-from,
-.pl-leave-to {
-  transform: translate3d(24px, 0, 0);
+.pl-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 11px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--pl-dim);
+  text-align: left;
+  font-size: 13px;
+  min-width: 0;
+  transition: background var(--hov) var(--ease), border-color var(--hov) var(--ease);
+}
+.pl-card:hover {
+  background: rgba(255, 255, 255, 0.13);
+}
+.pl-card.on {
+  border-color: rgba(109, 220, 143, 0.7);
+  background: rgba(109, 220, 143, 0.12);
+  color: var(--pl-text);
+}
+.pl-card .kind {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--pl-text);
+}
+.pl-card .who {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--pl-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pl-strip {
+  display: flex;
+  gap: 10px;
+  padding: 4px 2px 10px;
+  overflow-x: auto;
+  /* Every horizontal strip in the app hides its scrollbar (RowScroller, the detail pages); a native one
+     under the thumbnails drew a grey track across the bottom of a frosted popover. */
+  scrollbar-width: none;
+}
+.pl-strip::-webkit-scrollbar {
+  height: 0;
+}
+.pl-cell {
+  flex: none;
+  width: 132px;
+  color: var(--pl-dim);
+  text-align: left;
+  font-size: 13px;
+}
+.pl-cell .art {
+  position: relative;
+  width: 132px;
+  height: 74px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  border: 2px solid transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--pl-faint);
+  transition: border-color var(--hov) var(--ease);
+}
+.pl-cell img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.pl-cell.on .art {
+  border-color: #fff;
+}
+.pl-cell .cap {
+  padding-top: 5px;
+  line-height: 1.35;
+}
+.pl-cell .cap b {
+  display: block;
+  font-weight: 500;
+  color: var(--pl-text);
+}
+.pl-cell .cap span {
+  display: block;
+  color: var(--pl-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pl-enter-active {
+  transition: transform 0.2s var(--ease), opacity 0.2s var(--ease);
+}
+.pl-enter-from {
+  transform: translate3d(0, 10px, 0) scale(0.98);
   opacity: 0;
+}
+/* Leaving is instant, on purpose. Each menu now hangs off the icon that opened it, so two of them
+   animating at once would sit in two different places at once, and the reference closes the old menu
+   the moment a new icon is clicked. */
+.pl-leave-active {
+  transition: none;
+}
+.pl-leave-to {
+  opacity: 0;
+}
+
+.stage.hidden .pl-bar {
+  opacity: 0;
+  transform: translate3d(0, 14px, 0);
+  pointer-events: none;
+}
+.stage.hidden .pl-top {
+  opacity: 0;
+  transform: translate3d(0, -14px, 0);
+  pointer-events: none;
 }

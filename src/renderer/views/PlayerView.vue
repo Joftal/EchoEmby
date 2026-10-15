@@ -29,7 +29,7 @@ const hover = ref<{ ratio: number; x: number } | null>(null);
 const rail = ref<HTMLElement | null>(null);
 let timer: ReturnType<typeof setTimeout> | null = null;
 
-/** Anything that can start a hide is funneled through here: a bar that vanishes while a drawer is open
+/** Anything that can start a hide is funneled through here: a bar that vanishes while a menu is open
  *  would take the way out of it with it. */
 function show(): void {
   visible.value = true;
@@ -42,13 +42,35 @@ function show(): void {
 const buffered = computed(() => `${(s.value.durationMs ? Math.min(1, s.value.bufferedMs / s.value.durationMs) : 0) * 100}%`);
 const ticks = computed(() => media.value.chapters.slice(1).map(c => `${(c.timeMs / (s.value.durationMs || 1)) * 100}%`));
 
+/** The facts strip under the timeline. Every line is read back from the demuxer or the server, never
+ *  assumed, and a fact the file did not report simply does not appear. */
 const badges = computed(() => {
-  const out: string[] = [];
-  if (session.value?.method) out.push(METHOD_CN[session.value.method]);
-  if (media.value.width) out.push(`${media.value.width}×${media.value.height}`);
-  if (media.value.fps) out.push(`${media.value.fps.toFixed(2)} fps`);
-  if (session.value?.hdr || media.value.hdr) out.push('HDR');
+  const m = media.value;
+  const out: { text: string; cls?: string }[] = [];
+  if (m.width) out.push({ text: `${m.width}×${m.height}` });
+  if (m.hdr || session.value?.hdr) out.push({ text: 'HDR', cls: 'hdr' });
+  const vid = m.tracks.find(t => t.kind === 'video' && t.selected);
+  const aud = m.tracks.find(t => t.kind === 'audio' && t.selected);
+  if (vid?.codec) out.push({ text: vid.codec.toUpperCase() });
+  if (aud?.codec) out.push({ text: aud.codec.toUpperCase() });
+  if (m.fps) out.push({ text: `${m.fps.toFixed(2)} fps` });
+  if (session.value?.method) out.push({ text: METHOD_CN[session.value.method] });
   return out;
+});
+
+/** The live read-out in the corner: what the demuxer is pulling right now, over a three second window. */
+const rate = computed(() => {
+  const b = s.value.netBytesPerSec;
+  if (!b || s.value.status !== 'playing') return '';
+  return `${(b / 1048576).toFixed(1)} MB/s`;
+});
+
+/** The 画质 trigger says what is being used, the way the reference's 「1080p」 button does. `tier` is the
+ *  negotiated bitrate, not an index, so the rung is found the same way the 播放资源 menu finds it. */
+const tierLabel = computed(() => {
+  const se = session.value;
+  if (!se) return '画质';
+  return se.tiers.find(t => t.bitrate === se.tier)?.label || '画质';
 });
 
 function ratioAt(e: PointerEvent): number {
@@ -150,7 +172,14 @@ function onKey(e: KeyboardEvent): void {
 
 const ended = computed(() => s.value.status === 'ended');
 
+/** A click on the picture with a menu open closes the menu: the popover floats over the video, so the
+ *  first click anywhere off it is the user saying 「不用了」, not a request to pause the film. */
 async function onSurfaceClick(): Promise<void> {
+  if (player.panel) {
+    player.closePanel();
+    show();
+    return;
+  }
   await player.cmd({ action: ended.value ? 'restart' : 'toggle' });
   show();
 }
@@ -180,23 +209,22 @@ onUnmounted(() => {
     <div class="surface" @click="onSurfaceClick" @dblclick="dblclick"></div>
     <DanmakuLayer />
 
-    <header class="top drag">
+    <header class="pl-top drag">
       <div class="topin no-drag">
-        <button class="ib" title="关闭播放器" @click="player.close()">
-          <svg viewBox="0 0 24 24" width="18" height="18"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" fill="none" /></svg>
+        <span class="name">{{ session?.name || '播放器' }}</span>
+        <span v-if="session?.line" class="line">{{ session.line }}</span>
+      </div>
+      <div class="no-drag ends">
+        <span v-if="rate" class="pl-pill live">{{ rate }}</span>
+        <button class="ib close" title="关闭播放器" @click="player.close()">
+          <svg viewBox="0 0 24 24" width="17" height="17"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" fill="none" /></svg>
         </button>
-        <div class="ttl">
-          <span class="name">{{ session?.name || '播放器' }}</span>
-          <span v-if="session?.line" class="line">{{ session.line }}</span>
-        </div>
-        <span v-for="b in badges" :key="b" class="badge" :class="{ hdr: b === 'HDR' }">{{ b }}</span>
-        <span v-if="session?.tier === 0" class="badge orig">原片</span>
       </div>
     </header>
 
     <button v-if="!visible" class="hitzone" @click="show" @pointermove="show"></button>
 
-    <footer class="bottom">
+    <div class="pl-bar">
       <div class="seek" ref="rail" @pointerdown="onDown" @pointerup="onUp" @pointermove="onRailMove">
         <div class="rail">
           <div class="buf" :style="{ width: buffered }"></div>
@@ -207,82 +235,120 @@ onUnmounted(() => {
         <span v-if="hover" class="tip" :style="{ left: `${hover.ratio * 100}%` }">{{ hoverTime }}</span>
       </div>
 
-      <div class="row">
-        <button class="ib" title="播放 / 暂停（空格）" @click="player.cmd({ action: 'toggle' })">
-          <svg v-if="s.paused" viewBox="0 0 24 24" width="19" height="19"><path d="M8 5l12 7-12 7z" fill="currentColor" /></svg>
-          <svg v-else viewBox="0 0 24 24" width="18" height="18"><rect x="6" y="5" width="4" height="14" rx="1.5" fill="currentColor" /><rect x="14" y="5" width="4" height="14" rx="1.5" fill="currentColor" /></svg>
-        </button>
-        <button class="ib" :disabled="!session?.prev" title="上一集" @click="player.cmd({ action: 'prev' })">
-          <svg viewBox="0 0 24 24" width="18" height="18"><path d="M18 6l-8 6 8 6zM7 5v14" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" /></svg>
-        </button>
-        <button class="ib" :disabled="!session?.next" title="下一集" @click="player.cmd({ action: 'next' })">
-          <svg viewBox="0 0 24 24" width="18" height="18"><path d="M6 6l8 6-8 6zM17 5v14" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" /></svg>
-        </button>
-        <button class="ib skip" :title="`后退 ${Math.round(step / 1000)} 秒`" @click="player.cmd({ action: 'skip', value: -step })">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M11 5H6.5A4.5 4.5 0 0 0 2 9.5V12a5 5 0 0 0 5 5h3M11 5l-3.5 3.5M11 5L7.5 8.5" /><text x="14" y="17" font-size="10" stroke="none" fill="currentColor" text-anchor="middle">10</text></svg>
-        </button>
-        <button class="ib skip" :title="`快进 ${Math.round(step / 1000)} 秒`" @click="player.cmd({ action: 'skip', value: step })">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M13 5h4.5A4.5 4.5 0 0 1 22 9.5V12a5 5 0 0 1-5 5h-3M13 5l3.5 3.5M13 5l-3.5 3.5" /><text x="10" y="17" font-size="10" stroke="none" fill="currentColor" text-anchor="middle">10</text></svg>
-        </button>
+      <div class="pl-badges">
+        <span v-for="b in badges" :key="b.text" class="pl-pill" :class="b.cls">{{ b.text }}</span>
+        <span v-if="session?.tier === 0" class="pl-pill orig">原片</span>
+      </div>
 
-        <div class="time">{{ fmtClock(s.positionMs) }} <span class="dash">/</span> {{ fmtClock(s.durationMs) }}</div>
-
-        <div class="grow"></div>
-
-        <div class="vol">
-          <button class="ib" title="静音" @click="player.cmd({ action: 'mute', value: !s.muted })">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-              <path d="M4 9v6h4l5 4V5L8 9H4z" />
-              <path v-if="s.muted || !s.volume" d="M16.5 9.5l5 5M21.5 9.5l-5 5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" />
-              <path v-else d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linecap="round" />
-            </svg>
+      <div class="pl-rowline">
+        <div class="pl-caps">
+          <button class="ib" :class="{ act: !s.paused }" title="播放 / 暂停（空格）" @click="player.cmd({ action: 'toggle' })">
+            <svg v-if="s.paused" viewBox="0 0 24 24" width="19" height="19"><path d="M8 5l12 7-12 7z" fill="currentColor" /></svg>
+            <svg v-else viewBox="0 0 24 24" width="18" height="18"><rect x="6" y="5" width="4" height="14" rx="1.5" fill="currentColor" /><rect x="14" y="5" width="4" height="14" rx="1.5" fill="currentColor" /></svg>
           </button>
-          <input class="vslider" type="range" :min="0" :max="VOLUME_MAX" :value="s.volume" @input="e => volumeTo(Number((e.target as HTMLInputElement).value))" />
-          <span class="vnum">{{ s.muted ? 0 : s.volume }}</span>
+          <button class="ib" :disabled="!session?.prev" title="上一集" @click="player.cmd({ action: 'prev' })">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M18 6l-8 6 8 6zM7 5v14" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" /></svg>
+          </button>
+          <button class="ib" :disabled="!session?.next" title="下一集" @click="player.cmd({ action: 'next' })">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M6 6l8 6-8 6zM17 5v14" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" /></svg>
+          </button>
+          <button class="ib skip" :title="`后退 ${Math.round(step / 1000)} 秒`" @click="player.cmd({ action: 'skip', value: -step })">
+            <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M11 5H6.5A4.5 4.5 0 0 0 2 9.5V12a5 5 0 0 0 5 5h3M11 5l-3.5 3.5M11 5L7.5 8.5" /><text x="15" y="17" font-size="11" stroke="none" fill="currentColor" text-anchor="middle">10</text></svg>
+          </button>
+          <button class="ib skip" :title="`快进 ${Math.round(step / 1000)} 秒`" @click="player.cmd({ action: 'skip', value: step })">
+            <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M13 5h4.5A4.5 4.5 0 0 1 22 9.5V12a5 5 0 0 1-5 5h-3M13 5l3.5 3.5M13 5l-3.5 3.5" /><text x="9" y="17" font-size="11" stroke="none" fill="currentColor" text-anchor="middle">10</text></svg>
+          </button>
+          <span class="pl-time">{{ fmtClock(s.positionMs) }}<span class="dash">/</span>{{ fmtClock(s.durationMs) }}</span>
         </div>
 
-        <button class="ib ico" :class="{ act: player.panel === 'subtitle' || media.subtitle !== 'no' }" title="字幕（S）" @click="player.openPanel('subtitle')">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="2.5" y="5" width="19" height="14" rx="3" /><path d="M7 13.5h3M13.5 13.5H17" stroke-linecap="round" /></svg>
-        </button>
-        <button class="ib ico" :class="{ act: player.panel === 'audio' }" title="音轨（A）" @click="player.openPanel('audio')">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 12v-2M7 15V7M11 17V5M15 14v-4M19 12.5v-1" /></svg>
-        </button>
-        <button class="ib ico" :class="{ act: player.panel === 'video' }" title="画面（V）" @click="player.openPanel('video')">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="6" width="18" height="12" rx="2.5" /><path d="M8 6v12" stroke-linecap="round" /></svg>
-        </button>
-        <button class="ib ico" :class="{ act: player.panel === 'speed' }" title="速度（T）" @click="player.openPanel('speed')">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 17a8 8 0 1 1 16 0" /><path d="M12 17l4-5" /></svg>
-        </button>
-        <button class="ib ico" :class="{ act: player.panel === 'quality' }" title="画质（Q）" @click="player.openPanel('quality')">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="6" width="18" height="12" rx="2.5" /><path d="M7 15V9l4 6V9" stroke-linecap="round" /></svg>
-        </button>
-        <button class="ib ico" :class="{ act: player.panel === 'chapters' }" title="章节（C）" @click="player.openPanel('chapters')">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M6 4v16M10 4v16M14 4h4M14 9h4M14 14h4" /></svg>
-        </button>
-        <button v-if="session?.seriesId" class="ib ico" :class="{ act: player.panel === 'episodes' }" title="选集（E）" @click="player.openPanel('episodes')">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10" /></svg>
-        </button>
-        <button class="ib ico dm" :class="{ act: player.panel === 'danmaku', off: !player.danmakuOn }" title="弹幕（D）" @click="player.openPanel('danmaku')">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 8h12M6 12h11M9 16h9" /><circle cx="19.5" cy="7" r="1.4" fill="currentColor" stroke="none" /></svg>
-        </button>
-        <button class="ib ico" :title="s.fullscreen ? '退出全屏（F）' : '全屏（F）'" @click="player.cmd({ action: 'fullscreen', value: !s.fullscreen })">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path v-if="!s.fullscreen" d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /><path v-else d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" /></svg>
-        </button>
-      </div>
-    </footer>
+        <div class="pl-caps">
+          <div class="vol">
+            <button class="ib" :class="{ act: s.muted }" title="静音（M）" @click="player.cmd({ action: 'mute', value: !s.muted })">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                <path d="M4 9v6h4l5 4V5L8 9H4z" />
+                <path v-if="s.muted || !s.volume" d="M16.5 9.5l5 5M21.5 9.5l-5 5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" />
+                <path v-else d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linecap="round" />
+              </svg>
+            </button>
+            <input class="vslider" type="range" :min="0" :max="VOLUME_MAX" :value="s.volume" @input="e => volumeTo(Number((e.target as HTMLInputElement).value))" />
+            <span class="vnum">{{ s.muted ? 0 : s.volume }}</span>
+          </div>
 
-    // out-in: the two drawers share the same right-anchored box, so the default simultaneous mode
-    // cross-faded them on top of each other and a switch showed both lists superimposed for a quarter second.
-    <Transition name="pl" mode="out-in">
-      <TrackPanel v-if="player.panel === 'subtitle'" kind="subtitle" />
-      <TrackPanel v-else-if="player.panel === 'audio'" kind="audio" />
-      <TrackPanel v-else-if="player.panel === 'video'" kind="video" />
-      <QualityPanel v-else-if="player.panel === 'quality'" />
-      <SpeedPanel v-else-if="player.panel === 'speed'" />
-      <ChapterPanel v-else-if="player.panel === 'chapters'" />
-      <EpisodePanel v-else-if="player.panel === 'episodes'" />
-      <DanmakuPanel v-else-if="player.panel === 'danmaku'" />
-    </Transition>
+          <div class="pl-menu">
+            <button class="ib word" :class="{ act: player.panel === 'quality' }" title="播放资源（Q）" @click="player.openPanel('quality')">{{ tierLabel }}</button>
+            <Transition name="pl">
+              <QualityPanel v-if="player.panel === 'quality'" />
+            </Transition>
+          </div>
+
+          <div class="pl-menu">
+            <button class="ib word cc" :class="{ act: player.panel === 'subtitle' || media.subtitle !== 'no' }" title="字幕（S）" @click="player.openPanel('subtitle')">CC</button>
+            <Transition name="pl">
+              <TrackPanel v-if="player.panel === 'subtitle'" kind="subtitle" />
+            </Transition>
+          </div>
+
+          <div class="pl-menu">
+            <button class="ib" :class="{ act: player.panel === 'audio' }" title="音轨（A）" @click="player.openPanel('audio')">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 12v-2M7 15V7M11 17V5M15 14v-4M19 12.5v-1" /></svg>
+            </button>
+            <Transition name="pl">
+              <TrackPanel v-if="player.panel === 'audio'" kind="audio" />
+            </Transition>
+          </div>
+
+          <div class="pl-menu">
+            <button class="ib" :class="{ act: player.panel === 'video' }" title="画面（V）" @click="player.openPanel('video')">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="6" width="18" height="12" rx="2.5" /><path d="M8 6v12" stroke-linecap="round" /></svg>
+            </button>
+            <Transition name="pl">
+              <TrackPanel v-if="player.panel === 'video'" kind="video" />
+            </Transition>
+          </div>
+
+          <div class="pl-menu">
+            <button class="ib" :class="{ act: player.panel === 'speed' || s.speed !== 1 }" title="速度（T）" @click="player.openPanel('speed')">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 17a8 8 0 1 1 16 0" /><path d="M12 17l4-5" /></svg>
+              <span v-if="s.speed !== 1" class="tag">{{ s.speed }}</span>
+            </button>
+            <Transition name="pl">
+              <SpeedPanel v-if="player.panel === 'speed'" />
+            </Transition>
+          </div>
+
+          <div class="pl-menu">
+            <button class="ib" :class="{ act: player.panel === 'chapters' }" title="片段（C）" @click="player.openPanel('chapters')">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M6 4v16M10 4v16M14 4h4M14 9h4M14 14h4" /></svg>
+            </button>
+            <Transition name="pl">
+              <ChapterPanel v-if="player.panel === 'chapters'" />
+            </Transition>
+          </div>
+
+          <div class="pl-menu" v-if="session?.seriesId">
+            <button class="ib" :class="{ act: player.panel === 'episodes' }" title="选集（E）" @click="player.openPanel('episodes')">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10" /></svg>
+            </button>
+            <Transition name="pl">
+              <EpisodePanel v-if="player.panel === 'episodes'" />
+            </Transition>
+          </div>
+
+          <div class="pl-menu">
+            <button class="ib dm" :class="{ act: player.panel === 'danmaku', off: !player.danmakuOn }" title="弹幕（D）" @click="player.openPanel('danmaku')">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 8h12M6 12h11M9 16h9" /><circle cx="19.5" cy="7" r="1.4" fill="currentColor" stroke="none" /></svg>
+            </button>
+            <Transition name="pl">
+              <DanmakuPanel v-if="player.panel === 'danmaku'" />
+            </Transition>
+          </div>
+
+          <button class="ib" :title="s.fullscreen ? '退出全屏（F）' : '全屏（F）'" @click="player.cmd({ action: 'fullscreen', value: !s.fullscreen })">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path v-if="!s.fullscreen" d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /><path v-else d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" /></svg>
+          </button>
+        </div>
+      </div>
+    </div>
 
     <p v-if="player.error" class="notice">{{ player.error }}</p>
     <div v-if="s.status === 'error'" class="fail">
@@ -302,32 +368,35 @@ onUnmounted(() => {
   position: absolute;
   inset: 0;
 }
-.top {
+.hitzone {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+.pl-top {
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
-  padding: 14px 20px 40px;
-  background: linear-gradient(180deg, rgba(0, 0, 0, 0.74), transparent);
-  transition: opacity 0.28s var(--ease), transform 0.28s var(--ease);
-  z-index: 2;
-}
-.hidden .top {
-  opacity: 0;
-  transform: translate3d(0, -14px, 0);
-  pointer-events: none;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 18px 44px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.72), transparent);
+  z-index: 3;
 }
 .topin {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-.ttl {
   display: flex;
   align-items: baseline;
   gap: 10px;
   min-width: 0;
+}
+.ends {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
 }
 .name {
   font-size: 15px;
@@ -344,46 +413,14 @@ onUnmounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.badge {
-  font-size: 13px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.14);
-  color: #fff;
-  white-space: nowrap;
+.pl-pill.live {
+  font-variant-numeric: tabular-nums;
 }
-.badge.hdr {
-  background: rgba(255, 176, 32, 0.2);
-  color: #ffce76;
-  border: 1px solid rgba(255, 176, 32, 0.34);
-}
-.badge.orig {
-  background: rgba(74, 222, 128, 0.16);
-  color: #7dedac;
-}
-.hitzone {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-}
-.bottom {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  padding: 40px 20px 14px;
-  background: linear-gradient(0deg, rgba(0, 0, 0, 0.74), transparent);
-  transition: opacity 0.28s var(--ease), transform 0.28s var(--ease);
-  z-index: 3;
-}
-.hidden .bottom {
-  opacity: 0;
-  transform: translate3d(0, 18px, 0);
-  pointer-events: none;
-}
+/* The timeline sits on its own line, full width, above both capsules: the capsules carry the buttons,
+   the line carries the playhead. */
 .seek {
   position: relative;
-  padding: 10px 0;
+  padding: 10px 2px;
   cursor: pointer;
   touch-action: none;
 }
@@ -391,7 +428,7 @@ onUnmounted(() => {
   position: relative;
   height: 4px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.24);
   transition: height var(--hov) var(--ease-out);
 }
 .seek:hover .rail {
@@ -445,23 +482,19 @@ onUnmounted(() => {
   white-space: nowrap;
   pointer-events: none;
 }
-.row {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  margin-top: 4px;
+.pl-time {
+  padding-left: 4px;
 }
 .ib {
   min-width: 34px;
   height: 34px;
   padding: 0 7px;
-  border-radius: var(--radius);
-  color: rgba(255, 255, 255, 0.97);
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+  border-radius: 999px;
+  color: var(--pl-text);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 4px;
   font-size: 13px;
   transition: background var(--hov) var(--ease), transform var(--hov) var(--ease-out), color var(--hov) var(--ease);
 }
@@ -480,44 +513,50 @@ onUnmounted(() => {
 .ib.off {
   opacity: 0.55;
 }
+.ib.close {
+  border-radius: 50%;
+  background: rgba(10, 10, 14, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(10px);
+}
+.ib.word {
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+.ib.cc {
+  font-size: 13px;
+  letter-spacing: 0.4px;
+}
 .skip {
   letter-spacing: -0.5px;
 }
-.time {
+.ib .tag {
   font-size: 13px;
-  font-weight: 500;
-  color: rgba(255, 255, 255, 0.95);
-  margin-left: 8px;
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.dash {
-  opacity: 0.6;
-  margin: 0 2px;
-}
-.grow {
-  flex: 1;
-  min-width: 8px;
 }
 .vol {
   display: flex;
   align-items: center;
   gap: 4px;
+  padding-right: 6px;
+  margin-right: 4px;
+  border-right: 1px solid var(--pl-line);
 }
 .vslider {
-  width: 84px;
+  width: 78px;
   accent-color: var(--pl-fill);
 }
 .vnum {
   font-size: 13px;
   font-variant-numeric: tabular-nums;
   color: var(--pl-dim);
-  width: 26px;
+  width: 28px;
+  text-align: right;
 }
 .notice {
   position: absolute;
   left: 50%;
-  bottom: 120px;
+  bottom: 178px;
   transform: translate(-50%, 0);
   padding: 8px 14px;
   border-radius: 999px;
@@ -533,13 +572,15 @@ onUnmounted(() => {
   gap: 14px;
   text-align: center;
   background: rgba(10, 10, 14, 0.82);
-  z-index: 5;
+  z-index: 6;
 }
 .fail p {
   font-size: 15px;
   max-width: 420px;
 }
-.act {
+/* Scoped to the failure card on purpose: `.act` is also the state class every capsule trigger carries
+   while its menu is open, and an unscoped rule here painted every open icon solid blue. */
+.fail .act {
   justify-self: center;
   padding: 9px 18px;
   border-radius: 999px;

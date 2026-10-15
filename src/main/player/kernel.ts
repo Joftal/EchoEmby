@@ -39,6 +39,8 @@ interface Raw {
   muted?: boolean;
   speed?: number;
   cacheEnd?: number;
+  /** Bytes per second the demuxer is pulling off the wire, smoothed over the window below. */
+  netRate: number;
   eof: boolean;
   hwdec: string;
   fps: number;
@@ -63,6 +65,7 @@ interface Raw {
 const freshRaw = (): Raw => ({
   loaded: false,
   opening: false,
+  netRate: 0,
   eof: false,
   hwdec: '',
   fps: 0,
@@ -337,6 +340,7 @@ export class MpvKernel {
         return;
       case 'demuxer-cache-state':
         r.cacheEnd = sec(v?.['cache-end']);
+        this.sampleRate(sec(v?.['total-bytes']));
         return;
       case 'hwdec-current':
         r.hwdec = typeof v === 'string' ? v : v == null ? '' : String(v);
@@ -406,6 +410,26 @@ export class MpvKernel {
     return r.paused ? 'paused' : 'playing';
   }
 
+  /** mpv only answers `demuxer-cache-state` when the cache moves, so the samples arrive in bursts; a
+   *  three-second window is what keeps the read-out from flickering between a spike and zero. */
+  private rateWin: { t: number; b: number }[] = [];
+
+  private sampleRate(bytes: number | undefined): void {
+    const r = this.raw;
+    if (bytes == null) {
+      r.netRate = 0;
+      return;
+    }
+    const now = Date.now();
+    // A counter that went backwards is a new file: the old window would report the last stream's rate.
+    if (this.rateWin.length && bytes < this.rateWin[this.rateWin.length - 1].b) this.rateWin = [];
+    this.rateWin.push({ t: now, b: bytes });
+    while (this.rateWin.length > 2 && now - this.rateWin[0].t > 3000) this.rateWin.shift();
+    const first = this.rateWin[0];
+    const secs = (now - first.t) / 1000;
+    r.netRate = secs > 0.4 ? Math.max(0, (bytes - first.b) / secs) : 0;
+  }
+
   private state(): PlayerState {
     const r = this.raw;
     return {
@@ -413,6 +437,7 @@ export class MpvKernel {
       positionMs: Math.round((r.timePos ?? 0) * 1000),
       durationMs: Math.round((r.duration ?? 0) * 1000),
       bufferedMs: Math.round((r.cacheEnd ?? r.timePos ?? 0) * 1000),
+      netBytesPerSec: Math.round(r.netRate),
       paused: !!r.paused,
       volume: r.volume ?? 100,
       muted: !!r.muted,

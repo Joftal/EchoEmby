@@ -2,10 +2,12 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import PanelShell from './PanelShell.vue';
 import { usePlayerStore } from '../../stores/player';
+import { useAppStore } from '../../stores/app';
 import { episodePosition, fmtRuntime, isPositionOnlyName } from '../../lib/format';
 import type { LibraryItem } from '../../../shared/types';
 
 const player = usePlayerStore();
+const app = useAppStore();
 
 const seriesId = computed(() => player.session?.seriesId || '');
 const seasonId = computed(() => player.session?.seasonId || '');
@@ -15,6 +17,8 @@ const seasons = ref<LibraryItem[]>([]);
 const episodes = ref<LibraryItem[]>([]);
 const active = ref('');
 const loading = ref(false);
+const art = ref<Record<string, string>>({});
+const strip = ref<HTMLElement | null>(null);
 
 /** The panel opens on the season being played, so the list never starts on 第 1 季 while 第 3 季 is on screen. */
 async function loadSeasons(): Promise<void> {
@@ -30,19 +34,37 @@ async function loadEpisodes(sid: string): Promise<void> {
   active.value = sid;
   const r = await window.echoemby.emby.episodes({ seriesId: seriesId.value, seasonId: sid });
   if (r.ok) episodes.value = r.data || [];
-  // A 104-row list that opens on 第 1 集 while 第 104 集 is on screen asks the user to hunt for the row they
-  // already know they want, so the list opens where the playhead is. The list's own scroller is moved by hand:
-  // scrollIntoView also scrolls every ancestor that can scroll, which dragged the whole overlay 18px up.
-  await nextTick();
-  const body = document.querySelector('.pl-panel .pl-body');
-  const row = body?.querySelector('.pl-row.on');
-  if (body && row) {
-    const b = body.getBoundingClientRect(), e = row.getBoundingClientRect();
-    body.scrollTop += e.top + e.height / 2 - (b.top + b.height / 2);
+  for (const e of episodes.value) {
+    if (art.value[e.id] !== undefined) continue;
+    void app.itemArt(e, 320, true).then(url => (art.value[e.id] = url));
   }
+  await centerOnPlaying();
 }
 
-/** immediate: the session is already loaded by the time this drawer mounts, so a watcher that only fires on
+/** The gateway mints a URL for a tag it cannot always render - measured: an episode's own Primary answers
+ *  500 on this server - so a broken frame has to step down to the number instead of leaving an empty box.
+ *  Clearing the entry is enough: the placeholder is the `v-else` of the same test. */
+function onArtFail(ep: LibraryItem): void {
+  art.value[ep.id] = '';
+}
+
+/** A hundred episodes that open on 第 1 集 while 第 104 集 is on screen ask the user to hunt for the cell
+ *  they already want, so the strip opens where the playhead is. The scroller is moved by hand:
+ *  scrollIntoView also scrolls every ancestor, which dragged the whole overlay up.
+ *
+ *  It has to run once the strip is on screen, which on first open is not when the fetch lands - the list
+ *  is behind 载入中…, so the element this was measured against did not exist yet and the strip quietly
+ *  stayed at 第 1 集. Callers run it after the loading flag is cleared. */
+async function centerOnPlaying(): Promise<void> {
+  await nextTick();
+  const el = strip.value;
+  const cell = el?.querySelector('.pl-cell.on');
+  if (!el || !cell) return;
+  const b = el.getBoundingClientRect(), c = cell.getBoundingClientRect();
+  el.scrollLeft += c.left + c.width / 2 - (b.left + b.width / 2);
+}
+
+/** immediate: the session is already loaded by the time this menu mounts, so a watcher that only fires on
  *  a change never runs and the panel sits empty with 104 episodes on the server. 载入中… covers both round
  *  trips: with the flag set only around the second one, the panel had a window where nothing had arrived yet
  *  and 这一季没有返回条目 was already on screen as a lie. */
@@ -55,6 +77,7 @@ watch([seriesId, seasonId], async () => {
   } finally {
     loading.value = false;
   }
+  await centerOnPlaying();
 }, { immediate: true });
 
 async function choose(id: string): Promise<void> {
@@ -66,7 +89,7 @@ const titleOf = (ep: LibraryItem): string => (isPositionOnlyName(ep.name) ? '' :
 </script>
 
 <template>
-  <PanelShell kind="episodes" title="选集">
+  <PanelShell title="选集" :wide="560">
     <p v-if="!seriesId" class="pl-empty">这不是剧集条目</p>
     <template v-else>
       <div v-if="seasons.length > 1" class="pl-chips">
@@ -76,27 +99,19 @@ const titleOf = (ep: LibraryItem): string => (isPositionOnlyName(ep.name) ? '' :
       </div>
 
       <p v-if="loading" class="pl-empty">载入中…</p>
-      <button v-for="ep in episodes" :key="ep.id" class="pl-row" :class="{ on: ep.id === itemId }" @click="choose(ep.id)">
-        <span class="num">{{ ep.indexNumber ?? '' }}</span>
-        <span class="label">
-          <template v-if="titleOf(ep)">{{ titleOf(ep) }}</template>
-          <template v-else>{{ episodePosition(ep.parentIndexNumber, ep.indexNumber) }}</template>
-        </span>
-        <span class="meta">{{ fmtRuntime(ep.runTimeTicks) }}</span>
-      </button>
+      <div v-else ref="strip" class="pl-strip">
+        <button v-for="ep in episodes" :key="ep.id" class="pl-cell" :class="{ on: ep.id === itemId }" @click="choose(ep.id)">
+          <span class="art">
+            <img v-if="art[ep.id]" :src="art[ep.id]" :alt="ep.name" loading="lazy" @error="onArtFail(ep)" />
+            <template v-else>{{ ep.indexNumber ?? '' }}</template>
+          </span>
+          <span class="cap">
+            <b>{{ episodePosition(ep.parentIndexNumber, ep.indexNumber) }}</b>
+            <span>{{ titleOf(ep) || fmtRuntime(ep.runTimeTicks) }}</span>
+          </span>
+        </button>
+      </div>
       <p v-if="!loading && !episodes.length" class="pl-empty">这一季没有返回条目</p>
     </template>
   </PanelShell>
 </template>
-
-<style scoped>
-.num {
-  width: 26px;
-  flex: none;
-  font-variant-numeric: tabular-nums;
-  color: var(--pl-faint);
-}
-.on .num {
-  color: var(--pl-hi);
-}
-</style>

@@ -15,12 +15,24 @@ const current = computed(() => {
   for (let k = 0; k < chapters.value.length; k++) if (chapters.value[k].timeMs <= at) i = k;
   return i;
 });
+
+/** The reference names the span a row covers rather than only where it starts, so a row can be picked by
+ *  the part of the film it is in. */
+const span = (i: number): string => {
+  const from = fmtClock(chapters.value[i].timeMs);
+  const to = chapters.value[i + 1] ? fmtClock(chapters.value[i + 1].timeMs) : fmtClock(player.state.durationMs);
+  return `${from} – ${to}`;
+};
 </script>
 
 <template>
-  <PanelShell kind="chapters" title="章节">
+  <PanelShell title="片段" :wide="320">
     <button v-for="(c, i) in chapters" :key="c.index" class="pl-row" :class="{ on: i === current }" @click="player.cmd({ action: 'chapter', value: i })">
-      <span class="label">{{ c.title }}</span>
+      <span class="mark"></span>
+      <span class="label">
+        {{ c.title }}
+        <span class="sub">{{ span(i) }}</span>
+      </span>
       <span class="meta">{{ fmtClock(c.timeMs) }}</span>
     </button>
     <p v-if="!chapters.length" class="pl-empty">这个文件没有章节信息</p>
