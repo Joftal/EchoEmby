@@ -148,7 +148,10 @@ export interface LibraryItem {
   childCount?: number;
   /** Newest added episode behind a Series card; the Latest endpoint has no episode position of its own. */
   latestEpisode?: { season?: number; episode: number };
-  userData?: { playedPercentage?: number; isFavorite?: boolean };
+  /** `positionMs` is where this item stopped: the gateway's own 「播到这里」 number, and the only one that
+   *  covers every resumable row (measured: 326185 answers PlaybackPositionTicks 8306670000 = 13分50秒).
+   *  `playedPercentage` is sparser — 2 of the 8 rows the resume query returns. */
+  userData?: { playedPercentage?: number; isFavorite?: boolean; positionMs?: number };
   /** External ids the server already scraped. Every outside source is keyed off these instead of the
    *  title, which matters because our item names are Chinese and the outside databases are not. */
   providers?: Providers;

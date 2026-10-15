@@ -162,6 +162,12 @@ const mapSources = (raw: any): PlaybackSource[] => {
   return out;
 };
 
+/** Where the viewer stopped. This gateway answers `PlaybackPositionTicks` and never
+ *  `StartPositionTicks` (measured on 326185: PlaybackPositionTicks 8306670000, StartPositionTicks absent
+ *  from the whole UserData block on both the list and the detail reply) — reading only the second name
+ *  is what left every resume at zero. */
+const positionTicks = (u: any): number => Number(u?.PlaybackPositionTicks ?? u?.StartPositionTicks ?? 0);
+
 const mapItem = (r: any): LibraryItem => ({
   id: r.Id,
   type: r.Type,
@@ -192,7 +198,7 @@ const mapItem = (r: any): LibraryItem => ({
   parentIndexNumber: r.ParentIndexNumber,
   childCount: r.ChildCount,
   userData: r.UserData
-    ? { playedPercentage: r.UserData.PlayedPercentage, isFavorite: r.UserData.IsFavorite }
+    ? { playedPercentage: r.UserData.PlayedPercentage, isFavorite: r.UserData.IsFavorite, positionMs: Math.round(positionTicks(r.UserData) / 1e4) }
     : undefined,
   providers: mapProviders(r.ProviderIds),
   dateCreated: r.DateCreated,
@@ -511,7 +517,7 @@ export class EmbyClient {
     const j = await this.get<any>(`/Users/${this.account.userId}/Items/${itemId}`, { Fields: 'UserData' });
     return {
       name: j?.Name || '',
-      startMs: Math.round((j?.UserData?.StartPositionTicks || 0) / 1e4),
+      startMs: Math.round(positionTicks(j?.UserData) / 1e4),
       played: !!j?.UserData?.Played,
     };
   }
