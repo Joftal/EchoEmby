@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
-import type { AppConfig, FacetOption, LibraryItem, LibraryRow, Settings, TmdbStills } from '../../shared/types';
+import type { AppConfig, FacetOption, LibraryItem, LibraryRow, SettingsPatch, TmdbStills } from '../../shared/types';
 
 export const useAppStore = defineStore('app', () => {
   const config = ref<AppConfig | null>(null);
@@ -85,7 +85,7 @@ export const useAppStore = defineStore('app', () => {
   }
 
   /** The main process answers with the whole merged block, so the page reads back what it wrote. */
-  async function saveSettings(patch: Partial<Settings>): Promise<boolean> {
+  async function saveSettings(patch: SettingsPatch): Promise<boolean> {
     error.value = '';
     const r = await window.echoemby.app.setSettings(patch);
     if (!r.ok) {

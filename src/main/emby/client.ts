@@ -1,5 +1,5 @@
 import { net } from 'electron';
-import type { Account, FacetOption, LibraryItem, LibraryRow, MediaSourceInfo, MediaStreamInfo, Person, PlaybackResult, Providers, Settings, StudioRef } from '../../shared/types';
+import type { Account, FacetOption, LibraryItem, LibraryRow, MediaStreamInfo, Person, PlayMethod, PlaybackSource, Providers, StudioRef } from '../../shared/types';
 import { buildDeviceProfile } from './deviceProfile';
 
 export interface Identity {
@@ -14,6 +14,34 @@ export class EmbyError extends Error {
   constructor(message: string, readonly status: number) {
     super(message);
   }
+}
+
+/** The outcome of one PlaybackInfo round. */
+export interface Negotiation {
+  playSessionId: string;
+  sources: PlaybackSource[];
+  sourceIndex: number;
+  sourceId: string;
+  method: PlayMethod;
+  /** The absolute upstream address; the bridge turns this into the URL mpv is handed. */
+  url: string;
+  hdr: boolean;
+}
+
+/** Everything a session event has to name. The stream indexes are what Emby's own clients send, and
+ *  without them the server records the choice you never made. */
+export interface ProgressInput {
+  itemId: string;
+  sourceId: string;
+  playSessionId: string;
+  positionMs: number;
+  durationMs: number;
+  paused: boolean;
+  rate: number;
+  volume: number;
+  videoIndex?: number;
+  audioIndex?: number;
+  subtitleIndex?: number;
 }
 
 const UA =
@@ -90,40 +118,48 @@ const mapStudios = (r: any): StudioRef[] | undefined => {
   return out.length ? out : undefined;
 };
 
-const mapSources = (raw: any): MediaSourceInfo[] | undefined => {
-  if (!Array.isArray(raw) || !raw.length) return undefined;
-  return raw.map((s: any): MediaSourceInfo => {
-    const streams: MediaStreamInfo[] = (s.MediaStreams || []).map((v: any): MediaStreamInfo => ({
-      type: v.Type,
-      codec: v.Codec,
-      displayTitle: v.DisplayTitle,
-      lang: v.Language,
-      title: v.Title,
-      width: v.Width,
-      height: v.Height,
-      bitDepth: v.BitDepth,
-      range: v.VideoRange || v.VideoRangeType,
-      chroma: v.ChromaSubsampling,
-      fps: v.NominalFrameRate || v.AverageFrameRate,
-      bitRate: v.BitRate,
-      channels: v.Channels,
-      sampleRate: v.SampleRate,
-      profile: v.Profile,
-      isDefault: v.IsDefault,
-      isForced: v.IsForced,
-    }));
-    const video = streams.find(x => x.type === 'Video');
-    return {
+const mapStreams = (raw: any): MediaStreamInfo[] =>
+  (raw || []).map((v: any): MediaStreamInfo => ({
+    type: v.Type,
+    codec: v.Codec,
+    displayTitle: v.DisplayTitle,
+    lang: v.Language,
+    title: v.Title,
+    width: v.Width,
+    height: v.Height,
+    bitDepth: v.BitDepth,
+    range: v.VideoRange || v.VideoRangeType,
+    chroma: v.ChromaSubsampling,
+    fps: v.NominalFrameRate || v.AverageFrameRate,
+    bitRate: v.BitRate,
+    channels: v.Channels,
+    sampleRate: v.SampleRate,
+    profile: v.Profile,
+    isDefault: v.IsDefault,
+    isForced: v.IsForced,
+  }));
+
+/** One version the server can serve. The id is what every progress report and every stream URL has to
+ *  name, so a source without one is useless and is not listed rather than listed with a blank row. */
+const mapSources = (raw: any): PlaybackSource[] => {
+  if (!Array.isArray(raw)) return [];
+  const out: PlaybackSource[] = [];
+  raw.forEach((s: any, index: number) => {
+    if (!s || typeof s.Id !== 'string' || !s.Id) return;
+    const streams = mapStreams(s.MediaStreams);
+    out.push({
+      id: s.Id,
+      index,
       name: s.Name,
       container: s.Container,
       bitRate: s.Bitrate,
       sizeBytes: s.Size,
-      isHls: !!s.IsRemote || s.Container === 'm3u8',
-      video,
+      video: streams.find(x => x.type === 'Video'),
       audio: streams.filter(x => x.type === 'Audio'),
       subtitle: streams.filter(x => x.type === 'Subtitle'),
-    };
+    });
   });
+  return out;
 };
 
 const mapItem = (r: any): LibraryItem => ({
@@ -149,6 +185,8 @@ const mapItem = (r: any): LibraryItem => ({
   // Episodes must land on the Series page: this fork answers ParentId with the
   // Season id and only exposes SeriesId when it is requested in Fields.
   parentId: r.SeriesId || r.ParentId,
+  seriesId: r.SeriesId,
+  seasonId: r.ParentId,
   indexNumber: r.IndexNumber,
   parentIndexNumber: r.ParentIndexNumber,
   childCount: r.ChildCount,
@@ -174,7 +212,6 @@ export class EmbyClient {
   constructor(
     private readonly account: Account,
     private readonly identity: Identity,
-    private readonly settings: Settings,
   ) {}
 
   private get base(): string {
@@ -405,52 +442,95 @@ export class EmbyClient {
     return `${this.base}/Items/${item.id}/Images/Backdrop?${q}`;
   }
 
-  async playbackInfo(itemId: string): Promise<PlaybackResult> {
-    const profile = buildDeviceProfile(this.settings);
-    const j = await this.post<any>(`/Items/${itemId}/PlaybackInfo`, { DeviceProfile: profile, ...profile, MaxStreamingBitrate: this.settings.maxStreamingBitrate }, { UserId: this.account.userId, StartTimeTicks: 0, AutoOpenTrueHD: true, EnableTranscoding: true });
-    const ms = (j.MediaSources || [])[0];
-    if (!ms) throw new EmbyError('这个条目没有可用的播放源', 502);
+  /** What one negotiation round decided: which version, by which method, from which address. */
+  async negotiate(itemId: string, opts: { tier: number; sourceId?: string }): Promise<Negotiation> {
+    const profile = buildDeviceProfile(opts.tier);
+    // 原片 is not a bitrate so much as a refusal: offer a cap no file needs and forbid transcoding, which
+    // is what Emby's own clients send for the top row of the quality ladder.
+    const j = await this.post<any>(
+      `/Items/${itemId}/PlaybackInfo`,
+      { DeviceProfile: profile, ...profile, MaxStreamingBitrate: opts.tier || 400_000_000 },
+      { UserId: this.account.userId, StartTimeTicks: 0, EnableTranscoding: opts.tier > 0 },
+    );
+    const sources = mapSources(j.MediaSources);
+    if (!sources.length) throw new EmbyError('这个条目没有可用的播放源', 502);
+    const wanted = opts.sourceId ? sources.find(s => s.id === opts.sourceId) : undefined;
+    const ms = (j.MediaSources || []).find((x: any) => x?.Id === (wanted || sources[0]).id) || {};
+    const raw = wanted || sources[0];
+    // This fork omits MediaSources[].PlayMethod, so the method is derived from the flags the server does answer.
+    const method: PlayMethod =
+      ms.PlayMethod === 'Transcode' || ms.PlayMethod === 'DirectPlay' || ms.PlayMethod === 'DirectStream'
+        ? ms.PlayMethod
+        : ms.SupportsDirectPlay
+          ? 'DirectPlay'
+          : ms.SupportsDirectStream
+            ? 'DirectStream'
+            : 'Transcode';
     const q = authQuery(this.identity);
-    q.set('static', 'true');
-    q.set('MediaSourceId', ms.Id);
+    q.set('MediaSourceId', raw.id);
+    if (j.PlaySessionId) q.set('PlaySessionId', String(j.PlaySessionId));
     q.set('api_key', this.account.accessToken);
-    const direct = ms.SupportsDirectPlay || ms.SupportsDirectStream;
-    // This fork omits MediaSources[].PlayMethod, so derive it from the flags.
-    const playMethod: string = ms.PlayMethod || (ms.SupportsDirectPlay ? 'DirectPlay' : direct ? 'DirectStream' : 'Transcode');
+    let url: string;
+    if (method === 'Transcode') {
+      // The server builds the playlist address itself, with the segment container, the audio/substring
+      // indexes and the codec it picked already in it. Only when it does not is it ours to assemble.
+      url = ms.TranscodingUrl
+        ? `${this.account.baseUrl}${ms.TranscodingUrl.startsWith('/') ? '' : '/'}${ms.TranscodingUrl}`
+        : `${this.base}/videos/${itemId}/main.m3u8?${q}`;
+    } else {
+      q.set('static', 'true');
+      q.set('seek', '0');
+      url = `${this.base}/videos/${itemId}/stream?${q}`;
+    }
+    const range = String(raw.video?.range || '');
     return {
-      mediaSourceId: ms.Id,
-      name: ms.Name || j.Name || '',
-      playSessionId: j.PlaySessionId || '',
-      playMethod,
-      directUrl: direct ? `${this.base}/videos/${itemId}/stream?${q}` : `${this.base}/videos/${itemId}/main.m3u8?${q}`,
+      playSessionId: String(j.PlaySessionId || ''),
+      sources,
+      sourceIndex: raw.index,
+      sourceId: raw.id,
+      method,
+      url,
+      hdr: /hdr|dovi|dolbyvision|hlg/i.test(range) || /dolbyvision/i.test(String(raw.video?.codec || '')),
     };
   }
 
   /** Resumable start offset plus the display name; PlaybackInfo only labels the
    *  media source ("2160p"), so the title has to come from the item itself. */
-  async resumePoint(itemId: string): Promise<{ name: string; startMs: number }> {
+  async resumePoint(itemId: string): Promise<{ name: string; startMs: number; played: boolean }> {
     const j = await this.get<any>(`/Users/${this.account.userId}/Items/${itemId}`, { Fields: 'UserData' });
-    return { name: j?.Name || '', startMs: Math.round((j?.UserData?.StartPositionTicks || 0) / 1e4) };
+    return {
+      name: j?.Name || '',
+      startMs: Math.round((j?.UserData?.StartPositionTicks || 0) / 1e4),
+      played: !!j?.UserData?.Played,
+    };
   }
 
-  async reportProgress(itemId: string, mediaSourceId: string, playSessionId: string, positionMs: number, durationMs: number, paused: boolean): Promise<void> {
-    await this.post(
-      '/Sessions/Playing/Progress',
-      {
-        ItemId: itemId,
-        MediaSourceId: mediaSourceId,
-        PlaySessionId: playSessionId,
-        PositionTicks: Math.round(positionMs * 1e4),
-        RuntimeTicks: Math.round(durationMs * 1e4),
-        IsPaused: paused,
-        CanSeek: true,
-        PlaybackRate: 1,
-        AudioStreamIndex: 0,
-        VideoStreamIndex: 0,
-      },
-      {},
-      8000,
-    ).catch(() => undefined);
+  private progressBody(input: ProgressInput): Record<string, unknown> {
+    const body: Record<string, unknown> = {
+      ItemId: input.itemId,
+      MediaSourceId: input.sourceId,
+      PlaySessionId: input.playSessionId,
+      PositionTicks: Math.round(input.positionMs * 1e4),
+      RuntimeTicks: Math.round(input.durationMs * 1e4),
+      IsPaused: input.paused,
+      CanSeek: true,
+      // The server stores the rate you watched at, so a 2× session that reports 1 would leave the next
+      // client resuming at the wrong place.
+      PlaybackRate: input.rate || 1,
+      VolumeLevel: input.volume,
+    };
+    if (input.videoIndex !== undefined && input.videoIndex >= 0) body.VideoStreamIndex = input.videoIndex;
+    if (input.audioIndex !== undefined && input.audioIndex >= 0) body.AudioStreamIndex = input.audioIndex;
+    if (input.subtitleIndex !== undefined && input.subtitleIndex >= 0) body.SubtitleStreamIndex = input.subtitleIndex;
+    return body;
+  }
+
+  /** The three session events Emby expects: 开场 once, 进度 on a timer, 结束时最后一次. A session that
+   *  never says Stopped leaves the row in 继续观看 with a stale position. */
+  async session(input: ProgressInput, event: 'start' | 'progress' | 'stopped'): Promise<void> {
+    const path = event === 'start' ? '/Sessions/Playing' : event === 'progress' ? '/Sessions/Playing/Progress' : '/Sessions/Playing/Stopped';
+    const body = { ...this.progressBody(input), EventName: event === 'progress' ? 'TimeUpdate' : event === 'start' ? 'FirstPlay' : undefined };
+    await this.post(path, body, {}, 8000).catch(() => undefined);
   }
 
   async markPlayed(itemId: string): Promise<void> {

@@ -19,7 +19,7 @@ function toggle(): void {
 
 onMounted(() => {
   document.documentElement.classList.toggle('overlay', overlay.value);
-  if (!overlay.value) void store.init();
+  void store.init();
 });
 </script>
 

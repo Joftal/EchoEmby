@@ -11,9 +11,7 @@ export interface Account {
 }
 
 export interface Settings {
-  /** Cap offered to the server during PlaybackInfo negotiation, in bits/s. */
-  maxStreamingBitrate: number;
-  hwdec: 'd3d11va' | 'cuda' | 'auto' | 'no';
+  player: PlayerPrefs;
   /** Which route the whole app takes to reach the server. Every request this client makes - API,
    *  images, the playback bridge, the outside metadata services - goes through Chromium's net.fetch,
    *  so one session proxy setting covers all of them. */
@@ -21,6 +19,60 @@ export interface Settings {
   /** The 手动代理 address: `127.0.0.1:7897`, `http://host:port`, `socks5://host:port`, optionally with
    *  `user:pass@` in front of the host. */
   proxyUrl: string;
+  danmaku: DanmakuSettings;
+}
+
+/** A settings write may name only the rows the user touched, so every nested block is partial too; the
+ *  main process rebuilds each block from its own defaults before it lands in the file. */
+export type SettingsPatch = Omit<Partial<Settings>, 'player' | 'danmaku'> & {
+  player?: Partial<PlayerPrefs>;
+  danmaku?: Omit<Partial<DanmakuSettings>, 'source'> & { source?: Partial<DanmakuSourceConfig> };
+};
+
+/** Knobs that belong to the player itself. `tier` and `hwdec` are read again when the next stream is
+ *  negotiated and when mpv is launched, so neither needs a restart. */
+export interface PlayerPrefs {
+  /** The bitrate cap offered to the server during PlaybackInfo. 0 is 原片: ask for the file itself and
+   *  forbid transcoding, which is what 原片 means to Emby. */
+  tier: number;
+  hwdec: 'd3d11va' | 'cuda' | 'auto' | 'no';
+  /** ← / →, and the two skip buttons either side of the play button. */
+  seekStepMs: number;
+  /** How long the controls stay up after the pointer stops moving. */
+  controlsTimeoutMs: number;
+  /** Hand the HDR signal to the display instead of letting mpv tone-map it to SDR. Off by default: a
+   *  screen that cannot show it renders the picture washed out. */
+  hdrHint: boolean;
+  /** 'smooth' spends the GPU on frames, 'hq' spends it on sharpness (gpu-hq + interpolation). */
+  render: 'smooth' | 'hq';
+  /** Move to the next episode when the file reaches its end. */
+  autoNext: boolean;
+}
+
+export interface DanmakuSourceConfig {
+  /** 'bilibili' needs no key but only knows titles that aired there; 'dandan' is any
+   *  dandanplay-compatible service, self-hosted or not, and carries its own address and token. */
+  type: 'bilibili' | 'dandan';
+  url: string;
+  token: string;
+}
+
+export interface DanmakuSettings {
+  /** Off by default: with this off the app never asks a danmaku service about what you watch. */
+  enabled: boolean;
+  source: DanmakuSourceConfig;
+  /** 0 asks the source with whatever the library calls the show, 1 only accepts an exact title. */
+  matchMode: 0 | 1;
+  /** Fraction of the picture height the scrolling lanes may use. */
+  displayArea: number;
+  opacity: number;
+  fontScale: number;
+  /** How long one comment takes to cross. */
+  durationMs: number;
+  /** The wall: a dense timeline past this count drops comments rather than frames. */
+  maxOnScreen: number;
+  /** Commas or newlines. Filtered on the way in, so the cached track is already clean. */
+  blockedWords: string;
 }
 
 /** What the 连接测试 row answers with: one round trip to the gateway and one to an address echo, both
@@ -84,6 +136,11 @@ export interface LibraryItem {
   primaryImageTag?: string;
   backdropImageTag?: string;
   parentId?: string;
+  /** Both halves of an episode's address, kept apart because the fork answers ParentId with the *Season*
+   *  id and only gives SeriesId when it is requested in Fields — collapsing them into parentId loses one
+   *  of them, and the player needs both to list the rest of the season. */
+  seriesId?: string;
+  seasonId?: string;
   indexNumber?: number;
   parentIndexNumber?: number;
   childCount?: number;
@@ -98,7 +155,7 @@ export interface LibraryItem {
   /** Detail endpoint only: the technical description of the file the server can actually serve.
    *  A source is one container with its video/audio/subtitle streams; this library only ever has one
    *  per item, so it feeds the 视频/音频 table, not a source switcher. */
-  sources?: MediaSourceInfo[];
+  sources?: PlaybackSource[];
   /** Detail endpoint only: when the item entered the library. */
   dateCreated?: string;
   /** Detail endpoint only: the movie's marketing line. */
@@ -192,16 +249,20 @@ export interface MediaStreamInfo {
 }
 
 /** One playable version the server holds for an item. This library keeps exactly one per item, but the
- *  shape is a list because the API is. */
-export interface MediaSourceInfo {
+ *  shape is a list because the API is, and the panel has to say something when there is only one. */
+export interface PlaybackSource {
+  /** MediaSources[].Id — the id every progress report has to name. */
+  id: string;
+  index: number;
   name?: string;
   container?: string;
   bitRate?: number;
   sizeBytes?: number;
-  isHls?: boolean;
   video?: MediaStreamInfo;
   audio: MediaStreamInfo[];
   subtitle: MediaStreamInfo[];
+  /** What the last negotiation answered for this source at the current tier. */
+  method?: PlayMethod;
 }
 
 /** Common Sense Media content advisories, one entry per category. `level` is CSM's 0–5 dot scale. */
@@ -233,34 +294,173 @@ export interface LibraryRow {
   items: LibraryItem[];
 }
 
-export interface PlaybackResult {
-  mediaSourceId: string;
-  playSessionId: string;
-  playMethod: 'DirectPlay' | 'DirectStream' | 'Transcode' | string;
-  directUrl: string;
-  name?: string;
+export type PlayMethod = 'DirectPlay' | 'DirectStream' | 'Transcode';
+
+/** One rung of the quality ladder. The rungs are ours, the verdict is the server's: a tier only learns
+ *  its `method` when it has been negotiated, so an untried rung makes no promise about direct play. */
+export interface QualityTier {
+  /** Negotiation cap in bits/s; 0 is 原片. */
+  bitrate: number;
+  label: string;
+  method?: PlayMethod;
+}
+
+/** What the current file contains, as mpv reports it after the demuxer has opened it. Everything here
+ *  can differ from what the server advertised (a subtitle the muxer dropped, a second audio track). */
+export interface PlayerTrack {
+  /** mpv's track id, which is what sid/aid/vid take. */
+  id: number;
+  kind: 'video' | 'audio' | 'subtitle';
+  /** Position among the tracks of its own kind, which is the index Emby's progress report wants: the
+   *  server counts audio and subtitle streams separately, while mpv numbers each kind from 1. */
+  ordinal: number;
+  title?: string;
+  lang?: string;
+  codec?: string;
+  selected: boolean;
+  default: boolean;
+  forced?: boolean;
+  external?: boolean;
+}
+
+export interface PlayerChapter {
+  index: number;
+  title: string;
+  timeMs: number;
+}
+
+export type TrackSelection = number | 'auto' | 'no';
+
+export interface PlayerMedia {
+  width: number;
+  height: number;
+  /** The container's frame rate; 0 until the file is loaded (measured: `video-params/fps` does not exist
+   *  in this build, so the value comes from the `video-params` object). */
+  fps: number;
+  /** The decoder mpv settled on, read back rather than assumed: `auto` and a silent fallback both land here. */
+  hwdec: string;
+  hdr: boolean;
+  colorSpace?: string;
+  trackCount: number;
+  tracks: PlayerTrack[];
+  chapters: PlayerChapter[];
+  subtitle: TrackSelection;
+  audio: TrackSelection;
+  video: TrackSelection;
+  subtitleDelayMs: number;
+  audioDelayMs: number;
+  subtitleScale: number;
+  subtitlePos: number;
+  /** 'no' means fit to the window; a number is a forced display aspect. */
+  aspect: TrackSelection;
+  panscan: number;
+}
+
+export interface PlayerNav {
+  itemId: string;
+  /** 已有集号时是「第 3 集」，没有时是那一集自己的名字。 */
+  label: string;
+}
+
+/** The identity of what is playing, plus everything the panels list. Changes only when the file or the
+ *  negotiation changes, so it travels on its own channel rather than inside the 4 Hz state. */
+export interface PlayerSession {
+  itemId: string;
+  name: string;
+  /** 「第 1 季 · 第 2 集」 for an episode, 「2019」 for a movie: the same wording the detail page uses. */
+  line: string;
+  sourceId: string;
+  sources: PlaybackSource[];
+  sourceIndex: number;
+  tiers: QualityTier[];
+  tier: number;
+  method: PlayMethod | '';
+  /** The server's own label for the file's dynamic range, shown whether or not the hint is on. */
+  hdr: boolean;
+  next: PlayerNav | null;
+  prev: PlayerNav | null;
+  /** Both ids the 选集 panel needs to list the rest of the show without asking the player first. */
+  seriesId?: string;
+  seasonId?: string;
+  /** What the danmaku search asks about. An episode called 「第 3 集」 matches nothing, so the series name
+   *  travels with it and the layer keys the track to this item. */
+  danmaku: DanmakuQuery | null;
+}
+
+export interface DanmakuQuery {
+  itemId: string;
+  title: string;
+  seriesName?: string;
+  season?: number;
+  episode?: number;
+}
+
+export interface DanmakuComment {
+  timeSec: number;
+  text: string;
+  color: string;
+  mode: 'scroll' | 'top' | 'bottom';
+}
+
+/** One candidate track the source offered for an item. */
+export interface DanmakuTrackInfo {
+  id: string;
+  title: string;
+  /** Only a source that counts comments can fill this; 0 is rendered as 未知. */
+  count?: number;
+}
+
+export interface DanmakuTrack {
+  id: string;
+  title: string;
+  comments: DanmakuComment[];
+  fetchedAt: number;
 }
 
 export type PlayerStatus = 'idle' | 'opening' | 'playing' | 'paused' | 'ended' | 'error';
 
+/** mpv's own ceiling: the slider runs to it and the kernel clamps to it, so neither end can disagree
+ *  about what 200% means. */
+export const VOLUME_MAX = 200;
+
+/** The transport half of the player: what the clock says. */
 export interface PlayerState {
   status: PlayerStatus;
   positionMs: number;
   durationMs: number;
+  /** Where the demuxer has read to, so the bar can show what a seek would be free. */
   bufferedMs: number;
   paused: boolean;
   volume: number;
   muted: boolean;
-  title: string;
-  playMethod: string;
-  direct: boolean;
-  videoWidth: number;
-  videoHeight: number;
+  speed: number;
   fullscreen: boolean;
   error?: string;
-  fps?: number;
-  subtitleIndex?: number;
 }
+
+/** One control the overlay can ask for. A closed union so a typo is a type error rather than an
+ *  `unknown action` at runtime. */
+export type PlayerCommand =
+  | { action: 'toggle' }
+  | { action: 'seekMs'; value: number }
+  | { action: 'skip'; value: number }
+  | { action: 'speed'; value: number }
+  | { action: 'volume'; value: number }
+  | { action: 'mute'; value: boolean }
+  | { action: 'track'; value: { kind: 'video' | 'audio' | 'subtitle'; id: TrackSelection } }
+  | { action: 'subtitleDelay'; value: number }
+  | { action: 'audioDelay'; value: number }
+  | { action: 'subtitleStyle'; value: { scale?: number; pos?: number } }
+  | { action: 'aspect'; value: TrackSelection }
+  | { action: 'panscan'; value: number }
+  | { action: 'chapter'; value: number }
+  | { action: 'frameStep'; value: number }
+  | { action: 'restart' }
+  | { action: 'source'; value: number }
+  | { action: 'quality'; value: number }
+  | { action: 'next' }
+  | { action: 'prev' }
+  | { action: 'fullscreen'; value: boolean };
 
 export interface IpcResult<T = unknown> {
   ok: boolean;
@@ -276,10 +476,26 @@ export const emptyPlayerState = (): PlayerState => ({
   paused: true,
   volume: 100,
   muted: false,
-  title: '',
-  playMethod: '',
-  direct: false,
-  videoWidth: 0,
-  videoHeight: 0,
+  speed: 1,
   fullscreen: false,
+});
+
+export const emptyPlayerMedia = (): PlayerMedia => ({
+  width: 0,
+  height: 0,
+  fps: 0,
+  hwdec: '',
+  hdr: false,
+  trackCount: 0,
+  tracks: [],
+  chapters: [],
+  subtitle: 'auto',
+  audio: 'auto',
+  video: 'auto',
+  subtitleDelayMs: 0,
+  audioDelayMs: 0,
+  subtitleScale: 100,
+  subtitlePos: 100,
+  aspect: 'no',
+  panscan: 0,
 });

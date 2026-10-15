@@ -3,6 +3,14 @@ import type { EchoEmbyApi } from '../shared/api';
 
 const invoke = <T>(channel: string, ...args: unknown[]): Promise<T> => ipcRenderer.invoke(channel, ...args) as Promise<T>;
 
+/** Each main→renderer channel has one listener per subscription, and the unsubscribe has to name the
+ *  same function object Electron registered. */
+const on = <T>(channel: string, cb: (payload: T) => void): (() => void) => {
+  const handler = (_e: unknown, payload: T) => cb(payload);
+  ipcRenderer.on(channel, handler);
+  return () => ipcRenderer.removeListener(channel, handler);
+};
+
 const api: EchoEmbyApi = {
   app: {
     getConfig: () => invoke('app:getConfig'),
@@ -43,14 +51,17 @@ const api: EchoEmbyApi = {
   player: {
     play: itemId => invoke('player:play', itemId),
     command: cmd => invoke('player:command', cmd),
-    fullscreen: on => invoke('player:fullscreen', on),
     close: () => invoke('player:close'),
     state: () => invoke('player:state'),
-    onState: cb => {
-      const handler = (_e: unknown, s: any) => cb(s);
-      ipcRenderer.on('player:state', handler);
-      return () => ipcRenderer.removeListener('player:state', handler);
-    },
+    session: () => invoke('player:session'),
+    media: () => invoke('player:media'),
+    onState: cb => on('player:state', cb),
+    onSession: cb => on('player:session', cb),
+    onMedia: cb => on('player:media', cb),
+  },
+  danmaku: {
+    search: q => invoke('danmaku:search', q),
+    track: (q, trackId) => invoke('danmaku:track', { q, trackId }),
   },
   ui: {
     window: action => ipcRenderer.send('ui:window', { action }),

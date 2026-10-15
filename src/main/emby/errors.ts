@@ -50,10 +50,22 @@ const classifyNet = (key: string): string | undefined => {
 
 const redact = (s: string): string => s.replace(/([?&]api_key=)[^&\s]+/gi, '$1<redacted>');
 
+/** mpv's own JSON IPC replies, which cross here when a control is refused. None of them is a network
+ *  event, and the fall-through sentence below would blame the gateway for what is a bad property name,
+ *  sending the user to check a route that answered fine. Measured against the bundled 0.41 build. */
+const MPV: Array<[RegExp, string]> = [
+  [/property not found/, '播放器没有这个设置项'],
+  [/unsupported format for accessing property/, '这个设置的值格式不对，播放器没有接受'],
+  [/invalid argument|invalid parameter/, '播放器认为这个参数不对'],
+  [/option not found/, '播放器的启动参数里没有这一项'],
+  [/mpv 没有回应/, '播放器没有回答，可能已经卡住了'],
+];
+
 export function explain(e: unknown): string {
   const raw = e instanceof Error ? e.message : String(e ?? '');
   // Our own throws are already Chinese; translating them twice would lose the exact wording.
   if (CJK.test(raw)) return redact(raw);
+  if (/^mpv /.test(raw)) return MPV.find(([re]) => re.test(raw))?.[1] || '播放器拒绝了这个操作，详细信息在主进程日志里';
   const status = e instanceof EmbyError ? e.status : 0;
   // A status the server actually sent outranks the wording of its body; no status means the
   // request never got an answer, which must never be reported as a bad password.

@@ -80,7 +80,7 @@ function primeProxyAuth(): void {
 /** Throws when the typed 手动代理 address cannot be parsed, so the page can say the route did not move.
  *  An empty address is not an error: the mode was picked before anything was typed, and the route that
  *  is already live stays live until there is something to point it at. */
-export async function applyProxy(s: Settings): Promise<void> {
+export async function applyProxy(s: Pick<Settings, 'proxyMode' | 'proxyUrl'>): Promise<void> {
   let route: ProxyRoute | null = null;
   if (s.proxyMode === 'manual') {
     if (!s.proxyUrl.trim()) return;

@@ -2,25 +2,94 @@ import { app, safeStorage } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
-import type { Account, AppConfig, MetaKeys, Settings } from '../shared/types';
-
-const DEFAULT_SETTINGS: Settings = {
-  maxStreamingBitrate: 140_000_000,
-  hwdec: 'd3d11va',
-  proxyMode: 'system',
-  proxyUrl: '',
-};
+import type { Account, AppConfig, DanmakuSettings, DanmakuSourceConfig, MetaKeys, PlayerPrefs, Settings, SettingsPatch } from '../shared/types';
 
 const HWDEC = ['d3d11va', 'cuda', 'auto', 'no'] as const;
 const PROXY_MODES = ['system', 'manual', 'none'] as const;
+const RENDER = ['smooth', 'hq'] as const;
+const DANMAKU_SOURCES = ['bilibili', 'dandan'] as const;
 
-/** Reads keep only the fields that still exist: the file outlives every knob we drop, and a
-    leftover `hwdec` would end up in mpv's command line. */
+/** What a masked secret reads as on screen. A patch carrying it back means "the row was not touched",
+ *  so saving one setting never writes the placeholder over the real credential. */
+export const SECRET_MASK = '<set>';
+
+/** The rungs the quality panel offers, low to high; 0 is 原片. The default cap is the one the old
+ *  single-slider setting used, so an existing install keeps negotiating the way it did. */
+export const QUALITY_TIERS = [0, 10_000_000, 25_000_000, 60_000_000, 100_000_000, 140_000_000, 200_000_000];
+
+const DEFAULT_PLAYER: PlayerPrefs = {
+  tier: 140_000_000,
+  hwdec: 'd3d11va',
+  seekStepMs: 10_000,
+  controlsTimeoutMs: 3200,
+  hdrHint: false,
+  render: 'smooth',
+  autoNext: true,
+};
+
+const DEFAULT_DANMAKU: DanmakuSettings = {
+  enabled: false,
+  source: { type: 'bilibili', url: '', token: '' },
+  matchMode: 0,
+  displayArea: 1,
+  opacity: 0.85,
+  fontScale: 1,
+  durationMs: 9000,
+  maxOnScreen: 80,
+  blockedWords: '',
+};
+
+const DEFAULT_SETTINGS: Settings = {
+  player: { ...DEFAULT_PLAYER },
+  proxyMode: 'system',
+  proxyUrl: '',
+  danmaku: { ...DEFAULT_DANMAKU, source: { ...DEFAULT_DANMAKU.source } },
+};
+
+const num = (v: unknown, lo: number, hi: number, dflt: number): number =>
+  typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi ? v : dflt;
+
+const str = (v: unknown, max = 160): string => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+
+/** The ladder is a fixed list, so a cap that is not one of its rungs falls back to the default rather
+ *  than offering the server a number no row in the panel can select. */
+const pickTier = (v: unknown): number => (QUALITY_TIERS.includes(Number(v)) ? Number(v) : DEFAULT_PLAYER.tier);
+
+const pickPlayer = (raw: Partial<PlayerPrefs> | undefined): PlayerPrefs => ({
+  tier: pickTier(raw?.tier),
+  hwdec: raw?.hwdec && HWDEC.includes(raw.hwdec) ? raw.hwdec : DEFAULT_PLAYER.hwdec,
+  seekStepMs: num(raw?.seekStepMs, 1000, 120_000, DEFAULT_PLAYER.seekStepMs),
+  controlsTimeoutMs: num(raw?.controlsTimeoutMs, 800, 30_000, DEFAULT_PLAYER.controlsTimeoutMs),
+  hdrHint: raw?.hdrHint === true,
+  render: raw?.render && RENDER.includes(raw.render) ? raw.render : DEFAULT_PLAYER.render,
+  autoNext: raw?.autoNext !== false,
+});
+
+const pickDanmaku = (raw: Partial<DanmakuSettings> | undefined): DanmakuSettings => {
+  const src: Partial<DanmakuSourceConfig> = raw?.source || {};
+  const type = src.type && DANMAKU_SOURCES.includes(src.type) ? src.type : DEFAULT_DANMAKU.source.type;
+  return {
+    enabled: raw?.enabled === true,
+    source: { type, url: str(src.url, 200), token: str(src.token, 200) },
+    matchMode: raw?.matchMode === 1 ? 1 : 0,
+    displayArea: num(raw?.displayArea, 0.2, 1, DEFAULT_DANMAKU.displayArea),
+    opacity: num(raw?.opacity, 0.2, 1, DEFAULT_DANMAKU.opacity),
+    fontScale: num(raw?.fontScale, 0.6, 2, DEFAULT_DANMAKU.fontScale),
+    durationMs: num(raw?.durationMs, 3000, 30_000, DEFAULT_DANMAKU.durationMs),
+    maxOnScreen: Math.round(num(raw?.maxOnScreen, 10, 500, DEFAULT_DANMAKU.maxOnScreen)),
+    blockedWords: str(raw?.blockedWords, 2000),
+  };
+};
+
+/** Reads keep only the fields that still exist: the file outlives every knob we drop, and a leftover
+    would end up either in mpv's command line or in a panel row nobody maintains. Each nested block is
+    rebuilt from its own defaults, so a partial patch can neither smuggle in an unknown decoder nor
+    wipe the sibling keys it did not mention. */
 const pickSettings = (raw: Partial<Settings> | undefined): Settings => ({
-  maxStreamingBitrate: typeof raw?.maxStreamingBitrate === 'number' && raw.maxStreamingBitrate > 0 ? raw.maxStreamingBitrate : DEFAULT_SETTINGS.maxStreamingBitrate,
-  hwdec: raw?.hwdec && HWDEC.includes(raw.hwdec) ? raw.hwdec : DEFAULT_SETTINGS.hwdec,
+  player: pickPlayer(raw?.player),
   proxyMode: raw?.proxyMode && PROXY_MODES.includes(raw.proxyMode) ? raw.proxyMode : DEFAULT_SETTINGS.proxyMode,
-  proxyUrl: typeof raw?.proxyUrl === 'string' ? raw.proxyUrl.trim().slice(0, 160) : '',
+  proxyUrl: str(raw?.proxyUrl),
+  danmaku: pickDanmaku(raw?.danmaku),
 });
 
 const file = () => path.join(app.getPath('userData'), 'config.json');
@@ -62,7 +131,7 @@ const defaults = (): AppConfig => ({
   clientVersion: '0.1.0',
   accounts: [],
   activeAccountId: null,
-  settings: { ...DEFAULT_SETTINGS },
+  settings: { ...DEFAULT_SETTINGS, danmaku: { ...DEFAULT_DANMAKU, source: { ...DEFAULT_DANMAKU.source } } },
 });
 
 let cache: AppConfig | null = null;
@@ -73,6 +142,9 @@ export function load(): AppConfig {
     const parsed = JSON.parse(readFileSync(file(), 'utf8')) as AppConfig & { accounts: Account[] };
     cache = { ...defaults(), ...parsed, settings: pickSettings(parsed.settings), meta: decodeMeta(parsed.meta) };
     cache.accounts = (parsed.accounts || []).map(a => ({ ...a, accessToken: readToken(a.accessToken) }));
+    // The token is a credential for a service the user runs, so it is encrypted at rest exactly like a
+    // login token and decrypted here, where only the danmaku module can see it.
+    cache.settings.danmaku.source.token = readToken(parsed.settings?.danmaku?.source?.token || '');
   } catch {
     cache = defaults();
     save(cache);
@@ -85,6 +157,7 @@ export function save(cfg: AppConfig = cache!): void {
   const copy: AppConfig = {
     ...cfg,
     accounts: cfg.accounts.map(a => ({ ...a, accessToken: writeToken(a.accessToken) })),
+    settings: { ...cfg.settings, danmaku: { ...cfg.settings.danmaku, source: { ...cfg.settings.danmaku.source, token: writeToken(cfg.settings.danmaku.source.token) } } },
     meta: encodeMeta(cfg.meta),
   };
   writeFileSync(file(), JSON.stringify(copy, null, 2), 'utf8');
@@ -93,6 +166,13 @@ export function save(cfg: AppConfig = cache!): void {
 
 export function get(): AppConfig {
   return load();
+}
+
+/** The shape the renderer may see: the danmaku token never crosses the bridge in plaintext, so the
+ *  settings row reads whether one is on file and the user can only replace or clear it. */
+export function publicSettings(): Settings {
+  const s = load().settings;
+  return { ...s, danmaku: { ...s.danmaku, source: { ...s.danmaku.source, token: s.danmaku.source.token ? SECRET_MASK : '' } } };
 }
 
 export function activeAccount(): Account | null {
@@ -142,13 +222,23 @@ export function updateAccount(id: string, patch: Partial<Omit<Account, 'accountI
   return next;
 }
 
-/** Both knobs are read again when the next stream is negotiated (PlaybackInfo for the cap, mpv's
- *  launch for the decoder), so a change needs no restart and takes effect on the next play. */
-export function saveSettings(patch: Partial<Settings>): Settings {
+/** The tier and the decoder are read again when the next stream is negotiated and when mpv is launched,
+ *  so a change needs no restart and takes effect on the next play. A patch may name only the rows the
+ *  user touched: `{ player: { seekStepMs } }` keeps the tier, the decoder and the danmaku block. */
+export function saveSettings(patch: SettingsPatch): Settings {
   const cfg = load();
-  cfg.settings = pickSettings({ ...cfg.settings, ...patch });
+  const source = { ...cfg.settings.danmaku.source, ...(patch.danmaku?.source || {}) };
+  // A masked row returning means the field was not touched, not that the token is the word 「<set>」.
+  if (source.token === SECRET_MASK) source.token = cfg.settings.danmaku.source.token;
+  const next: Settings = {
+    ...cfg.settings,
+    ...patch,
+    player: { ...cfg.settings.player, ...(patch.player || {}) },
+    danmaku: { ...cfg.settings.danmaku, ...(patch.danmaku || {}), source },
+  };
+  cfg.settings = pickSettings(next);
   save(cfg);
-  return cfg.settings;
+  return publicSettings();
 }
 
 /** Empty-string patches delete that key; undefined leaves it alone. The cache in each meta module

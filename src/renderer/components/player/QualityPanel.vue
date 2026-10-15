@@ -1,0 +1,89 @@
+<script setup lang="ts">
+import { computed } from 'vue';
+import PanelShell from './PanelShell.vue';
+import { usePlayerStore } from '../../stores/player';
+import { useAppStore } from '../../stores/app';
+import type { PlayMethod, PlayerPrefs } from '../../../shared/types';
+
+const player = usePlayerStore();
+const app = useAppStore();
+const session = computed(() => player.session);
+const media = computed(() => player.media);
+const prefs = computed<PlayerPrefs>(() => app.config?.settings.player || ({} as PlayerPrefs));
+
+const METHOD_CN: Record<PlayMethod, string> = { DirectPlay: '直接播放', DirectStream: '直接串流', Transcode: '转码' };
+
+/** 0 is the rung that forbids transcoding outright, which is what 原片 means to Emby. */
+const methodLabel = (m?: PlayMethod): string => (m ? METHOD_CN[m] : '未试过');
+
+async function setTier(bitrate: number): Promise<void> {
+  if (session.value?.tier === bitrate) return;
+  // Writing the setting is the one path the main process listens to: it re-negotiates and reloads in
+  // place, so the panel does not need a second command of its own.
+  await app.saveSettings({ player: { tier: bitrate } });
+}
+
+async function patch(p: Partial<PlayerPrefs>): Promise<void> {
+  await app.saveSettings({ player: p });
+}
+
+const HWDECS: { value: PlayerPrefs['hwdec']; label: string }[] = [
+  { value: 'd3d11va', label: 'D3D11' },
+  { value: 'cuda', label: 'CUDA' },
+  { value: 'auto', label: '自动' },
+  { value: 'no', label: '软解' },
+];
+
+const size = (bytes?: number): string => (bytes ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : '');
+
+function pickSource(index: number): void {
+  void player.cmd({ action: 'source', value: index });
+}
+</script>
+
+<template>
+  <PanelShell kind="quality" title="画质与播放源">
+    <div class="pl-sect">清晰度</div>
+    <button v-for="t in session?.tiers || []" :key="t.bitrate" class="pl-row" :class="{ on: session?.tier === t.bitrate }" @click="setTier(t.bitrate)">
+      <span class="label">{{ t.label }}</span>
+      <span class="meta">{{ session?.tier === t.bitrate ? methodLabel(t.method) : '' }}</span>
+    </button>
+    <p class="pl-note">换档会重新问服务器一次。选中的那行写的是这一档刚刚谈出来的方式。</p>
+
+    <div class="pl-sect">当前</div>
+    <div class="pl-row">
+      <span class="label">动态范围</span>
+      <span class="meta">{{ session?.hdr || media.hdr ? 'HDR' : 'SDR' }}</span>
+    </div>
+    <div class="pl-row">
+      <span class="label">解码</span>
+      <span class="meta">{{ media.hwdec || '—' }}</span>
+    </div>
+
+    <div class="pl-sect">解码器</div>
+    <div class="pl-chips">
+      <button v-for="h in HWDECS" :key="h.value" class="pl-chip" :class="{ on: prefs.hwdec === h.value }" @click="patch({ hwdec: h.value })">{{ h.label }}</button>
+    </div>
+    <p class="pl-note">上面的「解码」是 mpv 实际用上的那个：选了自动或硬件不可用时，它会落回软解并写在这里。</p>
+
+    <div class="pl-sect">渲染</div>
+    <div class="pl-chips">
+      <button class="pl-chip" :class="{ on: prefs.render !== 'hq' }" @click="patch({ render: 'smooth' })">流畅优先</button>
+      <button class="pl-chip" :class="{ on: prefs.render === 'hq' }" @click="patch({ render: 'hq' })">清晰优先</button>
+    </div>
+    <p class="pl-note">清晰优先开的是 gpu-hq 加插帧，会换一个新的 mpv 进程：画面会黑一下。</p>
+
+    <div class="pl-switch" :class="{ on: prefs.hdrHint }" @click="patch({ hdrHint: !prefs.hdrHint })">
+      <span class="track"><i></i></span>
+      <span class="label">把 HDR 信号交给显示器</span>
+    </div>
+    <p class="pl-note">关掉时 mpv 把 HDR 压成 SDR 显示；打开后如果屏幕不支持 HDR，画面会发灰。改动在下一次播放生效。</p>
+
+    <div class="pl-sect">播放源</div>
+    <button v-for="(s, i) in session?.sources || []" :key="s.id" class="pl-row" :class="{ on: session?.sourceIndex === i }" @click="pickSource(i)">
+      <span class="label">{{ s.name || `版本 ${i + 1}` }}</span>
+      <span class="meta">{{ [s.container, s.bitRate ? `${Math.round(s.bitRate / 1000)}k` : '', size(s.sizeBytes)].filter(Boolean).join(' · ') }}</span>
+    </button>
+    <p v-if="(session?.sources.length || 0) < 2" class="pl-empty">这个条目只有一个版本</p>
+  </PanelShell>
+</template>

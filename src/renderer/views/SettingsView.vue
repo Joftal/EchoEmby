@@ -1,29 +1,41 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import type { NetProbe, Settings } from '../../shared/types';
+import type { DanmakuSettings, NetProbe, PlayerPrefs, Settings } from '../../shared/types';
 import { useAppStore } from '../stores/app';
 
 const store = useAppStore();
 const router = useRouter();
 
 const settings = computed(() => store.config?.settings);
+const player = computed<PlayerPrefs | undefined>(() => settings.value?.player);
+const dm = computed<DanmakuSettings | undefined>(() => settings.value?.danmaku);
 
-const DECODERS: { value: Settings['hwdec']; label: string }[] = [
+const DECODERS: { value: PlayerPrefs['hwdec']; label: string }[] = [
   { value: 'd3d11va', label: 'D3D11' },
   { value: 'cuda', label: 'CUDA' },
   { value: 'auto', label: '自动' },
   { value: 'no', label: '软解' },
 ];
-/** Megabits, offered as presets because the cap is what decides whether the server transcodes. */
-const BITRATES: { value: number; label: string }[] = [10, 25, 60, 140, 200].map(m => ({
-  value: m * 1_000_000,
-  label: `${m}M`,
-}));
+
+/** The same ladder the player's 画质 drawer lists, so a rung picked here is a rung the panel can show. */
+const TIERS: { value: number; label: string }[] = [
+  { value: 0, label: '原片' },
+  ...[10, 25, 60, 100, 140, 200].map(m => ({ value: m * 1_000_000, label: `${m}M` })),
+];
+
+const STEPS = [5000, 10000, 15000, 30000];
+const HOLDS = [2000, 3200, 5000, 8000];
+
 const PROXY_MODES: { value: Settings['proxyMode']; label: string }[] = [
   { value: 'system', label: '系统代理' },
   { value: 'manual', label: '手动代理' },
   { value: 'none', label: '不代理' },
+];
+
+const SOURCES: { value: DanmakuSettings['source']['type']; label: string }[] = [
+  { value: 'bilibili', label: 'Bilibili' },
+  { value: 'dandan', label: '弹弹 play' },
 ];
 
 const addr = ref('');
@@ -32,6 +44,18 @@ const addrHint = computed(() => {
   if (settings.value?.proxyMode !== 'manual') return '选「手动代理」后用这个地址';
   return settings.value.proxyUrl ? '改完按回车或点别处生效' : '填好地址才会切换路线';
 });
+
+/** The token crosses the bridge masked, so this row can only say whether one is on file; it never echoes
+ *  a stored value back into an input. */
+const token = ref('');
+const tokenSaved = computed(() => dm.value?.source?.token === '<set>');
+/** Deleting a stored key has to be possible from an empty field, but a field that was only clicked into
+ *  and then left must not be read as a delete - that would erase the key on the next blur. */
+const tokenTyped = ref(false);
+watch(token, v => { if (v.trim()) tokenTyped.value = true; });
+
+const dmUrl = ref('');
+watch(() => dm.value?.source?.url, v => (dmUrl.value = v || ''), { immediate: true });
 
 const probe = ref<NetProbe | null>(null);
 const probing = ref(false);
@@ -59,17 +83,35 @@ function retireRoute(): void {
   probe.value = null;
 }
 
-/** Changes to the route take effect immediately; everything else just writes through. */
-async function set(patch: Partial<Settings>): Promise<void> {
-  if (!settings.value) return;
+/** Route changes are applied by the main process before the file is written, so a rejected address never
+ *  lands. Everything else is a write-through. */
+async function set(patch: Parameters<typeof store.saveSettings>[0]): Promise<boolean> {
+  if (!settings.value) return false;
   if (patch.proxyMode !== undefined || patch.proxyUrl !== undefined) retireRoute();
-  await store.saveSettings(patch);
+  return store.saveSettings(patch);
 }
 
 async function commitAddr(): Promise<void> {
   const v = addr.value.trim();
   if (v === (settings.value?.proxyUrl || '')) return;
   await set({ proxyUrl: v });
+}
+
+async function commitDmUrl(): Promise<void> {
+  const v = dmUrl.value.trim();
+  if (v === (dm.value?.source?.url || '')) return;
+  await set({ danmaku: { source: { url: v } } });
+}
+
+/** Deleting a stored key is the explicit gesture the row promises: 回车 on an empty field. A blur away from
+ *  a field that was never typed into is only a click past it, and must not erase what is on file. */
+async function commitToken(explicit = false): Promise<void> {
+  const v = token.value.trim();
+  if (v === '<set>') return;
+  if (!v && !explicit && !tokenTyped.value) return;
+  if (!(await set({ danmaku: { source: { token: v } } }))) return;
+  token.value = '';
+  tokenTyped.value = false;
 }
 
 async function runProbe(): Promise<void> {
@@ -86,7 +128,7 @@ async function runProbe(): Promise<void> {
 
 <template>
   <div class="page">
-    <div v-if="settings" class="col">
+    <div v-if="settings && player && dm" class="col">
       <header class="head">
         <h1>设置</h1>
       </header>
@@ -95,16 +137,11 @@ async function runProbe(): Promise<void> {
       <div class="rows">
         <div class="row">
           <div class="k">
-            <b>硬件解码</b>
+            <b>清晰度上限</b>
+            <i>原片禁止转码；其余档位由服务器决定是直连还是切片段</i>
           </div>
           <div class="seg">
-            <button
-              v-for="o in DECODERS"
-              :key="o.value"
-              type="button"
-              :class="{ on: settings.hwdec === o.value }"
-              @click="set({ hwdec: o.value })"
-            >
+            <button v-for="o in TIERS" :key="o.value" type="button" :class="{ on: player.tier === o.value }" @click="set({ player: { tier: o.value } })">
               {{ o.label }}
             </button>
           </div>
@@ -112,18 +149,125 @@ async function runProbe(): Promise<void> {
 
         <div class="row">
           <div class="k">
-            <b>码率上限</b>
+            <b>硬件解码</b>
           </div>
           <div class="seg">
-            <button
-              v-for="o in BITRATES"
-              :key="o.value"
-              type="button"
-              :class="{ on: settings.maxStreamingBitrate === o.value }"
-              @click="set({ maxStreamingBitrate: o.value })"
-            >
+            <button v-for="o in DECODERS" :key="o.value" type="button" :class="{ on: player.hwdec === o.value }" @click="set({ player: { hwdec: o.value } })">
               {{ o.label }}
             </button>
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="k">
+            <b>渲染</b>
+            <i>清晰优先会换一个新的播放器进程</i>
+          </div>
+          <div class="seg">
+            <button type="button" :class="{ on: player.render !== 'hq' }" @click="set({ player: { render: 'smooth' } })">流畅优先</button>
+            <button type="button" :class="{ on: player.render === 'hq' }" @click="set({ player: { render: 'hq' } })">清晰优先</button>
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="k">
+            <b>快进步长</b>
+          </div>
+          <div class="seg">
+            <button v-for="s in STEPS" :key="s" type="button" :class="{ on: player.seekStepMs === s }" @click="set({ player: { seekStepMs: s } })">
+              {{ s / 1000 }} 秒
+            </button>
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="k">
+            <b>控制条停留</b>
+          </div>
+          <div class="seg">
+            <button v-for="h in HOLDS" :key="h" type="button" :class="{ on: player.controlsTimeoutMs === h }" @click="set({ player: { controlsTimeoutMs: h } })">
+              {{ h / 1000 }} 秒
+            </button>
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="k">
+            <b>自动连播</b>
+            <i>一集播完接着放下一集</i>
+          </div>
+          <button type="button" class="sw" :class="{ on: player.autoNext }" @click="set({ player: { autoNext: !player.autoNext } })">
+            <span class="track"><i></i></span>
+          </button>
+        </div>
+
+        <div class="row">
+          <div class="k">
+            <b>HDR 直通</b>
+            <i>屏幕不支持 HDR 时画面会发灰；下一次播放生效</i>
+          </div>
+          <button type="button" class="sw" :class="{ on: player.hdrHint }" @click="set({ player: { hdrHint: !player.hdrHint } })">
+            <span class="track"><i></i></span>
+          </button>
+        </div>
+      </div>
+
+      <h2 class="sec">弹幕</h2>
+      <div class="rows">
+        <div class="row">
+          <div class="k">
+            <b>显示弹幕</b>
+            <i>关闭时不会向任何弹幕源请求你看的内容</i>
+          </div>
+          <button type="button" class="sw" :class="{ on: dm.enabled }" @click="set({ danmaku: { enabled: !dm.enabled } })">
+            <span class="track"><i></i></span>
+          </button>
+        </div>
+
+        <div class="row">
+          <div class="k">
+            <b>来源</b>
+          </div>
+          <div class="seg">
+            <button v-for="o in SOURCES" :key="o.value" type="button" :class="{ on: dm.source.type === o.value }" @click="set({ danmaku: { source: { type: o.value } } })">
+              {{ o.label }}
+            </button>
+          </div>
+        </div>
+
+        <div class="row addr">
+          <div class="k">
+            <b>API 地址</b>
+            <i>{{ dm.source.type === 'dandan' ? '自建或公共弹弹 play 兼容服务，例如 http://127.0.0.1:6666' : 'Bilibili 无需地址' }}</i>
+          </div>
+          <input v-model="dmUrl" type="text" :disabled="dm.source.type !== 'dandan'" placeholder="http://127.0.0.1:6666" spellcheck="false" autocomplete="off" @blur="commitDmUrl" @keydown.enter="commitDmUrl" />
+        </div>
+
+        <div class="row addr">
+          <div class="k">
+            <b>密钥</b>
+            <i>{{ tokenSaved ? '已保存，重新输入可替换，清空后回车可删除' : '弹弹 play 的 X-Session-Token，只存在本机' }}</i>
+          </div>
+          <input
+            v-model="token"
+            type="password"
+            :disabled="dm.source.type !== 'dandan'"
+            :placeholder="tokenSaved ? '••••••••' : '可留空'"
+            spellcheck="false"
+            autocomplete="off"
+            @blur="commitToken()"
+            @keydown.enter="commitToken(true)"
+          />
+        </div>
+
+        <div class="row">
+          <div class="k">
+            <b>标题匹配</b>
+            <i>库里的名字常常和弹幕源不一样</i>
+          </div>
+          <div class="seg">
+            <button type="button" :class="{ on: dm.matchMode !== 1 }" @click="set({ danmaku: { matchMode: 0 } })">近似</button>
+            <button type="button" :class="{ on: dm.matchMode === 1 }" @click="set({ danmaku: { matchMode: 1 } })">完全一致</button>
           </div>
         </div>
       </div>
@@ -135,13 +279,7 @@ async function runProbe(): Promise<void> {
             <b>代理模式</b>
           </div>
           <div class="seg">
-            <button
-              v-for="o in PROXY_MODES"
-              :key="o.value"
-              type="button"
-              :class="{ on: settings.proxyMode === o.value }"
-              @click="set({ proxyMode: o.value })"
-            >
+            <button v-for="o in PROXY_MODES" :key="o.value" type="button" :class="{ on: settings.proxyMode === o.value }" @click="set({ proxyMode: o.value })">
               {{ o.label }}
             </button>
           </div>
@@ -152,15 +290,7 @@ async function runProbe(): Promise<void> {
             <b>代理地址</b>
             <i>{{ addrHint }}</i>
           </div>
-          <input
-            v-model="addr"
-            type="text"
-            placeholder="127.0.0.1:7897"
-            spellcheck="false"
-            autocomplete="off"
-            @blur="commitAddr"
-            @keydown.enter="commitAddr"
-          />
+          <input v-model="addr" type="text" placeholder="127.0.0.1:7897" spellcheck="false" autocomplete="off" @blur="commitAddr" @keydown.enter="commitAddr" />
         </div>
 
         <div class="row">
@@ -265,6 +395,10 @@ h1 {
 .addr input::placeholder {
   color: var(--text-faint);
 }
+.addr input:disabled {
+  color: var(--text-faint);
+  background: var(--bg-elev-2);
+}
 .addr input:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
@@ -292,6 +426,7 @@ h1 {
 }
 .seg {
   display: inline-flex;
+  flex-wrap: wrap;
   gap: 2px;
   padding: 4px;
   border-radius: 999px;
@@ -317,6 +452,35 @@ h1 {
   transform: scale(0.96);
   transition-duration: 0.1s;
 }
+.sw {
+  width: 44px;
+  height: 26px;
+  border-radius: 999px;
+  background: var(--chip-hi);
+  position: relative;
+  transition: background var(--hov) var(--ease);
+}
+.sw .track {
+  position: absolute;
+  inset: 0;
+}
+.sw .track i {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--hov) var(--ease-out);
+}
+.sw.on {
+  background: var(--accent);
+}
+.sw.on .track i {
+  transform: translate3d(18px, 0, 0);
+}
 .toast {
   position: fixed;
   left: 50%;
@@ -327,9 +491,8 @@ h1 {
   border-radius: 999px;
   font-size: 13px;
   color: var(--text);
-  background: rgba(255, 255, 255, 0.86);
+  background: rgba(255, 255, 255, 0.92);
   border: 1px solid var(--line);
-  backdrop-filter: blur(14px) saturate(180%);
   box-shadow: var(--shadow);
 }
 .toast-enter-active,

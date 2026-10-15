@@ -1,0 +1,211 @@
+/* The player's own dark surfaces. Every rule here sits over video, so nothing can borrow the page's
+   light tokens: --pl-* is the same scale re-derived for a transparent window with no opaque ground.
+   Text steps are chosen for contrast against the frosted panels (rgba(20,20,26,.88)) rather than
+   against black, and no size in the player goes below 13px. */
+:root {
+  --pl-glass: rgba(20, 20, 26, 0.88);
+  --pl-glass-hi: rgba(255, 255, 255, 0.12);
+  --pl-line: rgba(255, 255, 255, 0.16);
+  --pl-text: #ffffff;
+  --pl-dim: rgba(255, 255, 255, 0.86);
+  --pl-faint: rgba(255, 255, 255, 0.62);
+  --pl-hi: #7ab3ff;
+  --pl-fill: #4d86f0;
+  --pl-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+}
+
+.pl-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 336px;
+  max-width: 78vw;
+  display: flex;
+  flex-direction: column;
+  color: var(--pl-text);
+  background: var(--pl-glass);
+  backdrop-filter: blur(18px) saturate(1.2);
+  border-left: 1px solid var(--pl-line);
+  box-shadow: var(--pl-shadow);
+}
+.pl-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 18px 12px;
+}
+.pl-title {
+  font-size: 15px;
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pl-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  /* The control bar is 34px tall and sits 14px off the bottom edge, so the last row of a list has to stop
+     above that band or it lands under the buttons. */
+  padding: 0 12px 60px;
+}
+.pl-sect {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--pl-faint);
+  padding: 14px 6px 6px;
+}
+.pl-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 40px;
+  padding: 7px 10px;
+  border-radius: var(--r-row);
+  color: var(--pl-dim);
+  text-align: left;
+  font-size: 13px;
+  transition: background var(--hov) var(--ease), color var(--hov) var(--ease);
+}
+.pl-row:hover {
+  background: var(--pl-glass-hi);
+  color: var(--pl-text);
+}
+.pl-row:active {
+  transform: scale(0.99);
+}
+.pl-row.on {
+  color: var(--pl-hi);
+  background: rgba(122, 179, 255, 0.14);
+}
+.pl-row .label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pl-row .meta {
+  font-size: 13px;
+  color: var(--pl-faint);
+  white-space: nowrap;
+}
+.pl-row.on .meta {
+  color: var(--pl-hi);
+  opacity: 0.8;
+}
+.pl-note {
+  font-size: 13px;
+  color: var(--pl-faint);
+  padding: 4px 8px 10px;
+  line-height: 1.5;
+}
+
+/* One slider row: label, the range itself, and the value it currently holds. */
+.pl-slide {
+  display: grid;
+  grid-template-columns: 74px 1fr 54px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--pl-dim);
+}
+.pl-slide input[type='range'] {
+  width: 100%;
+  accent-color: var(--pl-fill);
+}
+.pl-slide .val {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--pl-text);
+}
+
+/* A row of equal-width choices (倍速, 比例). */
+.pl-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 10px 10px;
+}
+.pl-chip {
+  padding: 7px 11px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--pl-dim);
+  font-size: 13px;
+  transition: background var(--hov) var(--ease), color var(--hov) var(--ease), transform var(--hov) var(--ease-out);
+}
+.pl-chip:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: var(--pl-text);
+}
+.pl-chip:active {
+  transform: scale(0.94);
+}
+.pl-chip.on {
+  background: var(--pl-fill);
+  color: #fff;
+}
+
+.pl-switch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 40px;
+  padding: 7px 10px;
+  border-radius: var(--r-row);
+  color: var(--pl-dim);
+  font-size: 13px;
+  text-align: left;
+}
+.pl-switch:hover {
+  background: var(--pl-glass-hi);
+}
+.pl-switch .track {
+  width: 38px;
+  height: 22px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+  position: relative;
+  flex: none;
+  transition: background var(--hov) var(--ease);
+}
+.pl-switch .track i {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform var(--hov) var(--ease-out);
+}
+.pl-switch.on .track {
+  background: var(--pl-fill);
+}
+.pl-switch.on .track i {
+  transform: translate3d(16px, 0, 0);
+}
+
+.pl-empty {
+  font-size: 13px;
+  color: var(--pl-faint);
+  padding: 16px 10px;
+  text-align: center;
+}
+
+.pl-enter-active,
+.pl-leave-active {
+  transition: transform 0.26s var(--ease), opacity 0.26s var(--ease);
+}
+.pl-enter-from,
+.pl-leave-to {
+  transform: translate3d(24px, 0, 0);
+  opacity: 0;
+}

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import type { LibraryItem, MediaSourceInfo, MediaStreamInfo, TmdbSimilar, TmdbStills } from '../../shared/types';
+import type { LibraryItem, MediaStreamInfo, PlaybackSource, TmdbSimilar, TmdbStills } from '../../shared/types';
 import HScroller from '../components/detail/HScroller.vue';
 import FilterSelect from '../components/browse/FilterSelect.vue';
 import ScoreStrip from '../components/ScoreStrip.vue';
@@ -64,7 +64,7 @@ const crew = computed<CrewRow[]>(() => {
 });
 const overviewText = computed(() => item.value?.overview || scores.value.tmdb?.overviewZh || '');
 
-const source = computed<MediaSourceInfo | undefined>(() => item.value?.sources?.[0]);
+const source = computed<PlaybackSource | undefined>(() => item.value?.sources?.[0]);
 const vstream = computed(() => source.value?.video);
 const astream = computed<MediaStreamInfo | undefined>(() => {
   const a = source.value?.audio || [];

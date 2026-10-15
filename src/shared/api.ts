@@ -1,4 +1,4 @@
-import type { Account, AppConfig, BangumiScore, CsmGuide, FacetOption, ImdbRating, IpcResult, LibraryItem, LibraryRow, MetaKeys, NetProbe, PlayerState, RtScores, Settings, TmdbMeta, TmdbSimilar, TmdbStills, TraktScores } from './types';
+import type { Account, AppConfig, BangumiScore, CsmGuide, DanmakuQuery, DanmakuTrack, DanmakuTrackInfo, FacetOption, ImdbRating, IpcResult, LibraryItem, LibraryRow, MetaKeys, NetProbe, PlayerCommand, PlayerMedia, PlayerSession, PlayerState, RtScores, Settings, SettingsPatch, TmdbMeta, TmdbSimilar, TmdbStills, TraktScores } from './types';
 
 export interface EchoEmbyApi {
   app: {
@@ -9,7 +9,7 @@ export interface EchoEmbyApi {
     pingServer(baseUrl: string): Promise<IpcResult<{ serverName: string; version: string }>>;
     accountCounts(accountId: string): Promise<IpcResult<{ movies: number; series: number }>>;
     switchAccount(accountId: string): Promise<IpcResult<boolean>>;
-    setSettings(patch: Partial<Settings>): Promise<IpcResult<Settings>>;
+    setSettings(patch: SettingsPatch): Promise<IpcResult<Settings>>;
   };
   net: {
     /** One round trip to the gateway and one to an address echo, through the route that is live now. */
@@ -43,11 +43,23 @@ export interface EchoEmbyApi {
   };
   player: {
     play(itemId: string): Promise<IpcResult<boolean>>;
-    command(cmd: { action: string; value?: any }): Promise<IpcResult<boolean>>;
-    fullscreen(on: boolean): Promise<IpcResult<boolean>>;
+    command(cmd: PlayerCommand): Promise<IpcResult<boolean>>;
     close(): Promise<IpcResult<boolean>>;
     state(): Promise<PlayerState>;
+    session(): Promise<IpcResult<PlayerSession | null>>;
+    media(): Promise<IpcResult<PlayerMedia>>;
     onState(cb: (s: PlayerState) => void): () => void;
+    /** null is the player being closed: the session identity only exists while something is loaded. */
+    onSession(cb: (s: PlayerSession | null) => void): () => void;
+    onMedia(cb: (m: PlayerMedia) => void): () => void;
+  };
+  danmaku: {
+    /** The candidate tracks for one item, from whichever source the settings name. An empty list is a
+     *  normal answer, and nothing leaves the machine unless 弹幕 is switched on. Null is the source not
+     *  answering at all, which is a different sentence to show the user. */
+    search(q: DanmakuQuery): Promise<IpcResult<DanmakuTrackInfo[] | null>>;
+    /** One candidate's comments, filtered and sorted; null when the source has nothing for it. */
+    track(q: DanmakuQuery, trackId: string): Promise<IpcResult<DanmakuTrack | null>>;
   };
   ui: {
     window(action: 'minimize' | 'maximize' | 'close'): void;

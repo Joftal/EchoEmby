@@ -8,11 +8,11 @@ import { traktScores } from './meta/trakt';
 import { bangumiScore } from './meta/bangumi';
 import { tmdbMeta, tmdbSeasonStills, tmdbSimilar, tmdbImages } from './meta/tmdb';
 import { csmGuide } from './meta/csm';
-import { MpvPlayer } from './player/mpv';
-import { StreamBridge } from './player/bridge';
 import { PlayerWindows } from './player/windows';
+import { PlayerController, type PlayerOut } from './player/session';
+import * as danmaku from './danmaku';
 import { applyProxy, probeNetwork } from './net';
-import { emptyPlayerState, type Account, type IpcResult, type PlayerState, type Settings } from '../shared/types';
+import { type Account, type DanmakuQuery, type IpcResult, type PlayerCommand, type SettingsPatch } from '../shared/types';
 
 const wrap = async <T>(fn: () => Promise<T> | T): Promise<IpcResult<T>> => {
   try {
@@ -24,14 +24,20 @@ const wrap = async <T>(fn: () => Promise<T> | T): Promise<IpcResult<T>> => {
 };
 
 export class AppServices {
-  private mpv: MpvPlayer | null = null;
-  private bridge: StreamBridge | null = null;
   private windows = new PlayerWindows();
-  private progressTimer: NodeJS.Timeout | null = null;
-  private session: { itemId: string; mediaSourceId: string; playSessionId: string } | null = null;
-  private lastState: PlayerState = emptyPlayerState();
+  private player: PlayerController;
 
-  constructor(private getMainWindow: () => BrowserWindow | null, private rendererUrl: (hash: string) => string) {}
+  constructor(private getMainWindow: () => BrowserWindow | null, private rendererUrl: (hash: string) => string) {
+    // The player writes to every window because the state line is also read from the library window, and
+    // the overlay that draws the controls is a separate process of its own.
+    const out: PlayerOut = {
+      state: s => this.broadcast('player:state', s),
+      session: s => this.broadcast('player:session', s),
+      media: m => this.broadcast('player:media', m),
+      reveal: () => this.getMainWindow()?.show(),
+    };
+    this.player = new PlayerController(this.windows, out, this.rendererUrl);
+  }
 
   private identity() {
     const c = config.get();
@@ -41,14 +47,20 @@ export class AppServices {
   private client(): EmbyClient {
     const acc = config.activeAccount();
     if (!acc) throw new EmbyError('还没有登录任何服务器', 401);
-    return new EmbyClient(acc, this.identity(), config.get().settings);
+    return new EmbyClient(acc, this.identity());
+  }
+
+  private broadcast(channel: string, payload: unknown): void {
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.isDestroyed()) w.webContents.send(channel, payload);
+    }
   }
 
   /** This gateway's login reply has no ServerName, so accounts saved with the bare host get the friendly name after launch. */
   private refreshServerName(): void {
     const acc = config.activeAccount();
     if (!acc || acc.serverName !== new URL(acc.baseUrl).host) return;
-    new EmbyClient(acc, this.identity(), config.get().settings)
+    new EmbyClient(acc, this.identity())
       .serverName()
       .then(name => {
         if (name) config.upsertAccount({ ...acc, serverName: name });
@@ -56,78 +68,17 @@ export class AppServices {
       .catch(() => undefined);
   }
 
-  private broadcast(state: PlayerState): void {
-    this.lastState = state;
-    for (const w of BrowserWindow.getAllWindows()) {
-      if (!w.isDestroyed()) w.webContents.send('player:state', state);
-    }
-  }
-
-  private ensurePlayer(): MpvPlayer {
-    if (this.mpv?.running) return this.mpv;
-    this.mpv = new MpvPlayer();
-    this.mpv.onState(s => {
-      this.broadcast(s);
-      if (s.status === 'ended' && this.session) {
-        this.reportProgress(true);
-        const itemId = this.session.itemId;
-        this.client()
-          .markPlayed(itemId)
-          .catch(() => undefined);
-      }
-    });
-    return this.mpv;
-  }
-
-  private async attachPlayer(): Promise<void> {
-    if (this.mpv?.running) return;
-    if (!this.windows.isOpen) this.windows.open(this.rendererUrl('#/player'));
-    const hwnd = this.windows.hostHwnd();
-    const p = this.ensurePlayer();
-    const settings = config.get().settings;
-    await p.start({ hwnd, hwdec: settings.hwdec });
-    await this.windows.raiseVideoWhenReady();
-  }
-
-  /**
-   * mpv opens the loopback URL; the bridge is the side that talks TLS to the server.
-   * Measured: ffmpeg's TLS fails this proxy's CONNECT ~2/10, net.fetch 8/8.
-   */
-  private async ensureBridge(streamUrl: string): Promise<string> {
-    if (!this.bridge) this.bridge = new StreamBridge();
-    return this.bridge.open(streamUrl);
-  }
-
-  private startProgressTicker(): void {
-    this.stopProgressTicker();
-    this.progressTimer = setInterval(() => this.reportProgress(false), 15000);
-  }
-
-  private stopProgressTicker(): void {
-    if (this.progressTimer) clearInterval(this.progressTimer);
-    this.progressTimer = null;
-  }
-
-  private reportProgress(paused: boolean): void {
-    const s = this.session;
-    const st = this.lastState;
-    if (!s || !st.durationMs) return;
-    this.client()
-      .reportProgress(s.itemId, s.mediaSourceId, s.playSessionId, st.positionMs, st.durationMs, paused || st.paused)
-      .catch(() => undefined);
-  }
-
   register(): void {
     this.refreshServerName();
     ipcMain.handle('app:getConfig', () => wrap(() => {
       const c = config.get();
-      return { ...c, accounts: c.accounts.map(a => ({ ...a, accessToken: a.accessToken ? '<set>' : '' })) };
+      return { ...c, accounts: c.accounts.map(a => ({ ...a, accessToken: a.accessToken ? '<set>' : '' })), settings: config.publicSettings() };
     }));
 
     ipcMain.handle('app:login', (_e, { baseUrl, username, password }: { baseUrl: string; username: string; password: string }) =>
       wrap(async (): Promise<Account> => {
         const acc = await EmbyClient.login(normalizeBase(baseUrl), username, password, this.identity());
-        acc.serverName = (await new EmbyClient(acc, this.identity(), config.get().settings).serverName().catch(() => '')) || acc.serverName;
+        acc.serverName = (await new EmbyClient(acc, this.identity()).serverName().catch(() => '')) || acc.serverName;
         return config.upsertAccount(acc);
       }),
     );
@@ -141,13 +92,12 @@ export class AppServices {
       wrap(async (): Promise<boolean> => {
         const cur = config.get().accounts.find(a => a.accountId === input.accountId);
         if (!cur) throw new EmbyError('账号不存在', 404);
-        const settings = config.get().settings;
         const baseUrl = normalizeBase(input.baseUrl);
         const username = input.username.trim();
         const label = input.label === undefined ? cur.label : input.label.trim().slice(0, 24) || undefined;
         if (input.password) {
           const fresh = await EmbyClient.login(baseUrl, username, input.password, this.identity());
-          fresh.serverName = (await new EmbyClient(fresh, this.identity(), settings).serverName().catch(() => '')) || fresh.serverName;
+          fresh.serverName = (await new EmbyClient(fresh, this.identity()).serverName().catch(() => '')) || fresh.serverName;
           const saved: Omit<Account, 'accountId'> = fresh;
           config.updateAccount(cur.accountId, { ...saved, label });
           return true;
@@ -155,7 +105,7 @@ export class AppServices {
         // Without a typed password the stored token has to carry the new address, or we would save a dead account.
         const patch = { baseUrl, username, label };
         if (baseUrl !== cur.baseUrl || username !== cur.username) {
-          await new EmbyClient({ ...cur, ...patch }, this.identity(), settings).views();
+          await new EmbyClient({ ...cur, ...patch }, this.identity()).views();
         }
         config.updateAccount(cur.accountId, patch);
         return true;
@@ -164,11 +114,14 @@ export class AppServices {
 
     ipcMain.handle('app:pingServer', (_e, baseUrl: string) => wrap(() => EmbyClient.publicInfo(baseUrl, this.identity())));
 
-    ipcMain.handle('app:setSettings', (_e, patch: Partial<Settings>) => wrap(async () => {
+    ipcMain.handle('app:setSettings', (_e, patch: SettingsPatch) => wrap(async () => {
       // The route is part of the setting, so it moves here rather than on next launch. Applying first
       // means a rejected address never reaches the file, and the live route stays where it was.
       await applyProxy({ ...config.get().settings, ...patch });
-      return config.saveSettings(patch);
+      const next = config.saveSettings(patch);
+      // A player knob has to reach the running stream, not wait for the next 播放.
+      if (patch.player) this.player.applyPrefs(next.player);
+      return config.publicSettings();
     }));
 
     ipcMain.handle('net:probe', () => wrap(() => probeNetwork(this.identity())));
@@ -177,7 +130,7 @@ export class AppServices {
     ipcMain.handle('app:accountCounts', (_e, accountId: string) => wrap(async () => {
       const acc = config.get().accounts.find(a => a.accountId === accountId);
       if (!acc) throw new EmbyError('账号不存在', 404);
-      return new EmbyClient(acc, this.identity(), config.get().settings).counts();
+      return new EmbyClient(acc, this.identity()).counts();
     }));
 
     ipcMain.handle('app:switchAccount', (_e, accountId: string) => wrap(() => {
@@ -213,65 +166,19 @@ export class AppServices {
     ipcMain.handle('meta:csm', (_e, { kind, title }: { kind: 'movie' | 'tv'; title: string }) => wrap(() => csmGuide(kind, title)));
     ipcMain.handle('meta:setKeys', (_e, patch: { tmdbV4Token?: string; traktClientId?: string }) => wrap(() => config.setMetaKeys(patch)));
 
-    ipcMain.handle('player:play', (_e, itemId: string) =>
-      wrap(async () => {
-        const c = this.client();
-        const [info, resume] = await Promise.all([c.playbackInfo(itemId), c.resumePoint(itemId)]);
-        const name = resume.name || info.name || itemId;
-        const playUrl = await this.ensureBridge(info.directUrl);
-        await this.attachPlayer();
-        const p = this.ensurePlayer();
-        this.session = { itemId, mediaSourceId: info.mediaSourceId, playSessionId: info.playSessionId };
-        try {
-          await p.load(playUrl, name, { startMs: resume.startMs, playMethod: info.playMethod });
-        } catch (e) {
-          // The overlay is a different window than the caller, so a failure has to
-          // travel through the shared state or the user just sees a black screen.
-          this.broadcast({ ...this.lastState, status: 'error', error: explain(e) });
-          throw e;
-        }
-        this.startProgressTicker();
-        this.windows.focus();
-        return true;
-      }),
-    );
+    // The player is one object with the whole lifecycle; every channel below is a thin pass-through, so
+    // nothing the overlay can ask for needs a second copy of the logic here.
+    ipcMain.handle('player:play', (_e, itemId: string) => wrap(async () => (await this.player.play(itemId), true)));
+    ipcMain.handle('player:command', (_e, cmd: PlayerCommand) => wrap(async () => (await this.player.command(cmd), true)));
+    ipcMain.handle('player:close', () => wrap(async () => (await this.player.close(), true)));
+    ipcMain.handle('player:state', () => this.player.getState());
+    ipcMain.handle('player:session', () => wrap(() => this.player.getSession()));
+    ipcMain.handle('player:media', () => wrap(() => this.player.getMedia()));
 
-    ipcMain.handle('player:command', (_e, cmd: { action: string; value?: any }) =>
-      wrap(async () => {
-        const p = this.mpv;
-        if (!p?.running) return false;
-        switch (cmd.action) {
-          case 'toggle': await p.toggle(); break;
-          case 'seek': await p.seekTo(Number(cmd.value)); break;
-          case 'seekBy': await p.seekBy(Number(cmd.value)); break;
-          case 'volume': await p.setVolume(Number(cmd.value)); break;
-          case 'mute': await p.setMuted(!!cmd.value); break;
-          case 'sid': await p.setSubtitleIndex(cmd.value === 'no' || cmd.value === 'auto' ? cmd.value : Number(cmd.value)); break;
-          default: throw new Error(`unknown action ${cmd.action}`);
-        }
-        if (cmd.action === 'toggle') this.reportProgress(false);
-        return true;
-      }),
-    );
-
-    ipcMain.handle('player:fullscreen', (_e, on: boolean) => wrap(() => { this.windows.setFullscreen(on); return this.windows.isFullscreen; }));
-    ipcMain.handle('player:state', () => this.lastState);
-
-    ipcMain.handle('player:close', () =>
-      wrap(async () => {
-        this.stopProgressTicker();
-        this.reportProgress(true);
-        await this.mpv?.quit();
-        this.mpv = null;
-        this.bridge?.close();
-        this.bridge = null;
-        this.session = null;
-        this.windows.close();
-        this.broadcast(emptyPlayerState());
-        this.getMainWindow()?.show();
-        return true;
-      }),
-    );
+    // 弹幕 asks two services that are not the media server, so both handlers answer nothing at all while
+    // the switch in 设置 is off.
+    ipcMain.handle('danmaku:search', (_e, q: DanmakuQuery) => wrap(() => danmaku.search(q)));
+    ipcMain.handle('danmaku:track', (_e, { q, trackId }: { q: DanmakuQuery; trackId: string }) => wrap(() => danmaku.fetchTrack(q, trackId)));
 
     ipcMain.on('ui:window', (e, { action }: { action: string }) => {
       const w = BrowserWindow.fromWebContents(e.sender);
@@ -282,13 +189,8 @@ export class AppServices {
     });
   }
 
+  /** Quit-time teardown only: the app is going away, so nothing waits for a window to be talked to. */
   async shutdown(): Promise<void> {
-    this.stopProgressTicker();
-    if (this.session) this.reportProgress(true);
-    await this.mpv?.quit().catch(() => undefined);
-    this.mpv = null;
-    this.bridge?.close();
-    this.bridge = null;
-    this.windows.close();
+    await this.player.shutdown();
   }
 }
