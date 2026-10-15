@@ -5,11 +5,13 @@ import type { LibraryItem, MediaStreamInfo, PlaybackSource, TmdbSimilar, TmdbSti
 import HScroller from '../components/detail/HScroller.vue';
 import FilterSelect from '../components/browse/FilterSelect.vue';
 import ScoreStrip from '../components/ScoreStrip.vue';
+import HeroPlay from '../components/HeroPlay.vue';
 import TitleArt from '../components/TitleArt.vue';
 import { tmdbKind as kindOf, useScores } from '../lib/scores';
 import { usePlayerStore } from '../stores/player';
 import { useAppStore } from '../stores/app';
 import { episodePosition, fmtDate, fmtDateTime, fmtRuntime, isPositionOnlyName, seenLabel } from '../lib/format';
+import { resumeTarget } from '../lib/resume';
 import { genreLabels } from '../lib/genres';
 
 const props = defineProps<{ id: string }>();
@@ -163,18 +165,14 @@ const heroBackdrop = ref('');
 /** Ranked title treatments for this item; TitleArt walks them and falls back to the name. */
 const titleUrls = ref<string[]>([]);
 
+/** The row this hero is about, as the shared button reads it: null when nothing has been started. */
+const resume = computed(() => resumeTarget(item.value, isSeries.value || isSeason.value ? episodes.value : []));
 /** The one item the play button is about: the episode still in progress, else the first of the season.
- *  Everything under that button - its label, its caption, whether it says 继续播放 - reads from here, so
- *  the three cannot disagree the way they did when each picked an episode on its own. */
-const playTarget = computed<LibraryItem | null>(() => {
-  if (!item.value) return null;
-  if (isSeries.value || isSeason.value) {
-    return episodes.value.find(e => e.userData?.playedPercentage) || episodes.value[0] || null;
-  }
-  return item.value;
-});
+ *  Everything the button says and plays comes from here, so the two cannot disagree. */
+const playTarget = computed<LibraryItem | null>(
+  () => resume.value?.item || ((isSeries.value || isSeason.value) ? episodes.value[0] || null : item.value),
+);
 const playableId = computed(() => playTarget.value?.id || '');
-const resuming = computed(() => !!playTarget.value?.userData?.playedPercentage);
 /** The season the row is asking about: an episode carries its own number when the gateway feels like
  *  answering, otherwise the season tab that is open - or this page itself, when it is a Season item. */
 const seasonOf = (e: LibraryItem): number | null =>
@@ -189,14 +187,6 @@ const epTitle = (e: LibraryItem): string => {
 };
 const epSeen = (e: LibraryItem): string => seenLabel(e.userData?.playedPercentage, e.runTimeTicks);
 const epPlayed = (e: LibraryItem): number => Math.min(100, e.userData?.playedPercentage || 0);
-const playCaption = computed(() => {
-  const t = playTarget.value;
-  if (!t) return '';
-  const seen = epSeen(t);
-  if (!isSeries.value && !isSeason.value) return seen;
-  const pos = epPos(t);
-  return seen ? `${pos} · ${seen}` : pos;
-});
 
 const genres = computed(() => genreLabels(item.value?.genres));
 const premiered = computed(() => fmtDate(item.value?.premiereDate) || String(item.value?.productionYear || ''));
@@ -353,13 +343,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
               <p class="overview">{{ overviewText || '暂无简介。' }}</p>
             </div>
             <div class="actions">
-              <button class="play" :disabled="!playableId || player.busy" @click="play()">
-                <span class="tri"></span>
-                <span class="ptxt">
-                  <b>{{ player.busy ? '准备中…' : resuming ? '继续播放' : '播放' }}</b>
-                  <i v-if="playCaption">{{ playCaption }}</i>
-                </span>
-              </button>
+              <HeroPlay :target="resume" :busy="player.busy" @play="play()" />
               <button class="iconb" :class="{ on: fav }" :disabled="favBusy" :title="fav ? '已收藏' : '收藏'" @click="toggleFav">
                 <svg viewBox="0 0 24 24" width="20" height="20"><path :d="fav ? 'M12 21l-1.5-1.3C5.4 15 2 11.9 2 8.2 2 5.4 4.2 3.2 7 3.2c1.6 0 3.1.7 4 1.9.9-1.2 2.4-1.9 4-1.9 2.8 0 5 2.2 5 5 0 3.7-3.4 6.8-8.5 11.5L12 21z' : 'M12 21l-1.5-1.3C5.4 15 2 11.9 2 8.2 2 5.4 4.2 3.2 7 3.2c1.6 0 3.1.7 4 1.9.9-1.2 2.4-1.9 4-1.9 2.8 0 5 2.2 5 5 0 3.7-3.4 6.8-8.5 11.5L12 21zM7 5.2c-1.7 0-3 1.3-3 3 0 3 3 5.9 8 10.2 5-4.3 8-7.2 8-10.2 0-1.7-1.3-3-3-3-1.3 0-2.5.8-3 2h-4c-.5-1.2-1.7-2-3-2z'" fill="currentColor" /></svg>
               </button>
@@ -651,24 +635,6 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
 /* Same split as the lobby hero: the actions answer for the right edge, flush against it even when
    the copy column shrinks at the minimum window. */
 .actions { flex: none; margin-left: auto; display: flex; align-items: center; gap: 12px; }
-.play {
-  display: inline-flex;
-  align-items: center;
-  gap: 11px;
-  padding: 11px 26px;
-  border-radius: 999px;
-  background: #f4f4f7;
-  color: var(--ink);
-  box-shadow: 0 10px 26px rgba(6, 8, 14, 0.4);
-  transition: transform var(--hov) var(--ease-out), box-shadow var(--hov) var(--ease), background var(--hov) var(--ease), opacity var(--hov) var(--ease);
-}
-.play:hover:not(:disabled) { background: #fff; transform: translateY(-1px); box-shadow: 0 14px 32px rgba(6, 8, 14, 0.46); }
-.play:active:not(:disabled) { transform: scale(0.97); }
-.play:disabled { opacity: 0.5; }
-.tri { width: 0; height: 0; border-left: 11px solid var(--ink); border-top: 7px solid transparent; border-bottom: 7px solid transparent; }
-.ptxt { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.15; }
-.ptxt b { font-size: 15px; font-weight: 650; }
-.ptxt i { font-size: 13px; font-weight: 500; opacity: 0.72; font-style: normal; }
 .iconb {
   display: grid;
   place-items: center;

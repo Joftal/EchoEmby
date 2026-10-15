@@ -8,10 +8,10 @@ export const fmtClock = (ms: number): string => {
 
 export const ticksToMs = (ticks?: number): number => Math.round((ticks || 0) / 1e4);
 
-/** The app's one progress read-out, 「看到 27:06」. The gateway never answers StartPositionTicks (measured:
- *  0 on every row, even right after a progress POST), so the position has to be rebuilt as percentage ×
- *  runtime — the same arithmetic Emby's own web client does. Coverage is the server's, not ours: 3 of the
- *  200 rows the 在看 query returns carry a percentage at all. */
+/** The episode rows' progress read-out, 「看到 27:06」. Built from percentage × runtime because that is the
+ *  only pair the 在看 query answers with for most rows (measured: 2 of its 8 rows carry a percentage, and
+ *  the ones that carry a position carry it as `PlaybackPositionTicks`, which the hero buttons read
+ *  directly through `resume.ts`). */
 export const seenLabel = (pct?: number, runTimeTicks?: number): string => {
   if (!pct || pct <= 0) return '';
   const ms = (ticksToMs(runTimeTicks) * Math.min(100, pct)) / 100;
@@ -31,6 +31,15 @@ export const episodePosition = (season?: number | null, episode?: number | null)
 export const isPositionOnlyName = (name: string): boolean => {
   const t = name.trim();
   return /^第\s*[\d一二三四五六七八九十百千]+\s*[集话話]\s*$/.test(t) || /^\d+$/.test(t) || /^episode\s*\d+$/i.test(t);
+};
+
+/** 「14 分钟」 / 「2 小时 6 分」 from a millisecond offset — how far a viewer has got. A resume read-out
+ *  counts whole minutes and never pretends to a second, because the number it came from is one a
+ *  progress POST rounded to the nearest heartbeat. */
+export const fmtElapsed = (ms: number): string => {
+  const mins = Math.round(Math.max(0, ms) / 60000);
+  if (!mins) return '';
+  return mins >= 60 ? `${Math.floor(mins / 60)} 小时 ${mins % 60} 分` : `${mins} 分钟`;
 };
 
 export const fmtRuntime = (ticks?: number): string => {

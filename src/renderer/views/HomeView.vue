@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import type { LibraryItem } from '../../shared/types';
 import HeroBanner from '../components/home/HeroBanner.vue';
@@ -34,6 +34,20 @@ const features = computed<LibraryItem[]>(() => {
 
 const variant = (key: string) => (key === 'resume' ? 'still' : 'poster');
 const cardWidth = (key: string) => (key === 'resume' ? 300 : 190);
+
+/** The lobby's own in-progress rows. The hero needs them as candidates because a Series card has no
+ *  position of its own — the episode it stopped on is the one already in 继续观看. */
+const resume = computed(() => store.rows.find(r => r.key === 'resume')?.items || []);
+
+/* Closing the player is what changes where a film stopped, and the hero says that number out loud, so
+   the rows are re-read then rather than on the next start. `features` scores on art and rating, both
+   stable per item, so the carousel does not re-shuffle underneath the refresh. */
+watch(
+  () => player.session,
+  (now, prev) => {
+    if (!now && prev) void store.loadHome();
+  },
+);
 
 /** The rAF throttle this used to have is what made the hero's parallax swim: deferring the write to
    the next frame's callback puts the art layer one whole frame behind the scroll it tracks, measured
@@ -91,7 +105,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="scroller" class="page" @scroll.passive="onScroll">
-    <HeroBanner v-if="features.length" :items="features" :scroll="scroll" @play="onPlay" @open="open" />
+    <HeroBanner v-if="features.length" :items="features" :scroll="scroll" :resume="resume" @play="onPlay" @open="open" />
     <div v-else class="hero-sk"></div>
 
     <p v-if="store.error && !store.rows.length" class="err">

@@ -1,16 +1,20 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { LibraryItem } from '../../../shared/types';
-import { fmtDate } from '../../lib/format';
+import { fmtDate, fmtElapsed, ticksToMs } from '../../lib/format';
 import { genreLabels } from '../../lib/genres';
+import { resumeTarget } from '../../lib/resume';
+import HeroPlay from '../HeroPlay.vue';
 import ScoreStrip from '../ScoreStrip.vue';
 import TitleArt from '../TitleArt.vue';
 import { useAppStore } from '../../stores/app';
+import { usePlayerStore } from '../../stores/player';
 
-const props = defineProps<{ items: LibraryItem[]; scroll: number }>();
+const props = defineProps<{ items: LibraryItem[]; scroll: number; resume?: LibraryItem[] }>();
 const emit = defineEmits<{ (e: 'play', item: LibraryItem): void; (e: 'open', item: LibraryItem): void }>();
 
 const store = useAppStore();
+const player = usePlayerStore();
 const idx = ref(0);
 const hovering = ref(false);
 const DUR = 9000;
@@ -34,11 +38,10 @@ async function fetchTitle(it: LibraryItem): Promise<void> {
 
 const current = computed(() => props.items[idx.value] ?? null);
 const playable = computed(() => ['Movie', 'Episode', 'Video'].includes(current.value?.type || ''));
-const runtime = computed(() => {
-  const mins = Math.round((current.value?.runTimeTicks || 0) / 1e7 / 60);
-  if (!mins) return '';
-  return mins >= 60 ? `${Math.floor(mins / 60)} 小时 ${mins % 60} 分` : `${mins} 分钟`;
-});
+/** The slide's own button reads the lobby's 继续观看 rows as its candidates: a Series card has no progress
+ *  of its own, and the episode it stopped on is already in the store. */
+const target = computed(() => resumeTarget(current.value, props.resume || []));
+const runtime = computed(() => fmtElapsed(ticksToMs(current.value?.runTimeTicks)));
 const genres = computed(() => genreLabels(current.value?.genres).slice(0, 3).join(' '));
 const date = computed(() => fmtDate(current.value?.premiereDate) || String(current.value?.productionYear || ''));
 
@@ -172,10 +175,7 @@ watch(
         <ScoreStrip v-if="current" :item="current" />
       </div>
       <div class="cta">
-        <button v-if="playable" class="primary" @click="emit('play', current)">
-          <svg viewBox="0 0 24 24" width="15" height="15"><path d="M8 5l12 7-12 7z" fill="currentColor" /></svg>
-          播放
-        </button>
+        <HeroPlay v-if="playable || target" :target="target" :busy="player.busy" @play="emit('play', target ? target.item : current)" />
         <button class="ghost" @click="emit('open', current)">
           <svg viewBox="0 0 24 24" width="15" height="15"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8" /><path d="M12 11v6M12 7.6v.9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" /></svg>
           {{ playable ? '详情' : '查看' }}
@@ -370,9 +370,9 @@ watch(
   flex: none;
   margin-left: auto;
   display: flex;
+  align-items: center;
   gap: 10px;
 }
-.primary,
 .ghost {
   display: inline-flex;
   align-items: center;
@@ -382,29 +382,16 @@ watch(
   border-radius: 999px;
   font-size: 14px;
   font-weight: 600;
-  transition: transform var(--hov) var(--ease-out), background var(--hov) var(--ease), box-shadow var(--hov) var(--ease), border-color var(--hov) var(--ease);
-}
-.primary {
-  color: var(--ink);
-  background: #f4f4f7;
-  box-shadow: 0 10px 26px rgba(6, 8, 14, 0.4);
-}
-.primary:hover {
-  background: #fff;
-  transform: translate3d(0, -2px, 0);
-  box-shadow: 0 14px 32px rgba(6, 8, 14, 0.46);
-}
-.ghost {
   color: #fff;
   background: rgba(255, 255, 255, 0.16);
   border: 1px solid rgba(255, 255, 255, 0.36);
   backdrop-filter: blur(10px);
+  transition: transform var(--hov) var(--ease-out), background var(--hov) var(--ease), box-shadow var(--hov) var(--ease), border-color var(--hov) var(--ease);
 }
 .ghost:hover {
   background: rgba(255, 255, 255, 0.26);
   transform: translate3d(0, -2px, 0);
 }
-.primary:active,
 .ghost:active {
   transform: scale(0.96);
   transition-duration: 0.1s;
