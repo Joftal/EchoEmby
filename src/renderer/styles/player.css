@@ -8,12 +8,14 @@
    out of, and rows whose selected state is a filled band - never a size change. */
 :root {
   --pl-glass: rgba(18, 18, 24, 0.66);
-  --pl-glass-solid: rgba(18, 18, 24, 0.92);
   --pl-glass-hi: rgba(255, 255, 255, 0.12);
   --pl-line: rgba(255, 255, 255, 0.18);
   --pl-text: #ffffff;
-  --pl-dim: rgba(255, 255, 255, 0.9);
-  --pl-faint: rgba(255, 255, 255, 0.66);
+  --pl-dim: #e8e8ec;
+  --pl-faint: #aeaeb8;
+  /* The menu card is opaque on purpose: at 92% the picture under it pushed every bright frame up
+     through the ink, and type that changes luminance with the film reads as blur. */
+  --pl-sheet: #17171d;
   --pl-hi: #7ab3ff;
   --pl-fill: #2f7dfd;
   --pl-shadow: 0 20px 54px rgba(0, 0, 0, 0.6);
@@ -117,7 +119,7 @@
   white-space: nowrap;
 }
 .pl-time .dash {
-  opacity: 0.55;
+  color: var(--pl-faint);
   margin: 0 3px;
 }
 /* ---- the card: one popover that hangs above the button that called it ---- */
@@ -144,7 +146,7 @@
   width: 15px;
   height: 8px;
   margin: -1px 0 0 calc(var(--ax, 18px) - 7px);
-  background: var(--pl-glass-solid);
+  background: var(--pl-sheet);
   clip-path: polygon(0 0, 100% 0, 50% 100%);
 }
 
@@ -158,8 +160,7 @@
   display: flex;
   flex-direction: column;
   color: var(--pl-text);
-  background: var(--pl-glass-solid);
-  backdrop-filter: blur(30px) saturate(1.8);
+  background: var(--pl-sheet);
   border: 1px solid var(--pl-line);
   border-radius: var(--pl-r-sheet);
   box-shadow: var(--pl-sheet-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.09);
@@ -235,7 +236,7 @@
   bottom: 1px;
   height: 30px;
   border-radius: 0 0 calc(var(--pl-r-sheet) - 1px) calc(var(--pl-r-sheet) - 1px);
-  background: linear-gradient(to bottom, rgba(18, 18, 24, 0), var(--pl-glass-solid));
+  background: linear-gradient(to bottom, rgba(23, 23, 29, 0), var(--pl-sheet));
   pointer-events: none;
 }
 .pl-sect {
@@ -295,7 +296,7 @@
   opacity: 1;
 }
 .pl-row.on .meta {
-  color: rgba(255, 255, 255, 0.82);
+  color: #dae8ff;
 }
 .pl-row .label {
   flex: 1;
@@ -313,7 +314,7 @@
   white-space: nowrap;
 }
 .pl-row.on .sub {
-  color: rgba(255, 255, 255, 0.8);
+  color: #d5e5ff;
 }
 .pl-row .meta {
   font-size: 14px;
@@ -324,7 +325,7 @@
   flex: none;
   display: inline-flex;
   align-items: center;
-  opacity: 0.7;
+  color: var(--pl-faint);
 }
 .pl-note {
   font-size: 13px;
@@ -346,8 +347,7 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: var(--pl-glass-solid);
-  backdrop-filter: blur(30px) saturate(1.8);
+  background: var(--pl-sheet);
   border: 1px solid var(--pl-line);
   border-radius: var(--pl-r-sheet);
   box-shadow: var(--pl-sheet-shadow);
@@ -365,7 +365,6 @@
   background: none;
   border-color: transparent;
   box-shadow: none;
-  backdrop-filter: none;
 }
 .pl-panel:has(> .pl-sub:not(.pl-sub-leave-active)) > .pl-head,
 .pl-panel:has(> .pl-sub:not(.pl-sub-leave-active)) > .pl-body {
