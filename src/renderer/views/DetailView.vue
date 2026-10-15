@@ -5,6 +5,7 @@ import type { LibraryItem, MediaStreamInfo, PlaybackSource, TmdbSimilar, TmdbSti
 import HScroller from '../components/detail/HScroller.vue';
 import FilterSelect from '../components/browse/FilterSelect.vue';
 import ScoreStrip from '../components/ScoreStrip.vue';
+import TitleArt from '../components/TitleArt.vue';
 import { tmdbKind as kindOf, useScores } from '../lib/scores';
 import { usePlayerStore } from '../stores/player';
 import { useAppStore } from '../stores/app';
@@ -159,6 +160,8 @@ watch(
 );
 
 const heroBackdrop = ref('');
+/** Ranked title treatments for this item; TitleArt walks them and falls back to the name. */
+const titleUrls = ref<string[]>([]);
 
 /** The one item the play button is about: the episode still in progress, else the first of the season.
  *  Everything under that button - its label, its caption, whether it says 继续播放 - reads from here, so
@@ -256,6 +259,7 @@ watch(
     backdrops.value = [];
     viewer.value = null;
     heroBackdrop.value = '';
+    titleUrls.value = [];
     item.value = null;
     seasons.value = [];
     episodes.value = [];
@@ -278,6 +282,7 @@ watch(
     // The six score sources come through useScores, which keys them by item id and answers once.
     const kind = tmdbKind.value;
     const tmdbId = it.providers?.tmdb;
+    void app.logoCandidates(it).then(u => (props.id === id ? (titleUrls.value = u) : undefined));
     if (kind && tmdbId) {
       void window.echoemby.meta.tmdbSimilar({ kind, tmdbId }).then(x => (props.id === id ? (similar.value = x.ok ? x.data || [] : []) : undefined));
       void window.echoemby.meta.tmdbImages({ kind, tmdbId }).then(x => (props.id === id ? (backdrops.value = x.ok ? x.data || [] : []) : undefined));
@@ -341,7 +346,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
         >
           <div class="copy">
             <div class="text">
-              <h1>{{ item.name }}</h1>
+              <TitleArt :urls="titleUrls" :name="item.name" />
               <p v-if="item.tagline" class="tagline">{{ item.tagline }}</p>
               <div class="line">{{ metaLine }}</div>
               <ScoreStrip :item="item" class="badges" />

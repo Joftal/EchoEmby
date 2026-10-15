@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
 import type { AppConfig, FacetOption, LibraryItem, LibraryRow, SettingsPatch, TmdbStills } from '../../shared/types';
+import { tmdbKind } from '../lib/scores';
 
 export const useAppStore = defineStore('app', () => {
   const config = ref<AppConfig | null>(null);
@@ -190,6 +191,51 @@ export const useAppStore = defineStore('app', () => {
     return url;
   }
 
+  async function logoUrl(item: { id: string; logoImageTag?: string }, width = 900): Promise<string> {
+    const key = `${account.value?.accountId}|logo:${item.id}:${width}`;
+    const hit = imgCache.get(key);
+    if (hit) return hit;
+    const r = await window.echoemby.emby.imageUrl({ id: item.id, tag: item.logoImageTag, width, type: 'logo' });
+    const url = r.ok && r.data ? r.data : '';
+    if (url) imgCache.set(key, url);
+    return url;
+  }
+
+  /* A ranked list rather than one URL, because the top candidate can still fail to load: TMDB hosts a
+     treatment its CDN then answers with a 404, and a server Logo tag can outlive the file. The caller
+     walks it — 简体中文, 繁体中文, 英文, the work's own language, any other, the server's own Logo, and
+     finally nothing, which is where the text title comes back. */
+  const logoAsk = new Map<string, Promise<string[]>>();
+
+  /* TMDB files `original` logo PNGs at print resolution — measured on 玩具总动员5, 8,199,244 bytes and
+     4363x5329 for a treatment the hero shows at 520 CSS px (650 device px on this machine's DPR 1.25
+     screen). `w500` is the CDN's largest logo step — w1000 and above answer 400 for this file type — so
+     a raster treatment is shown at a mild upscale rather than paid for at megabytes a slide. */
+  const tmdbLogoUrl = (path: string): string =>
+    `https://image.tmdb.org/t/p/${path.endsWith('.svg') ? 'original' : 'w500'}${path}`;
+
+  function logoCandidates(item: LibraryItem): Promise<string[]> {
+    const key = `${account.value?.accountId}|${item.id}`;
+    const hit = logoAsk.get(key);
+    if (hit) return hit;
+    const ask = (async () => {
+      const out: string[] = [];
+      const kind = tmdbKind(item);
+      const tmdbId = item.providers?.tmdb;
+      if (kind && tmdbId) {
+        const r = await window.echoemby.meta.tmdbLogos({ kind, tmdbId });
+        if (r.ok && r.data) out.push(...r.data.map(tmdbLogoUrl));
+      }
+      if (item.logoImageTag) {
+        const u = await logoUrl(item);
+        if (u) out.push(u);
+      }
+      return out;
+    })();
+    logoAsk.set(key, ask);
+    return ask;
+  }
+
   // Item ids are per-server, so both maps are keyed by account: a cache kept across a switch would
   // dress one server's episode in another server's still.
   const seriesTmdb = new Map<string, Promise<string>>();
@@ -241,5 +287,5 @@ export const useAppStore = defineStore('app', () => {
     return imageUrl({ id: item.parentId }, width);
   }
 
-  return { config, account, rows, views, genres, loading, error, ready, counts, init, login, switchTo, remove, update, saveSettings, loadCounts, loadHome, loadViews, loadGenres, imageUrl, backdropUrl, itemArt };
+  return { config, account, rows, views, genres, loading, error, ready, counts, init, login, switchTo, remove, update, saveSettings, loadCounts, loadHome, loadViews, loadGenres, imageUrl, backdropUrl, logoCandidates, itemArt };
 });

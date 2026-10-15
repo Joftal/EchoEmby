@@ -182,6 +182,7 @@ const mapItem = (r: any): LibraryItem => ({
   runTimeTicks: r.RunTimeTicks,
   primaryImageTag: r.ImageTags?.Primary,
   backdropImageTag: r.BackdropImageTags?.[0],
+  logoImageTag: r.ImageTags?.Logo,
   // Episodes must land on the Series page: this fork answers ParentId with the
   // Season id and only exposes SeriesId when it is requested in Fields.
   parentId: r.SeriesId || r.ParentId,
@@ -346,7 +347,7 @@ export class EmbyClient {
   }
 
   async items(params: Record<string, string | number | boolean | undefined>): Promise<LibraryItem[]> {
-    const j = await this.get<any>(`/Users/${this.account.userId}/Items`, { Fields: FIELDS, ImageTypeLimit: 1, EnableImageTypes: 'Primary,Backdrop,Thumb', ...params });
+    const j = await this.get<any>(`/Users/${this.account.userId}/Items`, { Fields: FIELDS, ImageTypeLimit: 1, EnableImageTypes: 'Primary,Backdrop,Thumb,Logo', ...params });
     return (j.Items || []).map(mapItem);
   }
 
@@ -409,7 +410,7 @@ export class EmbyClient {
     const latest = await Promise.all(
       views.slice(0, 8).map(async v => {
         const [items, newest] = await Promise.all([
-          this.get<any>(`/Users/${this.account.userId}/Items/Latest`, { ParentId: v.id, Limit: 18, Fields: FIELDS, ImageTypeLimit: 1, EnableImageTypes: 'Primary,Backdrop' })
+          this.get<any>(`/Users/${this.account.userId}/Items/Latest`, { ParentId: v.id, Limit: 18, Fields: FIELDS, ImageTypeLimit: 1, EnableImageTypes: 'Primary,Backdrop,Logo' })
             .then(j => (j || []).map(mapItem))
             .catch(() => []),
           this.newestEpisodes(v.id),
@@ -440,6 +441,16 @@ export class EmbyClient {
     q.set('maxWidth', String(width));
     q.set('format', 'jpg');
     return `${this.base}/Items/${item.id}/Images/Backdrop?${q}`;
+  }
+
+  /** The title treatment has to stay a PNG: the art is a transparent cut-out, and a JPEG of it arrives on a
+   *  black ground, which is the one background the hero does not have. */
+  logoUrl(item: Pick<LibraryItem, 'id' | 'logoImageTag'>, width: number): string {
+    const q = authQuery(this.identity);
+    if (item.logoImageTag) q.set('tag', item.logoImageTag);
+    q.set('maxWidth', String(width));
+    q.set('format', 'png');
+    return `${this.base}/Items/${item.id}/Images/Logo?${q}`;
   }
 
   /** What one negotiation round decided: which version, by which method, from which address. */

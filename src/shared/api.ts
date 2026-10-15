@@ -25,7 +25,7 @@ export interface EchoEmbyApi {
     seasons(seriesId: string): Promise<IpcResult<LibraryItem[]>>;
     episodes(params: { seriesId: string; seasonId: string }): Promise<IpcResult<LibraryItem[]>>;
     favorite(params: { id: string; on: boolean }): Promise<IpcResult<boolean>>;
-    imageUrl(params: { id: string; tag?: string; width: number; type?: 'primary' | 'backdrop' }): Promise<IpcResult<string>>;
+    imageUrl(params: { id: string; tag?: string; width: number; type?: 'primary' | 'backdrop' | 'logo' }): Promise<IpcResult<string>>;
   };
   meta: {
     /** Null is a normal answer: the title simply has no Rotten Tomatoes page we can find. */
@@ -38,6 +38,8 @@ export interface EchoEmbyApi {
     tmdbStills(input: { tmdbId: string; season: number }): Promise<IpcResult<{ value: TmdbStills; any: boolean } | null>>;
     tmdbSimilar(input: { kind: 'movie' | 'tv'; tmdbId: string }): Promise<IpcResult<TmdbSimilar[]>>;
     tmdbImages(input: { kind: 'movie' | 'tv'; tmdbId: string }): Promise<IpcResult<string[]>>;
+    /** The title treatments on TMDB's page, ranked 简体中文 → 繁体中文 → 英文 → 影视语言 → 其他. */
+    tmdbLogos(input: { kind: 'movie' | 'tv'; tmdbId: string }): Promise<IpcResult<string[]>>;
     csm(input: { kind: 'movie' | 'tv'; title: string }): Promise<IpcResult<CsmGuide | null>>;
     setKeys(patch: Partial<MetaKeys>): Promise<IpcResult<MetaKeys | undefined>>;
   };

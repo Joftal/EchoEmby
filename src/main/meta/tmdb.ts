@@ -33,6 +33,9 @@ interface Store {
   similar: Record<string, { value: TmdbSimilar[]; fetchedAt: number }>;
   /** key = `${kind}:${tmdbId}`; image.tmdb.org backdrop paths for the 剧照 strip. */
   images: Record<string, { value: string[]; fetchedAt: number }>;
+  /** key = `${kind}:${tmdbId}`; the page's title treatments, unranked — the order depends on the work's
+   *  own language, which is asked for at read time. */
+  logos: Record<string, { value: LogoRow[]; fetchedAt: number }>;
 }
 
 const file = () => path.join(app.getPath('userData'), 'tmdb.json');
@@ -42,9 +45,9 @@ const load = (): Store => {
   if (store) return store;
   let next: Store;
   try {
-    next = { meta: {}, stills: {}, similar: {}, images: {}, ...JSON.parse(readFileSync(file(), 'utf8')) };
+    next = { meta: {}, stills: {}, similar: {}, images: {}, logos: {}, ...JSON.parse(readFileSync(file(), 'utf8')) };
   } catch {
-    next = { meta: {}, stills: {}, similar: {}, images: {} };
+    next = { meta: {}, stills: {}, similar: {}, images: {}, logos: {} };
   }
   store = next;
   return next;
@@ -98,11 +101,21 @@ const pickWriters = (crew: any[]): string[] => {
 
 /** `answered` distinguishes "TMDB says this id does not exist" from "TMDB did not reply", which
  *  matters because only the former should be cached as a miss. */
-const fetchJson = async <T>(url: string, token: string): Promise<{ json: T | null; answered: boolean }> => {
+const fetchJson = async <T>(url: string, cred: string): Promise<{ json: T | null; answered: boolean }> => {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 15000);
+  /* TMDB has two credentials and they do not interchange: a v4 read token is a JWT and only the
+     Authorization header accepts it, a v3 key is 32 hex and only the `api_key` parameter accepts it.
+     One settings field takes either, so the shape picks the transport. */
+  const v4 = cred.split('.').length === 3;
+  const at = v4
+    ? url
+    : url + (url.includes('?') ? '&' : '?') + 'api_key=' + encodeURIComponent(cred);
   try {
-    const res = await net.fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, signal: ctrl.signal });
+    const res = await net.fetch(at, {
+      headers: v4 ? { Authorization: `Bearer ${cred}`, Accept: 'application/json' } : { Accept: 'application/json' },
+      signal: ctrl.signal,
+    });
     if (res.status >= 500) return { json: null, answered: false };
     if (!res.ok) return { json: null, answered: true };
     const text = await res.text();
@@ -126,7 +139,10 @@ const cachedMeta = (key: string): TmdbMeta | null => {
   if (!hit) return null;
   const ttl = 'missing' in hit ? MISS_TTL : META_TTL;
   if (Date.now() - hit.fetchedAt >= ttl) return null;
-  return 'missing' in hit ? null : hit;
+  /* Entries written before the logo ranking needed the work's language carry no `originalLanguage` at
+     all, so they count as stale and are refetched once. Absence is the test, not emptiness: a title TMDB
+     lists with no language still stores `''` and then stays cached. */
+  return 'missing' in hit || !('originalLanguage' in hit) ? null : hit;
 };
 
 /** Returns the metadata TMDB has for one title, or null when TMDB does not (or no key is configured). */
@@ -148,7 +164,7 @@ export async function tmdbMeta(kind: Kind, tmdbId: string): Promise<TmdbMeta | n
     persist();
     return null;
   }
-  const out: TmdbMeta = { fetchedAt: Date.now() };
+  const out: TmdbMeta = { fetchedAt: Date.now(), originalLanguage: String(json.original_language || '').toLowerCase() };
   const ov = typeof json.overview === 'string' ? json.overview.trim() : '';
   if (ov && hasHan(ov)) out.overviewZh = ov;
   const v = num(json.vote_average);
@@ -303,4 +319,76 @@ export async function tmdbImages(kind: Kind, tmdbId: string): Promise<string[]> 
     persist();
   }
   return out;
+}
+
+/** A title's treatments barely change once the film is out, and a week keeps a re-cut logo from living
+ *  in the hero forever. */
+const LOGO_TTL = 7 * DAY;
+
+/** One treatment as TMDB filed it. Chinese uploads all come back as `zh` in `iso_639_1`; what separates
+ *  简体 from 繁体 is the region in `iso_3166_1` (measured on 玩具总动员5: nine `zh` treatments, two filed
+ *  CN, five HK, two TW). Votes ride along so the ranking can run again at read time against whichever
+ *  language the work turns out to be in. */
+interface LogoRow {
+  path: string;
+  lang: string;
+  cc: string;
+  votes: number;
+}
+
+/** 简体中文 → 繁体中文 → 英文 → 影视本身的语言 → 其余. */
+const logoTier = (l: LogoRow, film: string): number => {
+  if (l.lang === 'zh') return l.cc === 'CN' ? 0 : 1;
+  if (l.lang === 'en') return 2;
+  if (film && l.lang === film) return 3;
+  return 4;
+};
+
+const rankLogos = (rows: LogoRow[], film: string): string[] =>
+  [...rows]
+    .sort((a, b) => logoTier(a, film) - logoTier(b, film) || b.votes - a.votes)
+    .slice(0, 8)
+    .map(l => l.path);
+
+export async function tmdbLogos(kind: Kind, tmdbId: string): Promise<string[]> {
+  if (!/^\d{1,8}$/.test(tmdbId)) return [];
+  const token = tmdbToken();
+  if (!token) return [];
+  const key = `${kind}:${tmdbId}`;
+  const s = load();
+  const hit = s.logos[key];
+  /* The work's own language is the fourth tier, and Emby does not carry it (measured: this gateway
+     returns no OriginalLanguage even when asked for it). TMDB's detail record does, and that request is
+     already made and cached for the score badges, so asking here only costs on a cold title. */
+  const film = (await tmdbMeta(kind, tmdbId))?.originalLanguage || '';
+  if (hit && Date.now() - hit.fetchedAt < LOGO_TTL) return rankLogos(hit.value, film);
+
+  /* `include_image_language=zh,en` would be the cheap ask, but measured on this library it silently
+     drops every other language — TMDB treats `null` as "no language", not as "all of them", so a title
+     whose only treatment is Japanese comes back empty. `include_all_languages` costs 118 KB instead of
+     59 KB on a 103-logo page, once a week per title. */
+  const { json, answered } = await fetchJson<any>(
+    `https://api.themoviedb.org/3/${kind}/${tmdbId}/images?include_all_languages=true`,
+    token,
+  );
+  if (!answered) return hit ? rankLogos(hit.value, film) : [];
+  const list: any[] = Array.isArray(json?.logos) ? json.logos : [];
+  const out: LogoRow[] = list
+    .filter(l => typeof l?.file_path === 'string')
+    .map(l => ({
+      path: String(l.file_path),
+      lang: String(l.iso_639_1 || '').toLowerCase(),
+      cc: String(l.iso_3166_1 || '').toUpperCase(),
+      votes: Number(l.vote_count) || 0,
+    }))
+    .sort((a, b) => b.votes - a.votes)
+    /* Held well above the eight that get shown: on a title whose older releases were all marketed in
+       繁体, the lone 简体 treatment is often the least-voted upload, and a tight cap would delete it. */
+    .slice(0, 24);
+  const prev = hit?.value;
+  if (!prev || prev.length !== out.length || prev.some((p, i) => p.path !== out[i].path)) {
+    s.logos[key] = { value: out, fetchedAt: Date.now() };
+    persist();
+  }
+  return rankLogos(out, film);
 }

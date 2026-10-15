@@ -4,6 +4,7 @@ import type { LibraryItem } from '../../../shared/types';
 import { fmtDate } from '../../lib/format';
 import { genreLabels } from '../../lib/genres';
 import ScoreStrip from '../ScoreStrip.vue';
+import TitleArt from '../TitleArt.vue';
 import { useAppStore } from '../../stores/app';
 
 const props = defineProps<{ items: LibraryItem[]; scroll: number }>();
@@ -22,6 +23,15 @@ interface Art { url: string; wide: boolean; tries: number }
 const art = ref<Record<string, Art>>({});
 const pending = new Set<string>();
 
+/* The title treatment rides along with the slide but answers for itself: the list is filled once per
+   item, and TitleArt walks it. */
+const titleArt = ref<Record<string, string[]>>({});
+
+async function fetchTitle(it: LibraryItem): Promise<void> {
+  const urls = await store.logoCandidates(it);
+  titleArt.value = { ...titleArt.value, [it.id]: urls };
+}
+
 const current = computed(() => props.items[idx.value] ?? null);
 const playable = computed(() => ['Movie', 'Episode', 'Video'].includes(current.value?.type || ''));
 const runtime = computed(() => {
@@ -39,9 +49,12 @@ async function fetchArt(it: LibraryItem, wide: boolean): Promise<void> {
 }
 
 function need(it: LibraryItem | null): void {
-  if (!it || art.value[it.id] || pending.has(it.id)) return;
-  pending.add(it.id);
-  void fetchArt(it, !!it.backdropImageTag).finally(() => pending.delete(it.id));
+  if (!it) return;
+  if (!art.value[it.id] && !pending.has(it.id)) {
+    pending.add(it.id);
+    void fetchArt(it, !!it.backdropImageTag).finally(() => pending.delete(it.id));
+  }
+  if (!(it.id in titleArt.value)) void fetchTitle(it);
 }
 
 function srcFor(it: LibraryItem): string {
@@ -148,7 +161,7 @@ watch(
       </div>
 
       <div class="text">
-        <h1>{{ current.seriesName || current.name }}</h1>
+        <TitleArt :urls="titleArt[current.id] || []" :name="current.seriesName || current.name" />
         <div class="meta">
           <span class="kind">{{ current.type === 'Episode' ? '剧集' : current.type === 'Movie' ? '电影' : '精选推荐' }}</span>
           <span v-if="genres">{{ genres }}</span>

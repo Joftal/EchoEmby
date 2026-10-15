@@ -135,6 +135,8 @@ export interface LibraryItem {
   runTimeTicks?: number;
   primaryImageTag?: string;
   backdropImageTag?: string;
+  /** The film's title treatment (艺术字), stored by the server as its own image type. */
+  logoImageTag?: string;
   parentId?: string;
   /** Both halves of an episode's address, kept apart because the fork answers ParentId with the *Season*
    *  id and only gives SeriesId when it is requested in Fields — collapsing them into parentId loses one
@@ -220,6 +222,10 @@ export interface TmdbMeta {
   writers?: string[];
   /** US certification (`PG-13`, `TV-14`) or the closest first-listed country when there is no US entry. */
   cert?: string;
+  /** The language TMDB records the work as having been made in (`ja`, `ko`, `zh`). Always present on
+   *  entries written since the logo ranking started using it as its fourth tier; `''` when TMDB has no
+   *  record. The Emby server does not carry this field, so this is the only copy we have. */
+  originalLanguage: string;
   fetchedAt: number;
 }
 

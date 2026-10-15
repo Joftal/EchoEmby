@@ -6,7 +6,7 @@ import { rtScores } from './meta/rt';
 import { imdbRating } from './meta/imdb';
 import { traktScores } from './meta/trakt';
 import { bangumiScore } from './meta/bangumi';
-import { tmdbMeta, tmdbSeasonStills, tmdbSimilar, tmdbImages } from './meta/tmdb';
+import { tmdbMeta, tmdbSeasonStills, tmdbSimilar, tmdbImages, tmdbLogos } from './meta/tmdb';
 import { csmGuide } from './meta/csm';
 import { PlayerWindows } from './player/windows';
 import { PlayerController, type PlayerOut } from './player/session';
@@ -72,7 +72,7 @@ export class AppServices {
     this.refreshServerName();
     ipcMain.handle('app:getConfig', () => wrap(() => {
       const c = config.get();
-      return { ...c, accounts: c.accounts.map(a => ({ ...a, accessToken: a.accessToken ? '<set>' : '' })), settings: config.publicSettings() };
+      return { ...c, accounts: c.accounts.map(a => ({ ...a, accessToken: a.accessToken ? '<set>' : '' })), meta: config.publicMeta(c.meta), settings: config.publicSettings() };
     }));
 
     ipcMain.handle('app:login', (_e, { baseUrl, username, password }: { baseUrl: string; username: string; password: string }) =>
@@ -147,11 +147,13 @@ export class AppServices {
     ipcMain.handle('emby:episodes', (_e, { seriesId, seasonId }: { seriesId: string; seasonId: string }) => wrap(() => this.client().episodes(seriesId, seasonId)));
     ipcMain.handle('emby:favorite', (_e, { id, on }: { id: string; on: boolean }) => wrap(() => this.client().setFavorite(id, on)));
 
-    ipcMain.handle('emby:imageUrl', (_e, { id, tag, width, type }: { id: string; tag?: string; width: number; type?: 'primary' | 'backdrop' }) =>
+    ipcMain.handle('emby:imageUrl', (_e, { id, tag, width, type }: { id: string; tag?: string; width: number; type?: 'primary' | 'backdrop' | 'logo' }) =>
       wrap(() =>
         type === 'backdrop'
           ? this.client().backdropUrl({ id, backdropImageTag: tag }, width)
-          : this.client().imageUrl({ id, primaryImageTag: tag }, width),
+          : type === 'logo'
+            ? this.client().logoUrl({ id, logoImageTag: tag }, width)
+            : this.client().imageUrl({ id, primaryImageTag: tag }, width),
       ),
     );
 
@@ -163,6 +165,7 @@ export class AppServices {
     ipcMain.handle('meta:tmdbStills', (_e, { tmdbId, season }: { tmdbId: string; season: number }) => wrap(() => tmdbSeasonStills(tmdbId, season)));
     ipcMain.handle('meta:tmdbSimilar', (_e, { kind, tmdbId }: { kind: 'movie' | 'tv'; tmdbId: string }) => wrap(() => tmdbSimilar(kind, tmdbId)));
     ipcMain.handle('meta:tmdbImages', (_e, { kind, tmdbId }: { kind: 'movie' | 'tv'; tmdbId: string }) => wrap(() => tmdbImages(kind, tmdbId)));
+    ipcMain.handle('meta:tmdbLogos', (_e, { kind, tmdbId }: { kind: 'movie' | 'tv'; tmdbId: string }) => wrap(() => tmdbLogos(kind, tmdbId)));
     ipcMain.handle('meta:csm', (_e, { kind, title }: { kind: 'movie' | 'tv'; title: string }) => wrap(() => csmGuide(kind, title)));
     ipcMain.handle('meta:setKeys', (_e, patch: { tmdbV4Token?: string; traktClientId?: string }) => wrap(() => config.setMetaKeys(patch)));
 

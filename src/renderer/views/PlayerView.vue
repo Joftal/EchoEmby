@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import {
   AudioLines,
   BookMarked,
@@ -22,6 +22,7 @@ import {
 } from 'lucide-vue-next';
 import DanmakuLayer from '../components/player/DanmakuLayer.vue';
 import SheetLayer from '../components/player/SheetLayer.vue';
+import TitleArt from '../components/TitleArt.vue';
 import { SPEED_STEPS, usePlayerStore } from '../stores/player';
 import { useAppStore } from '../stores/app';
 import { fmtClock } from '../lib/format';
@@ -92,6 +93,23 @@ const tierLabel = computed(() => {
   if (!se) return '画质';
   return se.tiers.find(t => t.bitrate === se.tier)?.label || '画质';
 });
+
+/* The top-left carries the work's own title treatment, on the same rule the two heroes use. An episode
+   takes the series' art, because that is the level both TMDB and the server file a logo at — an episode
+   page has none. The item's name is what shows when nothing in the chain answers. */
+const titleUrls = ref<string[]>([]);
+
+watch(
+  () => session.value?.itemId,
+  async (id?: string) => {
+    titleUrls.value = [];
+    if (!id) return;
+    const r = await window.echoemby.emby.item(session.value?.seriesId || id);
+    if (!r.ok || !r.data || session.value?.itemId !== id) return;
+    titleUrls.value = await app.logoCandidates(r.data);
+  },
+  { immediate: true },
+);
 
 function ratioAt(e: PointerEvent): number {
   const el = rail.value;
@@ -242,7 +260,7 @@ onUnmounted(() => {
 
     <header class="pl-top drag">
       <div class="topin no-drag">
-        <span class="name">{{ session?.name || '播放器' }}</span>
+        <TitleArt class="art" :urls="titleUrls" :name="session?.name || '播放器'" />
         <span v-if="session?.line" class="line">{{ session.line }}</span>
       </div>
       <div class="no-drag ends">
@@ -419,13 +437,28 @@ onUnmounted(() => {
   gap: 10px;
   flex: none;
 }
-.name {
-  font-size: 17px;
+/* The treatment scales with the window it is drawn in: 8% of the height, floored where a small window
+   would make the art unreadable and capped so a maximized 4K screen does not get a banner. Measured on
+   this window's own 1236x660 default that is 53px tall, at 1080p fullscreen 86px. The width is capped
+   short of the strip so a 12:1 wordmark cannot reach the rate pill; `contain` then gives the wide ones
+   their height back, which is why the height is a maximum and not a fixed row. */
+.art {
+  --title-h: clamp(34px, 8vh, 92px);
+  --title-w: 100%;
+  --title-gap: 0;
+  --title-fs: 17px;
+  --title-clamp: 1;
+  flex: none;
+  min-width: 0;
+  max-width: min(42vw, 460px);
+}
+/* With no art anywhere in the chain the slot falls back to the name, and there it should still read as
+   chrome rather than as a poster title. */
+.art :deep(h1) {
   font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.3;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8), 0 3px 14px rgba(0, 0, 0, 0.6);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .line {
   font-size: 14px;

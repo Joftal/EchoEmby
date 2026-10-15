@@ -250,10 +250,20 @@ export function setMetaKeys(patch: Partial<MetaKeys>): MetaKeys | undefined {
   for (const k of ['tmdbV4Token', 'traktClientId'] as const) {
     const v = patch[k];
     if (v === undefined) continue;
+    if (v === SECRET_MASK) continue; // the row came back untouched, it is not a new key
     if (v === '') delete cur[k];
     else cur[k] = v;
   }
   cfg.meta = Object.keys(cur).length ? cur : undefined;
   save(cfg);
-  return cfg.meta;
+  return publicMeta(cfg.meta);
+}
+
+/** The same rule the danmaku token follows: a stored key never crosses the bridge in plaintext, so the
+ *  settings row can only read whether one is on file, replace it, or clear it. */
+export function publicMeta(meta: MetaKeys | undefined): MetaKeys | undefined {
+  if (!meta) return undefined;
+  const out: MetaKeys = {};
+  for (const k of ['tmdbV4Token', 'traktClientId'] as const) if (meta[k]) out[k] = SECRET_MASK;
+  return Object.keys(out).length ? out : undefined;
 }

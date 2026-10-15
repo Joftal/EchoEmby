@@ -57,6 +57,25 @@ watch(token, v => { if (v.trim()) tokenTyped.value = true; });
 const dmUrl = ref('');
 watch(() => dm.value?.source?.url, v => (dmUrl.value = v || ''), { immediate: true });
 
+/* The TMDB key lives on its own channel because it is not a setting the player reads — it is a
+   credential the meta modules sign their requests with, and it is masked across the bridge the same
+   way the danmaku token is. */
+const tmdbKey = ref('');
+const tmdbTyped = ref(false);
+const tmdbSaved = computed(() => store.config?.meta?.tmdbV4Token === '<set>');
+watch(tmdbKey, v => { if (v.trim()) tmdbTyped.value = true; });
+
+async function commitTmdb(explicit = false): Promise<void> {
+  const v = tmdbKey.value.trim();
+  if (v === '<set>') return;
+  if (!v && !explicit && !tmdbTyped.value) return;
+  const r = await window.echoemby.meta.setKeys({ tmdbV4Token: v });
+  if (!r.ok) return;
+  if (store.config) store.config.meta = r.data;
+  tmdbKey.value = '';
+  tmdbTyped.value = false;
+}
+
 const probe = ref<NetProbe | null>(null);
 const probing = ref(false);
 const probeRead = computed(() => {
@@ -269,6 +288,25 @@ async function runProbe(): Promise<void> {
             <button type="button" :class="{ on: dm.matchMode !== 1 }" @click="set({ danmaku: { matchMode: 0 } })">近似</button>
             <button type="button" :class="{ on: dm.matchMode === 1 }" @click="set({ danmaku: { matchMode: 1 } })">完全一致</button>
           </div>
+        </div>
+      </div>
+
+      <h2 class="sec">元数据</h2>
+      <div class="rows">
+        <div class="row addr">
+          <div class="k">
+            <b>TMDB Key</b>
+            <i>{{ tmdbSaved ? '已保存，重新输入可替换，清空后回车可删除' : 'v3 API Key 或 v4 Token 均可，用于艺术字标题、中文简介与评分补强' }}</i>
+          </div>
+          <input
+            v-model="tmdbKey"
+            type="password"
+            :placeholder="tmdbSaved ? '••••••••' : '可留空'"
+            spellcheck="false"
+            autocomplete="off"
+            @blur="commitTmdb()"
+            @keydown.enter="commitTmdb(true)"
+          />
         </div>
       </div>
 
