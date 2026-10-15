@@ -351,18 +351,18 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
               <div class="line">{{ metaLine }}</div>
               <ScoreStrip :item="item" class="badges" />
               <p class="overview">{{ overviewText || '暂无简介。' }}</p>
-              <div class="actions">
-                <button class="play" :disabled="!playableId || player.busy" @click="play()">
-                  <span class="tri"></span>
-                  <span class="ptxt">
-                    <b>{{ player.busy ? '准备中…' : resuming ? '继续播放' : '播放' }}</b>
-                    <i v-if="playCaption">{{ playCaption }}</i>
-                  </span>
-                </button>
-                <button class="iconb" :class="{ on: fav }" :disabled="favBusy" :title="fav ? '已收藏' : '收藏'" @click="toggleFav">
-                  <svg viewBox="0 0 24 24" width="20" height="20"><path :d="fav ? 'M12 21l-1.5-1.3C5.4 15 2 11.9 2 8.2 2 5.4 4.2 3.2 7 3.2c1.6 0 3.1.7 4 1.9.9-1.2 2.4-1.9 4-1.9 2.8 0 5 2.2 5 5 0 3.7-3.4 6.8-8.5 11.5L12 21z' : 'M12 21l-1.5-1.3C5.4 15 2 11.9 2 8.2 2 5.4 4.2 3.2 7 3.2c1.6 0 3.1.7 4 1.9.9-1.2 2.4-1.9 4-1.9 2.8 0 5 2.2 5 5 0 3.7-3.4 6.8-8.5 11.5L12 21zM7 5.2c-1.7 0-3 1.3-3 3 0 3 3 5.9 8 10.2 5-4.3 8-7.2 8-10.2 0-1.7-1.3-3-3-3-1.3 0-2.5.8-3 2h-4c-.5-1.2-1.7-2-3-2z'" fill="currentColor" /></svg>
-                </button>
-              </div>
+            </div>
+            <div class="actions">
+              <button class="play" :disabled="!playableId || player.busy" @click="play()">
+                <span class="tri"></span>
+                <span class="ptxt">
+                  <b>{{ player.busy ? '准备中…' : resuming ? '继续播放' : '播放' }}</b>
+                  <i v-if="playCaption">{{ playCaption }}</i>
+                </span>
+              </button>
+              <button class="iconb" :class="{ on: fav }" :disabled="favBusy" :title="fav ? '已收藏' : '收藏'" @click="toggleFav">
+                <svg viewBox="0 0 24 24" width="20" height="20"><path :d="fav ? 'M12 21l-1.5-1.3C5.4 15 2 11.9 2 8.2 2 5.4 4.2 3.2 7 3.2c1.6 0 3.1.7 4 1.9.9-1.2 2.4-1.9 4-1.9 2.8 0 5 2.2 5 5 0 3.7-3.4 6.8-8.5 11.5L12 21z' : 'M12 21l-1.5-1.3C5.4 15 2 11.9 2 8.2 2 5.4 4.2 3.2 7 3.2c1.6 0 3.1.7 4 1.9.9-1.2 2.4-1.9 4-1.9 2.8 0 5 2.2 5 5 0 3.7-3.4 6.8-8.5 11.5L12 21zM7 5.2c-1.7 0-3 1.3-3 3 0 3 3 5.9 8 10.2 5-4.3 8-7.2 8-10.2 0-1.7-1.3-3-3-3-1.3 0-2.5.8-3 2h-4c-.5-1.2-1.7-2-3-2z'" fill="currentColor" /></svg>
+              </button>
             </div>
           </div>
         </div>
@@ -619,22 +619,19 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
   position: relative;
   z-index: 2;
   width: 100%;
-  padding: 0 var(--side) 44px 32px;
+  padding: 0 var(--side) 28px 32px;
   will-change: transform, opacity;
 }
 .copy {
   color: #fff;
+  display: flex;
+  align-items: flex-end;
+  gap: 20px;
 }
 .text {
+  flex: 1 1 auto;
   min-width: 0;
   max-width: 640px;
-}
-h1 {
-  margin: 0 0 6px;
-  font-size: clamp(28px, 3.6vw, 44px);
-  font-weight: 700;
-  letter-spacing: -0.4px;
-  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.4);
 }
 .tagline { margin: 0 0 8px; font-size: 14px; font-style: italic; color: rgba(255, 255, 255, 0.82); }
 .line { font-size: 13.5px; font-weight: 500; color: rgba(255, 255, 255, 0.86); margin-bottom: 12px; font-variant-numeric: tabular-nums; }
@@ -651,7 +648,9 @@ h1 {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.actions { display: flex; align-items: center; gap: 12px; }
+/* Same split as the lobby hero: the actions answer for the right edge, flush against it even when
+   the copy column shrinks at the minimum window. */
+.actions { flex: none; margin-left: auto; display: flex; align-items: center; gap: 12px; }
 .play {
   display: inline-flex;
   align-items: center;

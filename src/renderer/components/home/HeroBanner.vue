@@ -170,16 +170,16 @@ watch(
         </div>
         <p class="ov">{{ current.overview || '' }}</p>
         <ScoreStrip v-if="current" :item="current" />
-        <div class="cta">
-          <button v-if="playable" class="primary" @click="emit('play', current)">
-            <svg viewBox="0 0 24 24" width="15" height="15"><path d="M8 5l12 7-12 7z" fill="currentColor" /></svg>
-            播放
-          </button>
-          <button class="ghost" @click="emit('open', current)">
-            <svg viewBox="0 0 24 24" width="15" height="15"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8" /><path d="M12 11v6M12 7.6v.9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" /></svg>
-            {{ playable ? '详情' : '查看' }}
-          </button>
-        </div>
+      </div>
+      <div class="cta">
+        <button v-if="playable" class="primary" @click="emit('play', current)">
+          <svg viewBox="0 0 24 24" width="15" height="15"><path d="M8 5l12 7-12 7z" fill="currentColor" /></svg>
+          播放
+        </button>
+        <button class="ghost" @click="emit('open', current)">
+          <svg viewBox="0 0 24 24" width="15" height="15"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8" /><path d="M12 11v6M12 7.6v.9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" /></svg>
+          {{ playable ? '详情' : '查看' }}
+        </button>
       </div>
     </div>
 
@@ -305,7 +305,8 @@ watch(
      panel's edge and into the poster's bottom-left corner. 32 buys the corner air; the rows keep
      their own alignment, which is what the eye actually reads as a grid. */
   left: 32px;
-  bottom: 44px;
+  right: var(--side);
+  bottom: 28px;
   display: flex;
   align-items: flex-end;
   gap: 20px;
@@ -325,20 +326,9 @@ watch(
   object-fit: cover;
 }
 .text {
+  flex: 1 1 auto;
+  min-width: 0;
   max-width: 560px;
-}
-h1 {
-  margin: 0;
-  font-size: clamp(28px, 3.6vw, 44px);
-  font-weight: 700;
-  line-height: 1.12;
-  letter-spacing: -0.6px;
-  color: #fff;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
 }
 .meta {
   display: flex;
@@ -373,10 +363,14 @@ h1 {
     line-clamp: 1;
   }
 }
+/* The actions answer for the hero's right edge: the copy column keeps its reading width, and the
+   poster's empty right half carries the only two things worth clicking. `margin-left: auto` keeps
+   them flush right even when the copy column shrinks at the minimum window. */
 .cta {
+  flex: none;
+  margin-left: auto;
   display: flex;
   gap: 10px;
-  margin-top: 15px;
 }
 .primary,
 .ghost {
@@ -418,10 +412,11 @@ h1 {
 
 .dots {
   position: absolute;
-  right: var(--side);
-  /* Same floor as the copy block, so the CTA's bottom edge and the dots read as one line instead of
-     the dots hanging 10px below it. */
-  bottom: 44px;
+  /* Centred on the poster band, not the window: the hero starts at the gutter, so the window's own
+     middle would park the bar under the rail's right edge. */
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 10px;
   display: flex;
   gap: 7px;
 }
