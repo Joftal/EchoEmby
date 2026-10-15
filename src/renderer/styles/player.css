@@ -3,9 +3,9 @@
    Text steps are chosen for contrast against the frosted panels rather than against black, and no size
    in the player goes below 13px.
 
-   The vocabulary is the one the reference player uses: a control bar made of two floating capsules,
-   menus that pop open above the icon that called them, nested submenus that unfold to the left of
-   their parent, and rows whose selected state is a filled blue band - never a size change. */
+   The vocabulary is a control bar made of floating capsules, menus that rise from the bottom of the
+   picture as compact cards sized to what they contain, nested submenus that take over the card they came
+   out of, and rows whose selected state is a filled band - never a size change. */
 :root {
   --pl-glass: rgba(18, 18, 24, 0.66);
   --pl-glass-solid: rgba(18, 18, 24, 0.92);
@@ -17,7 +17,8 @@
   --pl-hi: #7ab3ff;
   --pl-fill: #2f7dfd;
   --pl-shadow: 0 20px 54px rgba(0, 0, 0, 0.6);
-  --pl-r: 16px;
+  --pl-sheet-shadow: 0 14px 34px rgba(0, 0, 0, 0.5);
+  --pl-r-sheet: 14px;
 }
 
 /* ---- chrome: two capsules on the bottom, badges and a read-out pill on top of them ---- */
@@ -112,15 +113,20 @@
   opacity: 0.55;
   margin: 0 3px;
 }
-/* ---- sheets: every menu rises from the bottom of the window ---- */
+/* ---- sheets: every menu rises from the bottom of the window, as a card the size of what it holds ---- */
 
-/* A sheet is the bar's topmost block, not a bubble pinned above the icon that called it. That is what
-   fixes the running out of room: it has the whole area above the chrome to grow into, it cannot be
-   pushed off-screen by a menu with ten rows, and it owes nothing to where its trigger happens to sit.
-   The capsules stay live underneath it, so the other entries remain one tap away. */
+/* A sheet is the bar's topmost block, not a bubble pinned above the icon that called it: it has the whole
+   area above the chrome to grow into, it cannot be pushed off-screen by a menu with ten rows, and it owes
+   nothing to where its trigger happens to sit. The capsules stay live underneath it, so the other entries
+   remain one tap away.
+   It is then sized to its own content rather than to the window. A fixed 760px card turned eight short
+   labels into a wall with a full-width band across it; `fit-content` lets a menu be as wide as its longest
+   row, and the cap is what a row of episode thumbnails or two source cards needs. */
 .pl-panel {
   position: relative;
-  width: min(760px, 100%);
+  width: fit-content;
+  min-width: 300px;
+  max-width: min(460px, calc(100% - 32px));
   margin: 0 auto 10px;
   display: flex;
   flex-direction: column;
@@ -128,17 +134,17 @@
   background: var(--pl-glass-solid);
   backdrop-filter: blur(30px) saturate(1.8);
   border: 1px solid var(--pl-line);
-  border-radius: var(--pl-r);
-  box-shadow: var(--pl-shadow);
+  border-radius: var(--pl-r-sheet);
+  box-shadow: var(--pl-sheet-shadow);
 }
 .pl-head {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 14px 16px 8px;
+  gap: 8px;
+  padding: 9px 10px 3px;
 }
 .pl-title {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--pl-faint);
   flex: 1;
@@ -148,33 +154,46 @@
   text-overflow: ellipsis;
 }
 .pl-body {
-  /* calc(100vh - 240px) is the room a sheet has above the control bar (172px of chrome, 64px of its own
-     head and margin) minus nothing else: measured, that is the number that keeps the title row on screen
-     at the default window height. 520px is where the 播放资源 sheet's ten rungs stop scrolling, and any
-     window tall enough to give 520 has plenty of ceiling. */
-  max-height: min(100vh - 242px, 520px);
+  /* The room a sheet has above the control bar at the default window height, measured: 172px of chrome
+     plus the sheet's own head and margin. 420px is where the tallest menu (播放资源's ten rungs) still
+     reaches its last row by scrolling a little rather than a lot. */
+  max-height: min(100vh - 226px, 420px);
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  padding: 0 10px 10px;
+  padding: 0 7px 7px;
+}
+/* A sheet that stops mid-row has to say there is more below. Scrollbars are hidden everywhere in this app,
+   so the bottom edge fades, and the fade lifts as soon as the list reaches its end. */
+.pl-panel.is-more::after,
+.pl-sub.is-more::after {
+  content: '';
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  bottom: 1px;
+  height: 30px;
+  border-radius: 0 0 var(--pl-r-sheet) var(--pl-r-sheet);
+  background: linear-gradient(to bottom, rgba(18, 18, 24, 0), var(--pl-glass-solid));
+  pointer-events: none;
 }
 .pl-sect {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--pl-faint);
-  padding: 12px 8px 5px;
+  padding: 9px 5px 3px;
 }
-/* 40px: every row in the menu is a click target for a mouse that is aiming at it over video, and the
-   15px label under it needed the line height to match the bar's own 44px controls. A ten-row menu at
-   this size still fits the body's cap, which is what the 播放资源 sheet is. */
+/* 36px: a click target for a mouse aiming at it over video, while the 15px label keeps its size - the
+   card got smaller by giving back its padding, not its type. A ten-row menu at this size still fits the
+   body's cap, which is what the 播放资源 sheet is. */
 .pl-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
-  min-height: 40px;
-  padding: 7px 10px;
-  border-radius: 12px;
+  min-height: 36px;
+  padding: 4px 7px;
+  border-radius: 10px;
   color: var(--pl-dim);
   text-align: left;
   font-size: 15px;
@@ -191,18 +210,18 @@
    without moving anything - a check that appeared on demand reflowed every label under it. The mark
    itself is drawn here rather than per row: a selected row is the only thing that has to say so. */
 .pl-row .mark {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   flex: none;
   position: relative;
 }
 .pl-row.on .mark::before {
   content: '';
   position: absolute;
-  left: 3px;
+  left: 2px;
   top: 2px;
-  width: 12px;
-  height: 7px;
+  width: 11px;
+  height: 6px;
   border-left: 2px solid currentColor;
   border-bottom: 2px solid currentColor;
   transform: rotate(-45deg);
@@ -247,55 +266,52 @@
   opacity: 0.7;
 }
 .pl-note {
-  font-size: 14px;
+  font-size: 13px;
   color: var(--pl-faint);
-  padding: 2px 8px 10px;
+  padding: 2px 5px 8px;
   line-height: 1.5;
 }
 .pl-sep {
   height: 1px;
-  margin: 6px 6px;
+  margin: 4px 4px;
   background: var(--pl-line);
 }
 
-/* The second level of a sheet drills in over the one that called it - the same box, filled from the
-   same bottom edge - instead of unfolding to the side, where it used to be pushed off-screen by the
-   window's own width. It grows upward when it has more rows than its parent. */
+/* The second level of a sheet replaces the one that called it rather than unfolding to the side, where it
+   used to be pushed off-screen by the window's own width. It is the sheet's only remaining content, so the
+   card is sized by this list and not by the taller one it grew out of. */
 .pl-sub {
-  position: absolute;
-  /* Out to the parent's outer edge, not its padding box: the parent's own border is transparent while this
-     is open, and stopping 1px short would leave a hairline of raw video along the bottom of the sheet. */
-  left: -1px;
-  right: -1px;
-  bottom: -1px;
-  min-height: 100%;
-  max-height: min(100vh - 176px, 560px);
+  position: relative;
+  min-height: 0;
+  max-height: min(100vh - 160px, 460px);
   display: flex;
   flex-direction: column;
   background: var(--pl-glass-solid);
   backdrop-filter: blur(30px) saturate(1.8);
   border: 1px solid var(--pl-line);
-  border-radius: var(--pl-r);
-  box-shadow: var(--pl-shadow);
-  z-index: 1;
+  border-radius: var(--pl-r-sheet);
+  box-shadow: var(--pl-sheet-shadow);
 }
 .pl-sub .pl-body {
   max-height: none;
-  flex: 1;
+  /* auto, not 0: the drill-in has no height of its own until this list says how tall it is, so a zero
+     flex-basis would size the sheet to its header and give the rows nothing. */
+  flex: 1 1 auto;
   min-height: 0;
 }
 /* The glass is 92% opaque so the picture keeps showing through, which is right over the video and wrong
    over the sheet's own first level: its rows would ghost up through the second, and the two stacked panes
-   of blur leave a tonal band where the lower box ends. While a drill-in is open it is the sheet, so the
-   level underneath stops drawing altogether. */
+   of blur leave a tonal band where the lower box ends. While a drill-in is open the first level is gone
+   from the layout, not just from view - it is the list underneath that decides how big the card is. */
 .pl-panel:has(> .pl-sub) {
   background: none;
   border-color: transparent;
   box-shadow: none;
+  backdrop-filter: none;
 }
 .pl-panel:has(> .pl-sub) > .pl-head,
 .pl-panel:has(> .pl-sub) > .pl-body {
-  visibility: hidden;
+  display: none;
 }
 
 /* ---- controls inside rows ---- */
@@ -304,9 +320,9 @@
 .pl-line {
   display: flex;
   align-items: center;
-  gap: 12px;
-  min-height: 50px;
-  padding: 6px 10px;
+  gap: 10px;
+  min-height: 44px;
+  padding: 4px 7px;
   font-size: 15px;
   color: var(--pl-dim);
 }
@@ -342,7 +358,7 @@
   transform: scale(0.9);
 }
 .pl-step .v {
-  min-width: 60px;
+  min-width: 52px;
   text-align: center;
   font-size: 15px;
   font-variant-numeric: tabular-nums;
@@ -383,11 +399,11 @@
 .pl-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  padding: 6px 10px 12px;
+  gap: 6px;
+  padding: 4px 7px 9px;
 }
 .pl-chip {
-  padding: 10px 15px;
+  padding: 8px 13px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.1);
   color: var(--pl-dim);
@@ -414,7 +430,7 @@
   gap: 3px;
 }
 .pl-seg button {
-  padding: 8px 16px;
+  padding: 7px 13px;
   border-radius: 999px;
   color: var(--pl-dim);
   font-size: 15px;
@@ -429,11 +445,11 @@
 .pl-switch {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   width: 100%;
-  min-height: 50px;
-  padding: 6px 10px;
-  border-radius: 12px;
+  min-height: 44px;
+  padding: 4px 7px;
+  border-radius: 10px;
   color: var(--pl-dim);
   font-size: 15px;
   text-align: left;
@@ -481,24 +497,27 @@
 .pl-empty {
   font-size: 14px;
   color: var(--pl-faint);
-  padding: 14px 10px;
+  padding: 10px 8px;
   text-align: center;
 }
 
 /* ---- 播放源 cards, 选集 strip ---- */
 
 .pl-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  padding: 6px 2px 10px;
+  /* Wrapping flex rather than a two-track grid: most items have exactly one 播放源, and a reserved second
+     column left half the card empty. Here a lone card takes the line it is on. */
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 0 8px;
 }
 .pl-card {
+  flex: 1 1 160px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 13px 14px;
-  border-radius: 14px;
+  gap: 4px;
+  padding: 10px 11px;
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.07);
   border: 1px solid rgba(255, 255, 255, 0.1);
   color: var(--pl-dim);
@@ -531,8 +550,8 @@
 }
 .pl-strip {
   display: flex;
-  gap: 12px;
-  padding: 6px 2px 12px;
+  gap: 10px;
+  padding: 4px 0 10px;
   overflow-x: auto;
   /* Every horizontal strip in the app hides its scrollbar (RowScroller, the detail pages); a native one
      under the thumbnails drew a grey track across the bottom of a frosted popover. */
@@ -541,18 +560,20 @@
 .pl-strip::-webkit-scrollbar {
   height: 0;
 }
+/* 128px is what three cells plus their gaps cost inside the sheet's own cap, so the strip reads as a
+   row of covers rather than as a wall with one cover in it. */
 .pl-cell {
   flex: none;
-  width: 152px;
+  width: 128px;
   color: var(--pl-dim);
   text-align: left;
   font-size: 14px;
 }
 .pl-cell .art {
   position: relative;
-  width: 152px;
-  height: 86px;
-  border-radius: 12px;
+  width: 128px;
+  height: 72px;
+  border-radius: 10px;
   overflow: hidden;
   background: rgba(255, 255, 255, 0.08);
   border: 2px solid transparent;

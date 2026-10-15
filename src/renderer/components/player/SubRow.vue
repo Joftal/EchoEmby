@@ -14,7 +14,7 @@ const player = usePlayerStore();
     <span class="label">{{ props.label }}</span>
     <span v-if="props.value" class="meta">{{ props.value }}</span>
     <span class="go">
-      <ChevronRight :size="20" />
+      <ChevronRight :size="18" />
     </span>
   </button>
 </template>
