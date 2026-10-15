@@ -89,7 +89,7 @@ const titleOf = (ep: LibraryItem): string => (isPositionOnlyName(ep.name) ? '' :
 </script>
 
 <template>
-  <PanelShell title="选集" :wide="560">
+  <PanelShell title="选集">
     <p v-if="!seriesId" class="pl-empty">这不是剧集条目</p>
     <template v-else>
       <div v-if="seasons.length > 1" class="pl-chips">

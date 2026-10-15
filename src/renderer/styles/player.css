@@ -22,20 +22,15 @@
 
 /* ---- chrome: two capsules on the bottom, badges and a read-out pill on top of them ---- */
 
-/* A very light scrim under the bar: the timeline is a 4px line of white over whatever the film paints,
+/* A very light scrim under the bar: the timeline is a 5px line of white over whatever the film paints,
    and on snow it disappears without one. The capsules themselves need no help - they are frosted. */
 .pl-bar {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
-  padding: 0 18px 16px;
+  padding: 0 20px 14px;
   background: linear-gradient(0deg, rgba(0, 0, 0, 0.5), transparent);
-  /* A menu has to clear the whole bar, not just the icon that called it: the timeline and the badges sit
-     between the icon and the bar's top edge, and a popover parked at 12px above the icon landed on the
-     seek line and made it un-draggable while a menu was open. 72px is that stack (capsule padding, the
-     badge row, the timeline) measured on the built page. */
-  --pl-pop: 72px;
   z-index: 3;
 }
 /* Both chrome pieces leave the same way: the menus live inside the bar, so a bar that faded on its own
@@ -49,39 +44,51 @@
 .pl-badges {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 2px 10px;
+  gap: 8px;
+  padding: 0 2px 12px;
   min-width: 0;
   overflow: hidden;
 }
 .pl-pill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
+  gap: 8px;
+  padding: 6px 13px;
   border-radius: 999px;
   background: rgba(10, 10, 14, 0.5);
   border: 1px solid rgba(255, 255, 255, 0.12);
   backdrop-filter: blur(10px);
-  font-size: 13px;
+  font-size: 14px;
   color: var(--pl-text);
   white-space: nowrap;
 }
-.pl-pill.hdr {
-  background: rgba(255, 176, 32, 0.22);
-  border-color: rgba(255, 176, 32, 0.4);
-  color: #ffdf9e;
+/* One capsule for the whole facts strip. Six outlined pills meant six borders to look at and no order of
+   reading; inside a single capsule the hairlines do the separating and only the colour-coded facts carry
+   weight. */
+.pl-pill.meta {
+  gap: 11px;
+  padding: 7px 15px;
+  font-variant-numeric: tabular-nums;
+  color: var(--pl-faint);
 }
-.pl-pill.orig {
-  background: rgba(74, 222, 128, 0.18);
-  border-color: rgba(74, 222, 128, 0.34);
-  color: #9df0bd;
+.pl-pill.meta > span {
+  color: var(--pl-dim);
+}
+.pl-pill.meta .bar {
+  width: 1px;
+  height: 15px;
+  flex: none;
+  background: rgba(255, 255, 255, 0.18);
+}
+.pl-pill .hdr {
+  color: #ffdf9e;
 }
 .pl-caps {
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 6px 10px;
+  gap: 3px;
+  min-height: 64px;
+  padding: 8px 12px;
   border-radius: 999px;
   background: var(--pl-glass);
   backdrop-filter: blur(26px) saturate(1.7);
@@ -95,8 +102,8 @@
   gap: 14px;
 }
 .pl-time {
-  padding: 0 10px;
-  font-size: 13px;
+  padding: 0 12px;
+  font-size: 15px;
   font-variant-numeric: tabular-nums;
   color: var(--pl-text);
   white-space: nowrap;
@@ -105,44 +112,33 @@
   opacity: 0.55;
   margin: 0 3px;
 }
-/* The trigger icon and the menu it calls share one positioned box, so the popover lands above the
-   button that opened it the way the reference does - no measurement, no drift on resize. */
-.pl-menu {
-  position: relative;
-  display: inline-flex;
-}
+/* ---- sheets: every menu rises from the bottom of the window ---- */
 
-/* ---- popovers ---- */
-
+/* A sheet is the bar's topmost block, not a bubble pinned above the icon that called it. That is what
+   fixes the running out of room: it has the whole area above the chrome to grow into, it cannot be
+   pushed off-screen by a menu with ten rows, and it owes nothing to where its trigger happens to sit.
+   The capsules stay live underneath it, so the other entries remain one tap away. */
 .pl-panel {
-  position: absolute;
-  bottom: calc(100% + var(--pl-pop, 12px));
-  width: var(--pl-w, 300px);
-  max-width: calc(100vw - 24px);
+  position: relative;
+  width: min(760px, 100%);
+  margin: 0 auto 10px;
   display: flex;
   flex-direction: column;
   color: var(--pl-text);
-  background: var(--pl-glass);
+  background: var(--pl-glass-solid);
   backdrop-filter: blur(30px) saturate(1.8);
   border: 1px solid var(--pl-line);
   border-radius: var(--pl-r);
   box-shadow: var(--pl-shadow);
-  z-index: 4;
-}
-.pl-panel.anchor-left {
-  left: 0;
-}
-.pl-panel.anchor-right {
-  right: 0;
 }
 .pl-head {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 14px 6px;
+  gap: 12px;
+  padding: 14px 16px 8px;
 }
 .pl-title {
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--pl-faint);
   flex: 1;
@@ -152,34 +148,36 @@
   text-overflow: ellipsis;
 }
 .pl-body {
-  /* 66vh: the 播放资源 menu is ten rows plus a head-line, and at 56vh its last three rows - the only
-     entry points to 播放源, 解码与渲染 and 动态范围 - fell below the fold at the default window size.
-     The popover still clears the bar: the tallest menu measured 480px against 545px of room. */
-  max-height: min(66vh, 470px);
+  /* calc(100vh - 240px) is the room a sheet has above the control bar (172px of chrome, 64px of its own
+     head and margin) minus nothing else: measured, that is the number that keeps the title row on screen
+     at the default window height. 520px is where the 播放资源 sheet's ten rungs stop scrolling, and any
+     window tall enough to give 520 has plenty of ceiling. */
+  max-height: min(100vh - 242px, 520px);
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  padding: 0 8px 8px;
+  padding: 0 10px 10px;
 }
 .pl-sect {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--pl-faint);
-  padding: 10px 6px 4px;
+  padding: 12px 8px 5px;
 }
-/* 32px, not 40: the reference's own lists pack ~30px per row (its 画面比例 submenu shows seventeen of them
-   in one popover), and a looser row is what pushed a ten-row menu off the bottom of the screen. */
+/* 40px: every row in the menu is a click target for a mouse that is aiming at it over video, and the
+   15px label under it needed the line height to match the bar's own 44px controls. A ten-row menu at
+   this size still fits the body's cap, which is what the 播放资源 sheet is. */
 .pl-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
-  min-height: 32px;
-  padding: 5px 8px;
-  border-radius: 10px;
+  min-height: 40px;
+  padding: 7px 10px;
+  border-radius: 12px;
   color: var(--pl-dim);
   text-align: left;
-  font-size: 13px;
+  font-size: 15px;
   transition: background var(--hov) var(--ease), color var(--hov) var(--ease);
 }
 .pl-row:hover {
@@ -193,18 +191,18 @@
    without moving anything - a check that appeared on demand reflowed every label under it. The mark
    itself is drawn here rather than per row: a selected row is the only thing that has to say so. */
 .pl-row .mark {
-  width: 15px;
-  height: 15px;
+  width: 18px;
+  height: 18px;
   flex: none;
   position: relative;
 }
 .pl-row.on .mark::before {
   content: '';
   position: absolute;
-  left: 2px;
-  top: 1px;
-  width: 11px;
-  height: 6px;
+  left: 3px;
+  top: 2px;
+  width: 12px;
+  height: 7px;
   border-left: 2px solid currentColor;
   border-bottom: 2px solid currentColor;
   transform: rotate(-45deg);
@@ -228,7 +226,7 @@
 }
 .pl-row .sub {
   display: block;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--pl-faint);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -238,7 +236,7 @@
   color: rgba(255, 255, 255, 0.8);
 }
 .pl-row .meta {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--pl-faint);
   white-space: nowrap;
 }
@@ -249,7 +247,7 @@
   opacity: 0.7;
 }
 .pl-note {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--pl-faint);
   padding: 2px 8px 10px;
   line-height: 1.5;
@@ -260,13 +258,18 @@
   background: var(--pl-line);
 }
 
-/* A submenu unfolds to the left of the popover that called it, bottom-aligned so both share a base. */
+/* The second level of a sheet drills in over the one that called it - the same box, filled from the
+   same bottom edge - instead of unfolding to the side, where it used to be pushed off-screen by the
+   window's own width. It grows upward when it has more rows than its parent. */
 .pl-sub {
   position: absolute;
-  right: calc(100% + 8px);
-  bottom: 0;
-  width: var(--pl-w, 286px);
-  max-width: calc(100vw - 24px);
+  /* Out to the parent's outer edge, not its padding box: the parent's own border is transparent while this
+     is open, and stopping 1px short would leave a hairline of raw video along the bottom of the sheet. */
+  left: -1px;
+  right: -1px;
+  bottom: -1px;
+  min-height: 100%;
+  max-height: min(100vh - 176px, 560px);
   display: flex;
   flex-direction: column;
   background: var(--pl-glass-solid);
@@ -274,15 +277,25 @@
   border: 1px solid var(--pl-line);
   border-radius: var(--pl-r);
   box-shadow: var(--pl-shadow);
-  z-index: 5;
+  z-index: 1;
 }
 .pl-sub .pl-body {
-  max-height: min(52vh, 420px);
+  max-height: none;
+  flex: 1;
+  min-height: 0;
 }
-/* A submenu that would fall off the left edge opens to the right of its parent instead. */
-.pl-sub.flip {
-  right: auto;
-  left: calc(100% + 8px);
+/* The glass is 92% opaque so the picture keeps showing through, which is right over the video and wrong
+   over the sheet's own first level: its rows would ghost up through the second, and the two stacked panes
+   of blur leave a tonal band where the lower box ends. While a drill-in is open it is the sheet, so the
+   level underneath stops drawing altogether. */
+.pl-panel:has(> .pl-sub) {
+  background: none;
+  border-color: transparent;
+  box-shadow: none;
+}
+.pl-panel:has(> .pl-sub) > .pl-head,
+.pl-panel:has(> .pl-sub) > .pl-body {
+  visibility: hidden;
 }
 
 /* ---- controls inside rows ---- */
@@ -291,10 +304,10 @@
 .pl-line {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 42px;
-  padding: 4px 8px;
-  font-size: 13px;
+  gap: 12px;
+  min-height: 50px;
+  padding: 6px 10px;
+  font-size: 15px;
   color: var(--pl-dim);
 }
 .pl-line .label {
@@ -307,15 +320,15 @@
 .pl-step {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
 }
 .pl-step button {
-  width: 28px;
-  height: 28px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.14);
   color: var(--pl-text);
-  font-size: 15px;
+  font-size: 18px;
   line-height: 1;
   display: inline-flex;
   align-items: center;
@@ -329,48 +342,56 @@
   transform: scale(0.9);
 }
 .pl-step .v {
-  min-width: 52px;
+  min-width: 60px;
   text-align: center;
+  font-size: 15px;
   font-variant-numeric: tabular-nums;
   color: var(--pl-text);
 }
-.pl-slide {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 42px;
-  padding: 4px 8px;
-  font-size: 13px;
-  color: var(--pl-dim);
+
+/* The one range in the player is the volume slider, and it is drawn here rather than left native so it
+   matches the seek rail it sits beside: same 6px track, same fill split, same white head. `--p` is the
+   percentage the caller paints the filled part with. */
+.pl-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 22px;
+  background: none;
+  cursor: pointer;
 }
-.pl-slide .label {
-  flex: 1;
-  min-width: 0;
+.pl-range::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--pl-fill) 0 var(--p, 50%), rgba(255, 255, 255, 0.24) var(--p, 50%) 100%);
 }
-.pl-slide input[type='range'] {
-  width: 118px;
-  accent-color: var(--pl-fill);
+.pl-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
 }
-.pl-slide .val {
-  width: 48px;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  color: var(--pl-text);
+.pl-range:focus-visible {
+  outline: 2px solid var(--pl-hi);
+  outline-offset: 3px;
+  border-radius: 999px;
 }
 
 /* A row of equal-width choices (倍速, 预设). */
 .pl-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  padding: 4px 8px 10px;
+  gap: 8px;
+  padding: 6px 10px 12px;
 }
 .pl-chip {
-  padding: 7px 11px;
+  padding: 10px 15px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.1);
   color: var(--pl-dim);
-  font-size: 13px;
+  font-size: 15px;
   transition: background var(--hov) var(--ease), color var(--hov) var(--ease), transform var(--hov) var(--ease-out);
 }
 .pl-chip:hover {
@@ -387,16 +408,16 @@
 /* The segmented strip the reference uses for 预设: choices inside one rounded track. */
 .pl-seg {
   display: inline-flex;
-  padding: 2px;
+  padding: 3px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.1);
-  gap: 2px;
+  gap: 3px;
 }
 .pl-seg button {
-  padding: 5px 12px;
+  padding: 8px 16px;
   border-radius: 999px;
   color: var(--pl-dim);
-  font-size: 13px;
+  font-size: 15px;
   transition: background var(--hov) var(--ease), color var(--hov) var(--ease);
 }
 .pl-seg button.on {
@@ -408,13 +429,13 @@
 .pl-switch {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   width: 100%;
-  min-height: 42px;
-  padding: 4px 8px;
-  border-radius: 10px;
+  min-height: 50px;
+  padding: 6px 10px;
+  border-radius: 12px;
   color: var(--pl-dim);
-  font-size: 13px;
+  font-size: 15px;
   text-align: left;
 }
 .pl-switch:hover {
@@ -428,8 +449,8 @@
   white-space: nowrap;
 }
 .pl-switch .track {
-  width: 40px;
-  height: 24px;
+  width: 52px;
+  height: 30px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.24);
   position: relative;
@@ -440,8 +461,8 @@
   position: absolute;
   top: 3px;
   left: 3px;
-  width: 18px;
-  height: 18px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   background: #fff;
   transition: transform var(--hov) var(--ease-out);
@@ -450,15 +471,15 @@
   background: #6ddc8f;
 }
 .pl-switch.on .track i {
-  transform: translate3d(16px, 0, 0);
+  transform: translate3d(22px, 0, 0);
 }
 .pl-text {
   color: var(--pl-hi);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .pl-empty {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--pl-faint);
   padding: 14px 10px;
   text-align: center;
@@ -469,20 +490,20 @@
 .pl-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  padding: 4px 2px 8px;
+  gap: 10px;
+  padding: 6px 2px 10px;
 }
 .pl-card {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  padding: 10px 11px;
-  border-radius: 12px;
+  gap: 6px;
+  padding: 13px 14px;
+  border-radius: 14px;
   background: rgba(255, 255, 255, 0.07);
   border: 1px solid rgba(255, 255, 255, 0.1);
   color: var(--pl-dim);
   text-align: left;
-  font-size: 13px;
+  font-size: 14px;
   min-width: 0;
   transition: background var(--hov) var(--ease), border-color var(--hov) var(--ease);
 }
@@ -495,14 +516,14 @@
   color: var(--pl-text);
 }
 .pl-card .kind {
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--pl-text);
 }
 .pl-card .who {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   color: var(--pl-faint);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -510,8 +531,8 @@
 }
 .pl-strip {
   display: flex;
-  gap: 10px;
-  padding: 4px 2px 10px;
+  gap: 12px;
+  padding: 6px 2px 12px;
   overflow-x: auto;
   /* Every horizontal strip in the app hides its scrollbar (RowScroller, the detail pages); a native one
      under the thumbnails drew a grey track across the bottom of a frosted popover. */
@@ -522,16 +543,16 @@
 }
 .pl-cell {
   flex: none;
-  width: 132px;
+  width: 152px;
   color: var(--pl-dim);
   text-align: left;
-  font-size: 13px;
+  font-size: 14px;
 }
 .pl-cell .art {
   position: relative;
-  width: 132px;
-  height: 74px;
-  border-radius: 10px;
+  width: 152px;
+  height: 86px;
+  border-radius: 12px;
   overflow: hidden;
   background: rgba(255, 255, 255, 0.08);
   border: 2px solid transparent;
@@ -571,12 +592,11 @@
   transition: transform 0.2s var(--ease), opacity 0.2s var(--ease);
 }
 .pl-enter-from {
-  transform: translate3d(0, 10px, 0) scale(0.98);
+  transform: translate3d(0, 18px, 0);
   opacity: 0;
 }
-/* Leaving is instant, on purpose. Each menu now hangs off the icon that opened it, so two of them
-   animating at once would sit in two different places at once, and the reference closes the old menu
-   the moment a new icon is clicked. */
+/* Leaving is instant, on purpose. Every sheet rises from the same place, so a fading one would sit under
+   the sheet that replaced it and the two would visibly overlap for 200ms. */
 .pl-leave-active {
   transition: none;
 }

@@ -30,7 +30,7 @@ const trackValue = computed(() => {
 </script>
 
 <template>
-  <PanelShell title="弹幕" :wide="320">
+  <PanelShell title="弹幕">
     <div class="pl-switch" :class="{ on: player.danmakuOn }" @click="player.setDanmakuEnabled(!player.danmakuOn)">
       <span class="label">显示弹幕</span>
       <span class="track"><i></i></span>
@@ -45,7 +45,7 @@ const trackValue = computed(() => {
     </template>
 
     <template #sub>
-      <SubPopover v-if="player.sub === 'tracks'" title="弹幕轨道" :wide="330">
+      <SubPopover v-if="player.sub === 'tracks'" title="弹幕轨道">
         <div class="pl-sect">当前选择</div>
         <p v-if="player.dmLoading" class="pl-empty">载入中…</p>
         <button v-for="t in player.dmCandidates" :key="t.id" class="pl-row" :class="{ on: player.dmTrackId === t.id }" @click="player.selectDanmaku(t.id)">
@@ -56,7 +56,7 @@ const trackValue = computed(() => {
         <p v-if="!player.dmLoading && !player.dmCandidates.length" class="pl-empty">这一条没有匹配到弹幕</p>
       </SubPopover>
 
-      <SubPopover v-else-if="player.sub === 'tune'" title="微调" :wide="300">
+      <SubPopover v-else-if="player.sub === 'tune'" title="微调">
         <StepRow label="显示区域" :text="pct(cfg.displayArea)" @down="set({ displayArea: clamp(cfg.displayArea - 0.05, 0.2, 1) })" @up="set({ displayArea: clamp(cfg.displayArea + 0.05, 0.2, 1) })" />
         <StepRow label="不透明度" :text="pct(cfg.opacity)" @down="set({ opacity: clamp(cfg.opacity - 0.05, 0.2, 1) })" @up="set({ opacity: clamp(cfg.opacity + 0.05, 0.2, 1) })" />
         <StepRow label="字号" :text="pct(cfg.fontScale)" @down="set({ fontScale: clamp(cfg.fontScale - 0.1, 0.6, 2) })" @up="set({ fontScale: clamp(cfg.fontScale + 0.1, 0.6, 2) })" />
@@ -68,7 +68,7 @@ const trackValue = computed(() => {
         </div>
       </SubPopover>
 
-      <SubPopover v-else-if="player.sub === 'words'" title="过滤关键词" :wide="300">
+      <SubPopover v-else-if="player.sub === 'words'" title="过滤关键词">
         <textarea class="pl-words" rows="5" :value="cfg.blockedWords" placeholder="用逗号或换行分开" @change="e => set({ blockedWords: (e.target as HTMLTextAreaElement).value })"></textarea>
         <p class="pl-note">屏蔽在取回时生效，已有的缓存下一次读取才会干净。</p>
         <div class="pl-chips">
@@ -90,7 +90,7 @@ const trackValue = computed(() => {
   background: rgba(255, 255, 255, 0.06);
   color: var(--pl-text);
   font: inherit;
-  font-size: 13px;
+  font-size: 14px;
   resize: vertical;
 }
 .pl-words::placeholder {

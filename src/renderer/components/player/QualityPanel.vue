@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { Shield } from 'lucide-vue-next';
 import PanelShell from './PanelShell.vue';
 import SubPopover from './SubPopover.vue';
 import SubRow from './SubRow.vue';
@@ -45,7 +46,7 @@ function pickSource(index: number): void {
 </script>
 
 <template>
-  <PanelShell title="播放资源" :wide="320">
+  <PanelShell title="播放资源">
     <div class="pl-head-line">
       <span class="now">{{ session?.tiers.find(t => t.bitrate === session?.tier)?.label || '—' }}</span>
       <span class="via">{{ session?.method ? METHOD_CN[session.method] : '未谈定' }}</span>
@@ -64,14 +65,14 @@ function pickSource(index: number): void {
     <SubRow name="range" label="动态范围" :value="session?.hdr || media.hdr ? 'HDR' : 'SDR'" />
 
     <template #sub>
-      <SubPopover v-if="player.sub === 'sources'" title="播放源" :wide="330">
+      <SubPopover v-if="player.sub === 'sources'" title="播放源">
         <div class="pl-grid">
           <button v-for="(src, i) in session?.sources || []" :key="src.id" class="pl-card" :class="{ on: session?.sourceIndex === i }" @click="pickSource(i)">
             <span class="kind">{{ session?.hdr || media.hdr ? 'HDR' : 'SDR' }}</span>
             <span>{{ gb(src.sizeBytes) }}</span>
             <span>{{ mbps(src.bitRate) }}</span>
             <span class="who">
-              <svg viewBox="0 0 24 24" width="12" height="12"><path d="M12 3l7 3v6c0 4-3 6.5-7 9-4-2.5-7-5-7-9V6z" :fill="session?.sourceIndex === i ? '#6ddc8f' : 'rgba(255,255,255,.4)'" /></svg>
+              <Shield :size="17" :fill="session?.sourceIndex === i ? '#6ddc8f' : 'rgba(255,255,255,.4)'" stroke-width="1.6" />
               {{ src.name || `版本 ${i + 1}` }}
             </span>
           </button>
@@ -126,7 +127,7 @@ function pickSource(index: number): void {
   color: var(--pl-text);
 }
 .via {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--pl-faint);
 }
 </style>

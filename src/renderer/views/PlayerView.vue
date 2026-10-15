@@ -1,5 +1,25 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
+import {
+  AudioLines,
+  BookMarked,
+  Film,
+  Gauge,
+  ListVideo,
+  Maximize,
+  MessagesSquare,
+  Minimize,
+  Pause,
+  Play,
+  RotateCcw,
+  RotateCw,
+  SkipBack,
+  SkipForward,
+  Volume1,
+  Volume2,
+  VolumeX,
+  X,
+} from 'lucide-vue-next';
 import DanmakuLayer from '../components/player/DanmakuLayer.vue';
 import TrackPanel from '../components/player/TrackPanel.vue';
 import QualityPanel from '../components/player/QualityPanel.vue';
@@ -19,6 +39,7 @@ const s = computed(() => player.state);
 const session = computed(() => player.session);
 const media = computed(() => player.media);
 const step = computed(() => app.config?.settings.player.seekStepMs || 10000);
+const skipSec = computed(() => Math.round(step.value / 1000));
 const hideAfter = computed(() => app.config?.settings.player.controlsTimeoutMs || 3200);
 
 const METHOD_CN: Record<PlayMethod, string> = { DirectPlay: '直接播放', DirectStream: '直接串流', Transcode: '转码' };
@@ -217,7 +238,7 @@ onUnmounted(() => {
       <div class="no-drag ends">
         <span v-if="rate" class="pl-pill live">{{ rate }}</span>
         <button class="ib close" title="关闭播放器" @click="player.close()">
-          <svg viewBox="0 0 24 24" width="17" height="17"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" fill="none" /></svg>
+          <X :size="20" />
         </button>
       </div>
     </header>
@@ -225,6 +246,35 @@ onUnmounted(() => {
     <button v-if="!visible" class="hitzone" @click="show" @pointermove="show"></button>
 
     <div class="pl-bar">
+      <!-- One sheet at a time, and it rises from the bottom of the window rather than from the icon that
+           called it: the menu's room is then the whole picture above the chrome, not the few pixels that
+           happened to be free over the bar. Only one panel name is ever open, so these branches are the
+           routing. -->
+      <Transition name="pl">
+        <QualityPanel v-if="player.panel === 'quality'" />
+      </Transition>
+      <Transition name="pl">
+        <TrackPanel v-if="player.panel === 'subtitle'" kind="subtitle" />
+      </Transition>
+      <Transition name="pl">
+        <TrackPanel v-if="player.panel === 'audio'" kind="audio" />
+      </Transition>
+      <Transition name="pl">
+        <TrackPanel v-if="player.panel === 'video'" kind="video" />
+      </Transition>
+      <Transition name="pl">
+        <SpeedPanel v-if="player.panel === 'speed'" />
+      </Transition>
+      <Transition name="pl">
+        <ChapterPanel v-if="player.panel === 'chapters'" />
+      </Transition>
+      <Transition name="pl">
+        <EpisodePanel v-if="player.panel === 'episodes'" />
+      </Transition>
+      <Transition name="pl">
+        <DanmakuPanel v-if="player.panel === 'danmaku'" />
+      </Transition>
+
       <div class="seek" ref="rail" @pointerdown="onDown" @pointerup="onUp" @pointermove="onRailMove">
         <div class="rail">
           <div class="buf" :style="{ width: buffered }"></div>
@@ -236,27 +286,30 @@ onUnmounted(() => {
       </div>
 
       <div class="pl-badges">
-        <span v-for="b in badges" :key="b.text" class="pl-pill" :class="b.cls">{{ b.text }}</span>
-        <span v-if="session?.tier === 0" class="pl-pill orig">原片</span>
+        <span class="pl-pill meta">
+          <template v-for="(b, i) in badges" :key="b.text">
+            <i v-if="i" class="bar"></i>
+            <span :class="b.cls">{{ b.text }}</span>
+          </template>
+        </span>
       </div>
 
       <div class="pl-rowline">
         <div class="pl-caps">
-          <button class="ib" :class="{ act: !s.paused }" title="播放 / 暂停（空格）" @click="player.cmd({ action: 'toggle' })">
-            <svg v-if="s.paused" viewBox="0 0 24 24" width="19" height="19"><path d="M8 5l12 7-12 7z" fill="currentColor" /></svg>
-            <svg v-else viewBox="0 0 24 24" width="18" height="18"><rect x="6" y="5" width="4" height="14" rx="1.5" fill="currentColor" /><rect x="14" y="5" width="4" height="14" rx="1.5" fill="currentColor" /></svg>
-          </button>
           <button class="ib" :disabled="!session?.prev" title="上一集" @click="player.cmd({ action: 'prev' })">
-            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M18 6l-8 6 8 6zM7 5v14" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" /></svg>
+            <SkipBack :size="22" />
+          </button>
+          <button class="ib skip" :title="`后退 ${skipSec} 秒`" @click="player.cmd({ action: 'skip', value: -step })">
+            <RotateCcw :size="23" /><span class="n">{{ skipSec }}</span>
+          </button>
+          <button class="ib primary" :class="{ act: !s.paused }" title="播放 / 暂停（空格）" @click="player.cmd({ action: 'toggle' })">
+            <Play v-if="s.paused" :size="27" fill="currentColor" stroke-width="1" /><Pause v-else :size="26" fill="currentColor" stroke-width="1" />
+          </button>
+          <button class="ib skip" :title="`快进 ${skipSec} 秒`" @click="player.cmd({ action: 'skip', value: step })">
+            <RotateCw :size="23" /><span class="n">{{ skipSec }}</span>
           </button>
           <button class="ib" :disabled="!session?.next" title="下一集" @click="player.cmd({ action: 'next' })">
-            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M6 6l8 6-8 6zM17 5v14" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" /></svg>
-          </button>
-          <button class="ib skip" :title="`后退 ${Math.round(step / 1000)} 秒`" @click="player.cmd({ action: 'skip', value: -step })">
-            <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M11 5H6.5A4.5 4.5 0 0 0 2 9.5V12a5 5 0 0 0 5 5h3M11 5l-3.5 3.5M11 5L7.5 8.5" /><text x="15" y="17" font-size="11" stroke="none" fill="currentColor" text-anchor="middle">10</text></svg>
-          </button>
-          <button class="ib skip" :title="`快进 ${Math.round(step / 1000)} 秒`" @click="player.cmd({ action: 'skip', value: step })">
-            <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M13 5h4.5A4.5 4.5 0 0 1 22 9.5V12a5 5 0 0 1-5 5h-3M13 5l3.5 3.5M13 5l-3.5 3.5" /><text x="9" y="17" font-size="11" stroke="none" fill="currentColor" text-anchor="middle">10</text></svg>
+            <SkipForward :size="22" />
           </button>
           <span class="pl-time">{{ fmtClock(s.positionMs) }}<span class="dash">/</span>{{ fmtClock(s.durationMs) }}</span>
         </div>
@@ -264,87 +317,58 @@ onUnmounted(() => {
         <div class="pl-caps">
           <div class="vol">
             <button class="ib" :class="{ act: s.muted }" title="静音（M）" @click="player.cmd({ action: 'mute', value: !s.muted })">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-                <path d="M4 9v6h4l5 4V5L8 9H4z" />
-                <path v-if="s.muted || !s.volume" d="M16.5 9.5l5 5M21.5 9.5l-5 5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" />
-                <path v-else d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linecap="round" />
-              </svg>
+              <VolumeX v-if="s.muted || !s.volume" :size="23" /><Volume1 v-else-if="s.volume < 60" :size="23" /><Volume2 v-else :size="23" />
             </button>
-            <input class="vslider" type="range" :min="0" :max="VOLUME_MAX" :value="s.volume" @input="e => volumeTo(Number((e.target as HTMLInputElement).value))" />
+            <input
+              class="pl-range vslider"
+              type="range"
+              :min="0"
+              :max="VOLUME_MAX"
+              :value="s.volume"
+              :style="{ '--p': `${((s.muted ? 0 : s.volume) / VOLUME_MAX) * 100}%` }"
+              :aria-label="`音量 ${s.volume}`"
+              @input="e => volumeTo(Number((e.target as HTMLInputElement).value))"
+            />
             <span class="vnum">{{ s.muted ? 0 : s.volume }}</span>
           </div>
 
-          <div class="pl-menu">
-            <button class="ib word" :class="{ act: player.panel === 'quality' }" title="播放资源（Q）" @click="player.openPanel('quality')">{{ tierLabel }}</button>
-            <Transition name="pl">
-              <QualityPanel v-if="player.panel === 'quality'" />
-            </Transition>
-          </div>
+          <span class="cap-sep"></span>
 
-          <div class="pl-menu">
-            <button class="ib word cc" :class="{ act: player.panel === 'subtitle' || media.subtitle !== 'no' }" title="字幕（S）" @click="player.openPanel('subtitle')">CC</button>
-            <Transition name="pl">
-              <TrackPanel v-if="player.panel === 'subtitle'" kind="subtitle" />
-            </Transition>
-          </div>
+          <button class="ib word" :class="{ act: player.panel === 'quality' }" title="播放资源（Q）" @click="player.openPanel('quality')">{{ tierLabel }}</button>
 
-          <div class="pl-menu">
-            <button class="ib" :class="{ act: player.panel === 'audio' }" title="音轨（A）" @click="player.openPanel('audio')">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 12v-2M7 15V7M11 17V5M15 14v-4M19 12.5v-1" /></svg>
-            </button>
-            <Transition name="pl">
-              <TrackPanel v-if="player.panel === 'audio'" kind="audio" />
-            </Transition>
-          </div>
+          <button class="ib word cc" :class="{ act: player.panel === 'subtitle' || media.subtitle !== 'no' }" title="字幕（S）" @click="player.openPanel('subtitle')">CC</button>
 
-          <div class="pl-menu">
-            <button class="ib" :class="{ act: player.panel === 'video' }" title="画面（V）" @click="player.openPanel('video')">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="6" width="18" height="12" rx="2.5" /><path d="M8 6v12" stroke-linecap="round" /></svg>
-            </button>
-            <Transition name="pl">
-              <TrackPanel v-if="player.panel === 'video'" kind="video" />
-            </Transition>
-          </div>
+          <button class="ib" :class="{ act: player.panel === 'audio' }" title="音轨（A）" @click="player.openPanel('audio')">
+            <AudioLines :size="23" />
+          </button>
 
-          <div class="pl-menu">
-            <button class="ib" :class="{ act: player.panel === 'speed' || s.speed !== 1 }" title="速度（T）" @click="player.openPanel('speed')">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 17a8 8 0 1 1 16 0" /><path d="M12 17l4-5" /></svg>
-              <span v-if="s.speed !== 1" class="tag">{{ s.speed }}</span>
-            </button>
-            <Transition name="pl">
-              <SpeedPanel v-if="player.panel === 'speed'" />
-            </Transition>
-          </div>
+          <button class="ib" :class="{ act: player.panel === 'video' }" title="画面（V）" @click="player.openPanel('video')">
+            <Film :size="23" />
+          </button>
 
-          <div class="pl-menu">
-            <button class="ib" :class="{ act: player.panel === 'chapters' }" title="片段（C）" @click="player.openPanel('chapters')">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M6 4v16M10 4v16M14 4h4M14 9h4M14 14h4" /></svg>
-            </button>
-            <Transition name="pl">
-              <ChapterPanel v-if="player.panel === 'chapters'" />
-            </Transition>
-          </div>
+          <span class="cap-sep"></span>
 
-          <div class="pl-menu" v-if="session?.seriesId">
-            <button class="ib" :class="{ act: player.panel === 'episodes' }" title="选集（E）" @click="player.openPanel('episodes')">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10" /></svg>
-            </button>
-            <Transition name="pl">
-              <EpisodePanel v-if="player.panel === 'episodes'" />
-            </Transition>
-          </div>
+          <button class="ib" :class="{ act: player.panel === 'speed' || s.speed !== 1 }" title="速度（T）" @click="player.openPanel('speed')">
+            <Gauge :size="23" />
+            <span v-if="s.speed !== 1" class="tag">{{ s.speed }}</span>
+          </button>
 
-          <div class="pl-menu">
-            <button class="ib dm" :class="{ act: player.panel === 'danmaku', off: !player.danmakuOn }" title="弹幕（D）" @click="player.openPanel('danmaku')">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 8h12M6 12h11M9 16h9" /><circle cx="19.5" cy="7" r="1.4" fill="currentColor" stroke="none" /></svg>
-            </button>
-            <Transition name="pl">
-              <DanmakuPanel v-if="player.panel === 'danmaku'" />
-            </Transition>
-          </div>
+          <button class="ib" :class="{ act: player.panel === 'chapters' }" title="片段（C）" @click="player.openPanel('chapters')">
+            <BookMarked :size="23" />
+          </button>
+
+          <button v-if="session?.seriesId" class="ib" :class="{ act: player.panel === 'episodes' }" title="选集（E）" @click="player.openPanel('episodes')">
+            <ListVideo :size="23" />
+          </button>
+
+          <button class="ib dm" :class="{ act: player.panel === 'danmaku', off: !player.danmakuOn }" title="弹幕（D）" @click="player.openPanel('danmaku')">
+            <MessagesSquare :size="23" />
+          </button>
+
+          <span class="cap-sep"></span>
 
           <button class="ib" :title="s.fullscreen ? '退出全屏（F）' : '全屏（F）'" @click="player.cmd({ action: 'fullscreen', value: !s.fullscreen })">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path v-if="!s.fullscreen" d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /><path v-else d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" /></svg>
+            <Minimize v-if="s.fullscreen" :size="23" /><Maximize v-else :size="23" />
           </button>
         </div>
       </div>
@@ -396,24 +420,24 @@ onUnmounted(() => {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  padding: 14px 18px 44px;
+  padding: 16px 20px 52px;
   background: linear-gradient(180deg, rgba(0, 0, 0, 0.72), transparent);
   z-index: 3;
 }
 .topin {
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: 12px;
   min-width: 0;
 }
 .ends {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   flex: none;
 }
 .name {
-  font-size: 15px;
+  font-size: 17px;
   font-weight: 600;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8), 0 3px 14px rgba(0, 0, 0, 0.6);
   white-space: nowrap;
@@ -421,7 +445,7 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 .line {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--pl-dim);
   white-space: nowrap;
   overflow: hidden;
@@ -434,19 +458,24 @@ onUnmounted(() => {
    the line carries the playhead. */
 .seek {
   position: relative;
-  padding: 10px 2px;
+  padding: 11px 2px;
   cursor: pointer;
   touch-action: none;
 }
 .rail {
   position: relative;
-  height: 4px;
+  height: 5px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.24);
+  /* The rail lives at the top of the bar, where the scrim gradient has already faded to nothing, so a
+     translucent white track alone vanishes over snow or sky. The dark floor is painted inside the element
+     rather than behind it, which keeps the rail readable on any ground without a second box. */
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0.3)),
+    linear-gradient(rgba(8, 9, 12, 0.72), rgba(8, 9, 12, 0.72));
   transition: height var(--hov) var(--ease-out);
 }
 .seek:hover .rail {
-  height: 6px;
+  height: 8px;
 }
 .buf {
   position: absolute;
@@ -472,8 +501,8 @@ onUnmounted(() => {
 .thumb {
   position: absolute;
   top: 50%;
-  width: 13px;
-  height: 13px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
@@ -488,29 +517,43 @@ onUnmounted(() => {
   position: absolute;
   bottom: 100%;
   transform: translate(-50%, -6px);
-  padding: 3px 7px;
+  padding: 4px 9px;
   border-radius: var(--r-badge);
   background: rgba(12, 12, 16, 0.9);
-  font-size: 13px;
+  font-size: 14px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   pointer-events: none;
 }
 .pl-time {
-  padding-left: 4px;
+  padding-left: 6px;
 }
 .ib {
-  min-width: 34px;
-  height: 34px;
-  padding: 0 7px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0 9px;
   border-radius: 999px;
   color: var(--pl-text);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  font-size: 13px;
+  gap: 5px;
+  font-size: 15px;
   transition: background var(--hov) var(--ease), transform var(--hov) var(--ease-out), color var(--hov) var(--ease);
+}
+/* One grid for every glyph: the set draws on 24 units with a 2-unit stroke, and the bar renders it at
+   22-23 px over a 44 px target - the icon keeps most of its button, so the hit area is not all padding.
+   Play/pause is the one exception: it is the control used most and gets a larger glyph on a larger disc. */
+.ib svg {
+  display: block;
+  flex: none;
+}
+.ib.primary {
+  min-width: 48px;
+  height: 48px;
+}
+.ib.primary:hover {
+  background: rgba(255, 255, 255, 0.18);
 }
 .ib:hover {
   background: rgba(255, 255, 255, 0.14);
@@ -538,33 +581,47 @@ onUnmounted(() => {
   letter-spacing: 0.2px;
 }
 .ib.cc {
-  font-size: 13px;
-  letter-spacing: 0.4px;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
 }
-.skip {
-  letter-spacing: -0.5px;
+/* The seconds ride beside the arc, in real text at 15px. Two reasons it is not drawn into the icon: an
+   SVG <text> inside a 24-unit viewBox scaled to 23 px lands under 11 px, and the ring's own opening is
+   only ~12 px wide, so a legible numeral cannot sit inside it. */
+.ib.skip {
+  gap: 2px;
+}
+.ib.skip .n {
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.3px;
 }
 .ib .tag {
-  font-size: 13px;
+  font-size: 14px;
   font-variant-numeric: tabular-nums;
+}
+.cap-sep {
+  width: 1px;
+  height: 28px;
+  margin: 0 9px;
+  background: rgba(255, 255, 255, 0.16);
+  flex: none;
 }
 .vol {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding-right: 6px;
-  margin-right: 4px;
-  border-right: 1px solid var(--pl-line);
+  gap: 7px;
+  padding-right: 5px;
 }
 .vslider {
-  width: 78px;
-  accent-color: var(--pl-fill);
+  width: 104px;
 }
 .vnum {
-  font-size: 13px;
+  font-size: 15px;
   font-variant-numeric: tabular-nums;
   color: var(--pl-dim);
-  width: 28px;
+  width: 34px;
   text-align: right;
 }
 .notice {
@@ -572,10 +629,10 @@ onUnmounted(() => {
   left: 50%;
   bottom: 178px;
   transform: translate(-50%, 0);
-  padding: 8px 14px;
+  padding: 9px 15px;
   border-radius: 999px;
   background: rgba(12, 12, 16, 0.88);
-  font-size: 13px;
+  font-size: 14px;
   z-index: 4;
 }
 .fail {
@@ -596,10 +653,10 @@ onUnmounted(() => {
    while its menu is open, and an unscoped rule here painted every open icon solid blue. */
 .fail .act {
   justify-self: center;
-  padding: 9px 18px;
+  padding: 11px 22px;
   border-radius: 999px;
   background: var(--pl-fill);
   color: #fff;
-  font-size: 13px;
+  font-size: 15px;
 }
 </style>

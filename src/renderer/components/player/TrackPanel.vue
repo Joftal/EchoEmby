@@ -162,7 +162,7 @@ function nudgeDelay(dir: number): void {
         <p class="pl-note">填满把画面放大到没有黑边，代价是超出比例的部分被切掉。</p>
       </SubPopover>
 
-      <SubPopover v-else-if="player.sub === 'aspect'" title="画面比例" flip>
+      <SubPopover v-else-if="player.sub === 'aspect'" title="画面比例">
         <button v-for="a in ASPECTS" :key="a.label" class="pl-row" :class="{ on: isAspect(a.value) }" @click="setAspect(a.value)">
           <span class="mark"></span>
           <span class="label">{{ a.label }}</span>

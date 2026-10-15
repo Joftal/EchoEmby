@@ -26,7 +26,7 @@ const span = (i: number): string => {
 </script>
 
 <template>
-  <PanelShell title="片段" :wide="320">
+  <PanelShell title="片段">
     <button v-for="(c, i) in chapters" :key="c.index" class="pl-row" :class="{ on: i === current }" @click="player.cmd({ action: 'chapter', value: i })">
       <span class="mark"></span>
       <span class="label">
