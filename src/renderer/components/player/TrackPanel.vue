@@ -1,17 +1,15 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import PanelShell from './PanelShell.vue';
 import SubPopover from './SubPopover.vue';
 import SubRow from './SubRow.vue';
 import StepRow from './StepRow.vue';
 import { usePlayerStore } from '../../stores/player';
 import type { PlayerTrack, TrackSelection } from '../../../shared/types';
 
+/** Body only: the card that holds this belongs to SheetLayer, and so does its title. */
 const props = defineProps<{ kind: 'subtitle' | 'audio' | 'video' }>();
 const player = usePlayerStore();
 const media = computed(() => player.media);
-
-const title = computed(() => (props.kind === 'subtitle' ? '字幕' : props.kind === 'audio' ? '音轨' : '画面'));
 
 const tracks = computed(() => media.value.tracks.filter(t => t.kind === props.kind));
 const embedded = computed(() => tracks.value.filter(t => !t.external));
@@ -79,95 +77,93 @@ function nudgeDelay(dir: number): void {
 </script>
 
 <template>
-  <PanelShell :title="title">
-    <template v-if="kind === 'subtitle'">
-      <button class="pl-row" :class="{ on: current === 'no' }" @click="pick('no')">
-        <span class="mark"></span>
-        <span class="label">关闭</span>
-      </button>
-      <button class="pl-row" :class="{ on: current === 'auto' }" @click="pick('auto')">
-        <span class="mark"></span>
-        <span class="label">自动选择</span>
-        <span class="meta">按语言偏好挑一条</span>
-      </button>
+  <template v-if="kind === 'subtitle'">
+    <button class="pl-row" :class="{ on: current === 'no' }" @click="pick('no')">
+      <span class="mark"></span>
+      <span class="label">关闭</span>
+    </button>
+    <button class="pl-row" :class="{ on: current === 'auto' }" @click="pick('auto')">
+      <span class="mark"></span>
+      <span class="label">自动选择</span>
+      <span class="meta">按语言偏好挑一条</span>
+    </button>
 
-      <div v-if="embedded.length" class="pl-sect">内封字幕</div>
-      <button v-for="t in embedded" :key="t.id" class="pl-row" :class="{ on: current === t.id }" @click="pick(t.id)">
-        <span class="mark"></span>
-        <span class="label">
-          {{ rowLabel(t) }}
-          <span v-if="langName(t.lang)" class="sub">{{ langName(t.lang) }}</span>
-        </span>
-        <span class="meta">{{ meta(t) }}</span>
-      </button>
-      <p v-if="!embedded.length && !external.length" class="pl-empty">这个文件里没有字幕</p>
+    <div v-if="embedded.length" class="pl-sect">内封字幕</div>
+    <button v-for="t in embedded" :key="t.id" class="pl-row" :class="{ on: current === t.id }" @click="pick(t.id)">
+      <span class="mark"></span>
+      <span class="label">
+        {{ rowLabel(t) }}
+        <span v-if="langName(t.lang)" class="sub">{{ langName(t.lang) }}</span>
+      </span>
+      <span class="meta">{{ meta(t) }}</span>
+    </button>
+    <p v-if="!embedded.length && !external.length" class="pl-empty">这个文件里没有字幕</p>
 
-      <div v-if="external.length" class="pl-sect">外挂字幕</div>
-      <button v-for="t in external" :key="t.id" class="pl-row" :class="{ on: current === t.id }" @click="pick(t.id)">
-        <span class="mark"></span>
-        <span class="label">{{ rowLabel(t) }}</span>
-        <span class="meta">{{ meta(t) }}</span>
-      </button>
+    <div v-if="external.length" class="pl-sect">外挂字幕</div>
+    <button v-for="t in external" :key="t.id" class="pl-row" :class="{ on: current === t.id }" @click="pick(t.id)">
+      <span class="mark"></span>
+      <span class="label">{{ rowLabel(t) }}</span>
+      <span class="meta">{{ meta(t) }}</span>
+    </button>
 
-      <div class="pl-sep"></div>
-      <SubRow name="style" label="显示设置" :value="`${media.subtitleScale}% · ${delayMs > 0 ? '+' : ''}${(delayMs / 1000).toFixed(1)}s`" />
-    </template>
+    <div class="pl-sep"></div>
+    <SubRow name="style" label="显示设置" :value="`${media.subtitleScale}% · ${delayMs > 0 ? '+' : ''}${(delayMs / 1000).toFixed(1)}s`" />
+  </template>
 
-    <template v-else-if="kind === 'audio'">
+  <template v-else-if="kind === 'audio'">
+    <button v-for="t in tracks" :key="t.id" class="pl-row" :class="{ on: current === t.id }" @click="pick(t.id)">
+      <span class="mark"></span>
+      <span class="label">{{ rowLabel(t) }}</span>
+      <span class="meta">{{ meta(t) }}</span>
+    </button>
+    <p v-if="!tracks.length" class="pl-empty">这个文件里没有可切换的音轨</p>
+    <div v-if="tracks.length" class="pl-sep"></div>
+    <SubRow name="delay" label="声音延迟" :value="`${(delayMs / 1000).toFixed(1)}s`" />
+  </template>
+
+  <template v-else>
+    <SubRow name="fill" label="填充模式" :value="media.panscan >= 0.99 ? '填满屏幕' : media.panscan <= 0.01 ? '适应屏幕' : `${Math.round(media.panscan * 100)}%`" />
+    <SubRow name="aspect" label="画面比例" :value="ASPECTS.find(a => isAspect(a.value))?.label || ''" />
+    <template v-if="tracks.length > 1">
+      <div class="pl-sect">视频轨道</div>
       <button v-for="t in tracks" :key="t.id" class="pl-row" :class="{ on: current === t.id }" @click="pick(t.id)">
         <span class="mark"></span>
         <span class="label">{{ rowLabel(t) }}</span>
         <span class="meta">{{ meta(t) }}</span>
       </button>
-      <p v-if="!tracks.length" class="pl-empty">这个文件里没有可切换的音轨</p>
-      <div v-if="tracks.length" class="pl-sep"></div>
-      <SubRow name="delay" label="声音延迟" :value="`${(delayMs / 1000).toFixed(1)}s`" />
     </template>
+  </template>
 
-    <template v-else>
-      <SubRow name="fill" label="填充模式" :value="media.panscan >= 0.99 ? '填满屏幕' : media.panscan <= 0.01 ? '适应屏幕' : `${Math.round(media.panscan * 100)}%`" />
-      <SubRow name="aspect" label="画面比例" :value="ASPECTS.find(a => isAspect(a.value))?.label || ''" />
-      <template v-if="tracks.length > 1">
-        <div class="pl-sect">视频轨道</div>
-        <button v-for="t in tracks" :key="t.id" class="pl-row" :class="{ on: current === t.id }" @click="pick(t.id)">
-          <span class="mark"></span>
-          <span class="label">{{ rowLabel(t) }}</span>
-          <span class="meta">{{ meta(t) }}</span>
-        </button>
-      </template>
-    </template>
+  <SubPopover v-if="kind === 'subtitle'" name="style" title="字幕显示设置">
+    <StepRow label="延迟" :text="`${(delayMs / 1000).toFixed(1)}s`" @down="nudgeDelay(-1)" @up="nudgeDelay(1)" />
+    <div class="pl-chips">
+      <button class="pl-chip" @click="player.cmd({ action: 'subtitleDelay', value: 0 })">复位</button>
+    </div>
+    <StepRow label="字号" :text="`${media.subtitleScale}%`" @down="player.cmd({ action: 'subtitleStyle', value: { scale: Math.max(50, media.subtitleScale - 5) } })" @up="player.cmd({ action: 'subtitleStyle', value: { scale: Math.min(200, media.subtitleScale + 5) } })" />
+    <StepRow label="高度" :text="`${media.subtitlePos}%`" @down="player.cmd({ action: 'subtitleStyle', value: { pos: Math.max(0, media.subtitlePos - 2) } })" @up="player.cmd({ action: 'subtitleStyle', value: { pos: Math.min(100, media.subtitlePos + 2) } })" />
+  </SubPopover>
 
-    <template #sub>
-      <SubPopover v-if="player.sub === 'style'" title="字幕显示设置">
-        <StepRow label="延迟" :text="`${(delayMs / 1000).toFixed(1)}s`" @down="nudgeDelay(-1)" @up="nudgeDelay(1)" />
-        <div class="pl-chips">
-          <button class="pl-chip" @click="player.cmd({ action: 'subtitleDelay', value: 0 })">复位</button>
-        </div>
-        <StepRow label="字号" :text="`${media.subtitleScale}%`" @down="player.cmd({ action: 'subtitleStyle', value: { scale: Math.max(50, media.subtitleScale - 5) } })" @up="player.cmd({ action: 'subtitleStyle', value: { scale: Math.min(200, media.subtitleScale + 5) } })" />
-        <StepRow label="高度" :text="`${media.subtitlePos}%`" @down="player.cmd({ action: 'subtitleStyle', value: { pos: Math.max(0, media.subtitlePos - 2) } })" @up="player.cmd({ action: 'subtitleStyle', value: { pos: Math.min(100, media.subtitlePos + 2) } })" />
-      </SubPopover>
+  <SubPopover v-else-if="kind === 'audio'" name="delay" title="声音延迟">
+    <StepRow label="延迟" :text="`${(delayMs / 1000).toFixed(1)}s`" @down="nudgeDelay(-1)" @up="nudgeDelay(1)" />
+    <div class="pl-chips">
+      <button class="pl-chip" @click="player.cmd({ action: 'audioDelay', value: 0 })">复位</button>
+    </div>
+  </SubPopover>
 
-      <SubPopover v-else-if="player.sub === 'delay'" title="声音延迟">
-        <StepRow label="延迟" :text="`${(delayMs / 1000).toFixed(1)}s`" @down="nudgeDelay(-1)" @up="nudgeDelay(1)" />
-        <div class="pl-chips">
-          <button class="pl-chip" @click="player.cmd({ action: 'audioDelay', value: 0 })">复位</button>
-        </div>
-      </SubPopover>
+  <template v-else>
+    <SubPopover name="fill" title="填充模式">
+      <button v-for="f in FILLS" :key="f.label" class="pl-row" :class="{ on: Math.abs(media.panscan - f.value) < 0.01 }" @click="player.cmd({ action: 'panscan', value: f.value })">
+        <span class="mark"></span>
+        <span class="label">{{ f.label }}</span>
+      </button>
+      <p class="pl-note">填满把画面放大到没有黑边，代价是超出比例的部分被切掉。</p>
+    </SubPopover>
 
-      <SubPopover v-else-if="player.sub === 'fill'" title="填充模式">
-        <button v-for="f in FILLS" :key="f.label" class="pl-row" :class="{ on: Math.abs(media.panscan - f.value) < 0.01 }" @click="player.cmd({ action: 'panscan', value: f.value })">
-          <span class="mark"></span>
-          <span class="label">{{ f.label }}</span>
-        </button>
-        <p class="pl-note">填满把画面放大到没有黑边，代价是超出比例的部分被切掉。</p>
-      </SubPopover>
-
-      <SubPopover v-else-if="player.sub === 'aspect'" title="画面比例">
-        <button v-for="a in ASPECTS" :key="a.label" class="pl-row" :class="{ on: isAspect(a.value) }" @click="setAspect(a.value)">
-          <span class="mark"></span>
-          <span class="label">{{ a.label }}</span>
-        </button>
-      </SubPopover>
-    </template>
-  </PanelShell>
+    <SubPopover name="aspect" title="画面比例">
+      <button v-for="a in ASPECTS" :key="a.label" class="pl-row" :class="{ on: isAspect(a.value) }" @click="setAspect(a.value)">
+        <span class="mark"></span>
+        <span class="label">{{ a.label }}</span>
+      </button>
+    </SubPopover>
+  </template>
 </template>

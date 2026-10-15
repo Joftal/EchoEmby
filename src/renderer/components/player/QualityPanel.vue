@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { Shield } from 'lucide-vue-next';
-import PanelShell from './PanelShell.vue';
 import SubPopover from './SubPopover.vue';
 import SubRow from './SubRow.vue';
 import { usePlayerStore } from '../../stores/player';
@@ -46,70 +45,66 @@ function pickSource(index: number): void {
 </script>
 
 <template>
-  <PanelShell title="播放资源">
-    <div class="pl-head-line">
-      <span class="now">{{ session?.tiers.find(t => t.bitrate === session?.tier)?.label || '—' }}</span>
-      <span class="via">{{ session?.method ? METHOD_CN[session.method] : '未谈定' }}</span>
+  <div class="pl-head-line">
+    <span class="now">{{ session?.tiers.find(t => t.bitrate === session?.tier)?.label || '—' }}</span>
+    <span class="via">{{ session?.method ? METHOD_CN[session.method] : '未谈定' }}</span>
+  </div>
+
+  <div class="pl-sect">清晰度</div>
+  <button v-for="t in session?.tiers || []" :key="t.bitrate" class="pl-row" :class="{ on: session?.tier === t.bitrate }" @click="setTier(t.bitrate)">
+    <span class="mark"></span>
+    <span class="label">{{ t.label }}</span>
+    <span class="meta">{{ session?.tier === t.bitrate ? methodLabel(t.method) : '' }}</span>
+  </button>
+
+  <div class="pl-sep"></div>
+  <SubRow name="sources" label="播放源" :value="`${session?.sources.length || 0} 个版本`" />
+  <SubRow name="decode" label="解码与渲染" :value="media.hwdec || '软解'" />
+  <SubRow name="range" label="动态范围" :value="session?.hdr || media.hdr ? 'HDR' : 'SDR'" />
+
+  <SubPopover name="sources" title="播放源">
+    <div class="pl-grid">
+      <button v-for="(src, i) in session?.sources || []" :key="src.id" class="pl-card" :class="{ on: session?.sourceIndex === i }" @click="pickSource(i)">
+        <span class="kind">{{ session?.hdr || media.hdr ? 'HDR' : 'SDR' }}</span>
+        <span>{{ gb(src.sizeBytes) }}</span>
+        <span>{{ mbps(src.bitRate) }}</span>
+        <span class="who">
+          <Shield :size="17" :fill="session?.sourceIndex === i ? '#6ddc8f' : 'rgba(255,255,255,.4)'" stroke-width="1.6" />
+          {{ src.name || `版本 ${i + 1}` }}
+        </span>
+      </button>
     </div>
+    <p v-if="(session?.sources.length || 0) < 2" class="pl-empty">这个条目只有一个版本</p>
+  </SubPopover>
 
-    <div class="pl-sect">清晰度</div>
-    <button v-for="t in session?.tiers || []" :key="t.bitrate" class="pl-row" :class="{ on: session?.tier === t.bitrate }" @click="setTier(t.bitrate)">
-      <span class="mark"></span>
-      <span class="label">{{ t.label }}</span>
-      <span class="meta">{{ session?.tier === t.bitrate ? methodLabel(t.method) : '' }}</span>
-    </button>
-
+  <SubPopover name="decode" title="解码与渲染">
+    <div class="pl-sect">解码器</div>
+    <div class="pl-chips">
+      <button v-for="h in HWDECS" :key="h.value" class="pl-chip" :class="{ on: prefs.hwdec === h.value }" @click="patch({ hwdec: h.value })">{{ h.label }}</button>
+    </div>
+    <p class="pl-note">实际用上的那个写在下面：选了自动或硬件不可用时，mpv 会落回软解。</p>
+    <div class="pl-line"><span class="label">正在用</span><span class="pl-text">{{ media.hwdec || '—' }}</span></div>
     <div class="pl-sep"></div>
-    <SubRow name="sources" label="播放源" :value="`${session?.sources.length || 0} 个版本`" />
-    <SubRow name="decode" label="解码与渲染" :value="media.hwdec || '软解'" />
-    <SubRow name="range" label="动态范围" :value="session?.hdr || media.hdr ? 'HDR' : 'SDR'" />
+    <div class="pl-sect">渲染</div>
+    <div class="pl-line">
+      <span class="label">取向</span>
+      <span class="pl-seg">
+        <button :class="{ on: prefs.render !== 'hq' }" @click="patch({ render: 'smooth' })">流畅优先</button>
+        <button :class="{ on: prefs.render === 'hq' }" @click="patch({ render: 'hq' })">清晰优先</button>
+      </span>
+    </div>
+    <p class="pl-note">清晰优先开的是 gpu-hq 加插帧，会换一个新的 mpv 进程：画面会黑一下。</p>
+  </SubPopover>
 
-    <template #sub>
-      <SubPopover v-if="player.sub === 'sources'" title="播放源">
-        <div class="pl-grid">
-          <button v-for="(src, i) in session?.sources || []" :key="src.id" class="pl-card" :class="{ on: session?.sourceIndex === i }" @click="pickSource(i)">
-            <span class="kind">{{ session?.hdr || media.hdr ? 'HDR' : 'SDR' }}</span>
-            <span>{{ gb(src.sizeBytes) }}</span>
-            <span>{{ mbps(src.bitRate) }}</span>
-            <span class="who">
-              <Shield :size="17" :fill="session?.sourceIndex === i ? '#6ddc8f' : 'rgba(255,255,255,.4)'" stroke-width="1.6" />
-              {{ src.name || `版本 ${i + 1}` }}
-            </span>
-          </button>
-        </div>
-        <p v-if="(session?.sources.length || 0) < 2" class="pl-empty">这个条目只有一个版本</p>
-      </SubPopover>
-
-      <SubPopover v-else-if="player.sub === 'decode'" title="解码与渲染">
-        <div class="pl-sect">解码器</div>
-        <div class="pl-chips">
-          <button v-for="h in HWDECS" :key="h.value" class="pl-chip" :class="{ on: prefs.hwdec === h.value }" @click="patch({ hwdec: h.value })">{{ h.label }}</button>
-        </div>
-        <p class="pl-note">实际用上的那个写在下面：选了自动或硬件不可用时，mpv 会落回软解。</p>
-        <div class="pl-line"><span class="label">正在用</span><span class="pl-text">{{ media.hwdec || '—' }}</span></div>
-        <div class="pl-sep"></div>
-        <div class="pl-sect">渲染</div>
-        <div class="pl-line">
-          <span class="label">取向</span>
-          <span class="pl-seg">
-            <button :class="{ on: prefs.render !== 'hq' }" @click="patch({ render: 'smooth' })">流畅优先</button>
-            <button :class="{ on: prefs.render === 'hq' }" @click="patch({ render: 'hq' })">清晰优先</button>
-          </span>
-        </div>
-        <p class="pl-note">清晰优先开的是 gpu-hq 加插帧，会换一个新的 mpv 进程：画面会黑一下。</p>
-      </SubPopover>
-
-      <SubPopover v-else-if="player.sub === 'range'" title="动态范围">
-        <div class="pl-line"><span class="label">这条片源</span><span class="pl-text">{{ session?.hdr || media.hdr ? 'HDR' : 'SDR' }}</span></div>
-        <div class="pl-line"><span class="label">色彩空间</span><span class="pl-text">{{ media.colorSpace || '—' }}</span></div>
-        <div class="pl-switch" :class="{ on: prefs.hdrHint }" @click="patch({ hdrHint: !prefs.hdrHint })">
-          <span class="label">把 HDR 信号交给显示器</span>
-          <span class="track"><i></i></span>
-        </div>
-        <p class="pl-note">关掉时 mpv 把 HDR 压成 SDR 显示；打开后如果屏幕不支持 HDR，画面会发灰。改动在下一次播放生效。</p>
-      </SubPopover>
-    </template>
-  </PanelShell>
+  <SubPopover name="range" title="动态范围">
+    <div class="pl-line"><span class="label">这条片源</span><span class="pl-text">{{ session?.hdr || media.hdr ? 'HDR' : 'SDR' }}</span></div>
+    <div class="pl-line"><span class="label">色彩空间</span><span class="pl-text">{{ media.colorSpace || '—' }}</span></div>
+    <div class="pl-switch" role="switch" tabindex="0" :aria-checked="!!prefs.hdrHint" :class="{ on: prefs.hdrHint }" @click="patch({ hdrHint: !prefs.hdrHint })">
+      <span class="label">把 HDR 信号交给显示器</span>
+      <span class="track"><i></i></span>
+    </div>
+    <p class="pl-note">关掉时 mpv 把 HDR 压成 SDR 显示；打开后如果屏幕不支持 HDR，画面会发灰。改动在下一次播放生效。</p>
+  </SubPopover>
 </template>
 
 <style scoped>

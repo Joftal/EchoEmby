@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import PanelShell from './PanelShell.vue';
 import { usePlayerStore } from '../../stores/player';
 import { fmtClock } from '../../lib/format';
 
@@ -26,15 +25,13 @@ const span = (i: number): string => {
 </script>
 
 <template>
-  <PanelShell title="片段">
-    <button v-for="(c, i) in chapters" :key="c.index" class="pl-row" :class="{ on: i === current }" @click="player.cmd({ action: 'chapter', value: i })">
-      <span class="mark"></span>
-      <span class="label">
-        {{ c.title }}
-        <span class="sub">{{ span(i) }}</span>
-      </span>
-      <span class="meta">{{ fmtClock(c.timeMs) }}</span>
-    </button>
-    <p v-if="!chapters.length" class="pl-empty">这个文件没有章节信息</p>
-  </PanelShell>
+  <button v-for="(c, i) in chapters" :key="c.index" class="pl-row" :class="{ on: i === current }" @click="player.cmd({ action: 'chapter', value: i })">
+    <span class="mark"></span>
+    <span class="label">
+      {{ c.title }}
+      <span class="sub">{{ span(i) }}</span>
+    </span>
+    <span class="meta">{{ fmtClock(c.timeMs) }}</span>
+  </button>
+  <p v-if="!chapters.length" class="pl-empty">这个文件没有章节信息</p>
 </template>

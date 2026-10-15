@@ -18,7 +18,7 @@
   --pl-fill: #2f7dfd;
   --pl-shadow: 0 20px 54px rgba(0, 0, 0, 0.6);
   --pl-sheet-shadow: 0 14px 34px rgba(0, 0, 0, 0.5);
-  --pl-r-sheet: 14px;
+  --pl-r-sheet: 16px;
 }
 
 /* ---- chrome: two capsules on the bottom, badges and a read-out pill on top of them ---- */
@@ -120,21 +120,41 @@
   opacity: 0.55;
   margin: 0 3px;
 }
-/* ---- sheets: every menu rises from the bottom of the window, as a card the size of what it holds ---- */
+/* ---- the card: one popover that hangs above the button that called it ---- */
 
-/* A sheet is the bar's topmost block, not a bubble pinned above the icon that called it: it has the whole
-   area above the chrome to grow into, it cannot be pushed off-screen by a menu with ten rows, and it owes
-   nothing to where its trigger happens to sit. The capsules stay live underneath it, so the other entries
-   remain one tap away.
-   It is then sized to its own content rather than to the window. A fixed 760px card turned eight short
-   labels into a wall with a full-width band across it; `fit-content` lets a menu be as wide as its longest
-   row, and the cap is what a row of episode thumbnails or two source cards needs. */
+/* One element serves all eight menus, and it is placed rather than laid out: the bar's entries sit from
+   x=759 to x=1112 at the default window size, so a menu that belongs to its trigger cannot be a block in
+   the middle of the bar. The sheet is pinned to the window's bottom-left corner and moved by transform -
+   a transition on `left` would re-layout the whole card on every frame of the glide, and this window
+   composites a video underneath it. */
+.pl-sheet {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  transition: transform 0.26s cubic-bezier(0.32, 0.72, 0, 1);
+}
+/* The arrow is the sheet's own bottom edge, so the card floats one arrow-height over the button and the
+   line between them stays `--ax` pixels from the card's left edge however far the card was pushed to stay
+   on screen. */
+.pl-arrow {
+  width: 15px;
+  height: 8px;
+  margin: -1px 0 0 calc(var(--ax, 18px) - 7px);
+  background: var(--pl-glass-solid);
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
+
+/* Sized to what it holds, capped by the room above its button (`--room`) and by the window's own width. */
 .pl-panel {
   position: relative;
   width: fit-content;
-  min-width: 300px;
-  max-width: min(460px, calc(100% - 32px));
-  margin: 0 auto 10px;
+  min-width: 272px;
+  max-width: min(440px, calc(100vw - 24px));
+  max-height: var(--room, 420px);
   display: flex;
   flex-direction: column;
   color: var(--pl-text);
@@ -142,17 +162,28 @@
   backdrop-filter: blur(30px) saturate(1.8);
   border: 1px solid var(--pl-line);
   border-radius: var(--pl-r-sheet);
-  box-shadow: var(--pl-sheet-shadow);
+  box-shadow: var(--pl-sheet-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  /* Everything that resizes this card grows out of the button it came from, so the origin is the arrow. */
+  transform-origin: var(--ax, 50%) 100%;
+  transition: transform 0.2s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.2s var(--ease);
+}
+/* The card is a dialog, not a control - its rows carry the focus ring, and a rectangle around the whole
+   menu would say 「nothing is chosen」 at the moment the user is choosing something. */
+.pl-panel:focus,
+.pl-panel:focus-visible {
+  outline: none;
 }
 .pl-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 9px 10px 3px;
+  padding: 10px 10px 4px;
+  flex: none;
 }
 .pl-title {
   font-size: 14px;
   font-weight: 600;
+  letter-spacing: 0.3px;
   color: var(--pl-faint);
   flex: 1;
   min-width: 0;
@@ -160,27 +191,50 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.pl-head .ib {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 50%;
+  color: var(--pl-dim);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--hov) var(--ease), color var(--hov) var(--ease);
+}
+.pl-head .ib svg {
+  display: block;
+}
+.pl-head .ib:hover {
+  background: var(--pl-glass-hi);
+  color: var(--pl-text);
+}
 .pl-body {
-  /* The room a sheet has above the control bar at the default window height, measured: 172px of chrome
-     plus the sheet's own head and margin. 420px is where the tallest menu (播放资源's ten rungs) still
-     reaches its last row by scrolling a little rather than a lot. */
-  max-height: min(100vh - 226px, 420px);
+  /* The card's own cap does the limiting; this is the part that gives when it is full. `flex-basis: auto`
+     because a drill-in has no height of its own until its list says how tall it is. */
   min-height: 0;
+  flex: 0 1 auto;
   overflow: auto;
   overscroll-behavior: contain;
   padding: 0 7px 7px;
+  scrollbar-width: none;
 }
-/* A sheet that stops mid-row has to say there is more below. Scrollbars are hidden everywhere in this app,
-   so the bottom edge fades, and the fade lifts as soon as the list reaches its end. */
-.pl-panel.is-more::after,
-.pl-sub.is-more::after {
+.pl-body::-webkit-scrollbar {
+  width: 0;
+}
+/* A card that stops mid-row has to say there is more below. Scrollbars are hidden everywhere in this app,
+   so the bottom edge fades, and the fade lifts as soon as the list reaches its end. It is painted on the
+   card rather than on the list, so it also sits over a drill-in - hence the z-index, since the drill-in is
+   the later child and would otherwise cover it. */
+.pl-panel.is-more::after {
   content: '';
   position: absolute;
+  z-index: 1;
   left: 1px;
   right: 1px;
   bottom: 1px;
   height: 30px;
-  border-radius: 0 0 var(--pl-r-sheet) var(--pl-r-sheet);
+  border-radius: 0 0 calc(var(--pl-r-sheet) - 1px) calc(var(--pl-r-sheet) - 1px);
   background: linear-gradient(to bottom, rgba(18, 18, 24, 0), var(--pl-glass-solid));
   pointer-events: none;
 }
@@ -284,13 +338,12 @@
   background: var(--pl-line);
 }
 
-/* The second level of a sheet replaces the one that called it rather than unfolding to the side, where it
-   used to be pushed off-screen by the window's own width. It is the sheet's only remaining content, so the
-   card is sized by this list and not by the taller one it grew out of. */
+/* The second level of a card replaces the one that called it. It is teleported in as the card's last
+   child, so the card is sized by this list and not by the taller one it grew out of, and the card's own
+   cap keeps it inside the room above the button. */
 .pl-sub {
   position: relative;
   min-height: 0;
-  max-height: min(100vh - 160px, 460px);
   display: flex;
   flex-direction: column;
   background: var(--pl-glass-solid);
@@ -300,24 +353,22 @@
   box-shadow: var(--pl-sheet-shadow);
 }
 .pl-sub .pl-body {
-  max-height: none;
-  /* auto, not 0: the drill-in has no height of its own until this list says how tall it is, so a zero
-     flex-basis would size the sheet to its header and give the rows nothing. */
   flex: 1 1 auto;
   min-height: 0;
 }
 /* The glass is 92% opaque so the picture keeps showing through, which is right over the video and wrong
-   over the sheet's own first level: its rows would ghost up through the second, and the two stacked panes
+   over the card's own first level: its rows would ghost up through the second, and the two stacked panes
    of blur leave a tonal band where the lower box ends. While a drill-in is open the first level is gone
-   from the layout, not just from view - it is the list underneath that decides how big the card is. */
-.pl-panel:has(> .pl-sub) {
+   from the layout, not just from view - and `:not(.pl-sub-leave-active)` is what lets it come back the
+   moment a drill-in starts leaving, so the card is sized by the level being returned to. */
+.pl-panel:has(> .pl-sub:not(.pl-sub-leave-active)) {
   background: none;
   border-color: transparent;
   box-shadow: none;
   backdrop-filter: none;
 }
-.pl-panel:has(> .pl-sub) > .pl-head,
-.pl-panel:has(> .pl-sub) > .pl-body {
+.pl-panel:has(> .pl-sub:not(.pl-sub-leave-active)) > .pl-head,
+.pl-panel:has(> .pl-sub:not(.pl-sub-leave-active)) > .pl-body {
   display: none;
 }
 
@@ -616,25 +667,72 @@
   white-space: nowrap;
 }
 
-.pl-enter-active {
-  transition: transform 0.2s var(--ease), opacity 0.2s var(--ease);
+/* ---- motion ---- */
+
+/* A card arrives by growing out of the button it belongs to and leaves the same way back in, so the
+   transform origin is the arrow and the only thing that moves is scale. Position is deliberately not
+   transitioned here: the sheet's own glide is switched off for the duration of an enter, because the
+   placement is corrected on the frame after the content lands and a card that slid sideways while it
+   faded in read as a window being dragged rather than a menu being opened. */
+.pl-sheet-enter-active {
+  transition: opacity 0.18s var(--ease);
 }
-.pl-enter-from {
-  transform: translate3d(0, 18px, 0);
+.pl-sheet-enter-from {
   opacity: 0;
 }
-/* Leaving is instant, on purpose. Every sheet rises from the same place, so a fading one would sit under
-   the sheet that replaced it and the two would visibly overlap for 200ms. */
-.pl-leave-active {
-  transition: none;
+.pl-sheet-enter-from .pl-panel {
+  transform: scale(0.82);
 }
-.pl-leave-to {
+.pl-sheet-leave-active {
+  transition: opacity 0.14s var(--ease);
+}
+.pl-sheet-leave-to {
   opacity: 0;
+}
+.pl-sheet-leave-to .pl-panel {
+  transform: scale(0.86);
+}
+
+/* A drill-in comes in from the side its parent row's chevron points to, and goes back the way it came. */
+.pl-sub-enter-active {
+  transition: transform 0.22s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.16s var(--ease);
+}
+.pl-sub-enter-from {
+  transform: translate3d(26px, 0, 0);
+  opacity: 0;
+}
+/* The leaving level steps out of the layout so the card can be sized by whatever is arriving underneath
+   it - and the rule that hides the first level has to be told it is gone, or the card keeps its 载入中…
+   height with nothing in it. */
+.pl-sub-leave-active {
+  position: absolute;
+  inset: 0;
+  transition: transform 0.2s var(--ease), opacity 0.14s var(--ease);
+}
+.pl-sub-leave-to {
+  transform: translate3d(26px, 0, 0);
+  opacity: 0;
+}
+
+/* The cursor is only ever drawn by the keyboard: a menu opened with the mouse would otherwise show a ring
+   on the row the pointer just happened to cross. */
+.pl-sheet :is(.pl-row, .pl-chip, .pl-card, .pl-switch, .pl-seg button, .pl-step button, .pl-words, .pl-head .ib):focus-visible {
+  outline: 2px solid var(--pl-hi);
+  outline-offset: -2px;
+}
+.pl-cell:focus-visible {
+  outline: none;
+}
+.pl-cell:focus-visible .art {
+  outline: 2px solid var(--pl-hi);
+  outline-offset: 2px;
 }
 
 .stage.hidden .pl-bar {
   opacity: 0;
-  transform: translate3d(0, 14px, 0);
+  /* No slide: the card is anchored to the top edge of these buttons, and a bar that is still travelling
+     when a menu is opened with a key would hand the anchor a rect 14px away from where it will come to
+     rest. */
   pointer-events: none;
 }
 .stage.hidden .pl-top {

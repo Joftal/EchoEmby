@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
-import PanelShell from './PanelShell.vue';
 import { usePlayerStore } from '../../stores/player';
 import { useAppStore } from '../../stores/app';
 import { episodePosition, fmtRuntime, isPositionOnlyName } from '../../lib/format';
@@ -89,29 +88,27 @@ const titleOf = (ep: LibraryItem): string => (isPositionOnlyName(ep.name) ? '' :
 </script>
 
 <template>
-  <PanelShell title="选集">
-    <p v-if="!seriesId" class="pl-empty">这不是剧集条目</p>
-    <template v-else>
-      <div v-if="seasons.length > 1" class="pl-chips">
-        <button v-for="s in seasons" :key="s.id" class="pl-chip" :class="{ on: active === s.id }" @click="loadEpisodes(s.id)">
-          {{ s.indexNumber != null ? `第 ${s.indexNumber} 季` : s.name }}
-        </button>
-      </div>
+  <p v-if="!seriesId" class="pl-empty">这不是剧集条目</p>
+  <template v-else>
+    <div v-if="seasons.length > 1" class="pl-chips">
+      <button v-for="s in seasons" :key="s.id" class="pl-chip" :class="{ on: active === s.id }" @click="loadEpisodes(s.id)">
+        {{ s.indexNumber != null ? `第 ${s.indexNumber} 季` : s.name }}
+      </button>
+    </div>
 
-      <p v-if="loading" class="pl-empty">载入中…</p>
-      <div v-else ref="strip" class="pl-strip">
-        <button v-for="ep in episodes" :key="ep.id" class="pl-cell" :class="{ on: ep.id === itemId }" @click="choose(ep.id)">
-          <span class="art">
-            <img v-if="art[ep.id]" :src="art[ep.id]" :alt="ep.name" loading="lazy" @error="onArtFail(ep)" />
-            <template v-else>{{ ep.indexNumber ?? '' }}</template>
-          </span>
-          <span class="cap">
-            <b>{{ episodePosition(ep.parentIndexNumber, ep.indexNumber) }}</b>
-            <span>{{ titleOf(ep) || fmtRuntime(ep.runTimeTicks) }}</span>
-          </span>
-        </button>
-      </div>
-      <p v-if="!loading && !episodes.length" class="pl-empty">这一季没有返回条目</p>
-    </template>
-  </PanelShell>
+    <p v-if="loading" class="pl-empty">载入中…</p>
+    <div v-else ref="strip" class="pl-strip">
+      <button v-for="ep in episodes" :key="ep.id" class="pl-cell" :class="{ on: ep.id === itemId }" @click="choose(ep.id)">
+        <span class="art">
+          <img v-if="art[ep.id]" :src="art[ep.id]" :alt="ep.name" loading="lazy" @error="onArtFail(ep)" />
+          <template v-else>{{ ep.indexNumber ?? '' }}</template>
+        </span>
+        <span class="cap">
+          <b>{{ episodePosition(ep.parentIndexNumber, ep.indexNumber) }}</b>
+          <span>{{ titleOf(ep) || fmtRuntime(ep.runTimeTicks) }}</span>
+        </span>
+      </button>
+    </div>
+    <p v-if="!loading && !episodes.length" class="pl-empty">这一季没有返回条目</p>
+  </template>
 </template>

@@ -92,13 +92,41 @@ export const usePlayerStore = defineStore('player', () => {
     return !!r.ok;
   }
 
-  function openPanel(kind: PanelKind): void {
-    panel.value = panel.value === kind ? '' : kind;
+  /** How the card was last asked to open. A click leaves the pointer on the trigger; a letter shortcut has
+   *  no target, so the card takes focus itself and the arrow keys can walk it. */
+  const focusFromKey = ref(false);
+
+  function openPanel(kind: PanelKind, viaKey = false): void {
+    if (panel.value === kind) {
+      closePanel();
+      return;
+    }
+    panel.value = kind;
     sub.value = '';
+    focusFromKey.value = viaKey;
+    measureAnchor(kind);
   }
 
-  /** Which submenu is unfolded beside the open panel. It lives in the store rather than in the panel
-   *  component because Escape has to close the submenu first and the drawer second. */
+  /** Where the card belongs: the middle of its trigger's top edge, in window coordinates. The pointer and
+   *  the letter shortcuts both come through here, so the button is looked up by its `data-panel` attribute
+   *  rather than handed in - a key press has no event target worth asking. */
+  const anchor = ref<{ x: number; top: number } | null>(null);
+
+  function measureAnchor(kind: PanelKind): void {
+    const el = document.querySelector<HTMLElement>(`[data-panel="${kind}"]`);
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    anchor.value = { x: r.left + r.width / 2, top: r.top };
+  }
+
+  /** The card outlives the click that opened it: a window resize or a fullscreen flip moves the button
+   *  under it, and the anchor is the one piece of geometry that cannot be re-derived from CSS. */
+  function remeasure(): void {
+    if (panel.value) measureAnchor(panel.value);
+  }
+
+  /** Which submenu is unfolded inside the open card. It lives in the store rather than in the panel
+   *  component because Escape has to close the submenu first and the card second. */
   const sub = ref('');
 
   function toggleSub(name: string): void {
@@ -106,8 +134,16 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   function closePanel(): void {
+    const kind = panel.value;
     panel.value = '';
     sub.value = '';
+    focusFromKey.value = false;
+    // The card is about to disappear with the cursor inside it; hand the cursor back to the button that
+    // grew it, so a keyboard user is not left on a detached node.
+    const el = document.activeElement;
+    if (kind && el instanceof HTMLElement && el.closest('.pl-sheet')) {
+      document.querySelector<HTMLElement>(`[data-panel="${kind}"]`)?.focus();
+    }
   }
 
   async function close(): Promise<void> {
@@ -226,7 +262,9 @@ export const usePlayerStore = defineStore('player', () => {
     media,
     prefs,
     panel,
+    focusFromKey,
     sub,
+    anchor,
     busy,
     error,
     progress,
@@ -242,6 +280,7 @@ export const usePlayerStore = defineStore('player', () => {
     play,
     cmd,
     openPanel,
+    remeasure,
     toggleSub,
     closePanel,
     close,

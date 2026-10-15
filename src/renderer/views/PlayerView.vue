@@ -21,12 +21,7 @@ import {
   X,
 } from 'lucide-vue-next';
 import DanmakuLayer from '../components/player/DanmakuLayer.vue';
-import TrackPanel from '../components/player/TrackPanel.vue';
-import QualityPanel from '../components/player/QualityPanel.vue';
-import SpeedPanel from '../components/player/SpeedPanel.vue';
-import ChapterPanel from '../components/player/ChapterPanel.vue';
-import EpisodePanel from '../components/player/EpisodePanel.vue';
-import DanmakuPanel from '../components/player/DanmakuPanel.vue';
+import SheetLayer from '../components/player/SheetLayer.vue';
 import { SPEED_STEPS, usePlayerStore } from '../stores/player';
 import { useAppStore } from '../stores/app';
 import { fmtClock } from '../lib/format';
@@ -163,14 +158,14 @@ const keys: Record<string, () => void> = {
   f: () => void player.cmd({ action: 'fullscreen', value: !s.value.fullscreen }),
   n: () => session.value?.next && void player.cmd({ action: 'next' }),
   p: () => session.value?.prev && void player.cmd({ action: 'prev' }),
-  s: () => player.openPanel('subtitle'),
-  a: () => player.openPanel('audio'),
-  v: () => player.openPanel('video'),
-  q: () => player.openPanel('quality'),
-  d: () => player.openPanel('danmaku'),
-  e: () => player.openPanel('episodes'),
-  c: () => player.openPanel('chapters'),
-  t: () => player.openPanel('speed'),
+  s: () => player.openPanel('subtitle', true),
+  a: () => player.openPanel('audio', true),
+  v: () => player.openPanel('video', true),
+  q: () => player.openPanel('quality', true),
+  d: () => player.openPanel('danmaku', true),
+  e: () => player.openPanel('episodes', true),
+  c: () => player.openPanel('chapters', true),
+  t: () => player.openPanel('speed', true),
   ',': () => void player.cmd({ action: 'frameStep', value: -1 }),
   '.': () => void player.cmd({ action: 'frameStep', value: 1 }),
   '[': () => nudgeSpeed(-1),
@@ -179,10 +174,21 @@ const keys: Record<string, () => void> = {
   Escape: () => (player.panel ? player.closePanel() : void player.close()),
 };
 
+/** The keys a menu works with. While the card holds the cursor they belong to it: ArrowDown is the next
+ *  chapter, not the next five seconds, and Escape backs out of a submenu before it closes the player.
+ *  A menu opened by mouse leaves the cursor on the page, so the same keys still drive the film. */
+const CARD_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'Enter', ' ', 'Escape']);
+
+function cardHoldsCursor(): boolean {
+  const el = document.activeElement;
+  return !!player.panel && el instanceof HTMLElement && el !== document.body && !!el.closest('.pl-sheet');
+}
+
 function onKey(e: KeyboardEvent): void {
   const target = e.target as HTMLElement | null;
   if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
   if (e.ctrlKey || e.metaKey) return;
+  if (cardHoldsCursor() && CARD_KEYS.has(e.key)) return;
   if (e.repeat && !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
   const digit = /^[0-9]$/.test(e.key);
   const fn = digit ? () => void seekTo(Number(e.key) / 10) : keys[e.key === 'K' ? 'k' : e.key];
@@ -249,36 +255,9 @@ onUnmounted(() => {
 
     <button v-if="!visible" class="hitzone" @click="show" @pointermove="show"></button>
 
-    <div class="pl-bar">
-      <!-- One sheet at a time, and it rises from the bottom of the window rather than from the icon that
-           called it: the menu's room is then the whole picture above the chrome, not the few pixels that
-           happened to be free over the bar. Only one panel name is ever open, so these branches are the
-           routing. -->
-      <Transition name="pl">
-        <QualityPanel v-if="player.panel === 'quality'" />
-      </Transition>
-      <Transition name="pl">
-        <TrackPanel v-if="player.panel === 'subtitle'" kind="subtitle" />
-      </Transition>
-      <Transition name="pl">
-        <TrackPanel v-if="player.panel === 'audio'" kind="audio" />
-      </Transition>
-      <Transition name="pl">
-        <TrackPanel v-if="player.panel === 'video'" kind="video" />
-      </Transition>
-      <Transition name="pl">
-        <SpeedPanel v-if="player.panel === 'speed'" />
-      </Transition>
-      <Transition name="pl">
-        <ChapterPanel v-if="player.panel === 'chapters'" />
-      </Transition>
-      <Transition name="pl">
-        <EpisodePanel v-if="player.panel === 'episodes'" />
-      </Transition>
-      <Transition name="pl">
-        <DanmakuPanel v-if="player.panel === 'danmaku'" />
-      </Transition>
+    <SheetLayer />
 
+    <div class="pl-bar">
       <div class="seek" ref="rail" @pointerdown="onDown" @pointerup="onUp" @pointermove="onRailMove">
         <div class="rail">
           <div class="buf" :style="{ width: buffered }"></div>
@@ -338,34 +317,34 @@ onUnmounted(() => {
 
           <span class="cap-sep"></span>
 
-          <button class="ib word" :class="{ act: player.panel === 'quality' }" title="播放资源（Q）" @click="player.openPanel('quality')">{{ tierLabel }}</button>
+          <button class="ib word" data-panel="quality" :class="{ act: player.panel === 'quality' }" title="播放资源（Q）" @click="player.openPanel('quality')">{{ tierLabel }}</button>
 
-          <button class="ib word cc" :class="{ act: player.panel === 'subtitle' || media.subtitle !== 'no' }" title="字幕（S）" @click="player.openPanel('subtitle')">CC</button>
+          <button class="ib word cc" data-panel="subtitle" :class="{ act: player.panel === 'subtitle' || media.subtitle !== 'no' }" title="字幕（S）" @click="player.openPanel('subtitle')">CC</button>
 
-          <button class="ib" :class="{ act: player.panel === 'audio' }" title="音轨（A）" @click="player.openPanel('audio')">
+          <button class="ib" data-panel="audio" :class="{ act: player.panel === 'audio' }" title="音轨（A）" @click="player.openPanel('audio')">
             <AudioLines :size="23" />
           </button>
 
-          <button class="ib" :class="{ act: player.panel === 'video' }" title="画面（V）" @click="player.openPanel('video')">
+          <button class="ib" data-panel="video" :class="{ act: player.panel === 'video' }" title="画面（V）" @click="player.openPanel('video')">
             <Film :size="23" />
           </button>
 
           <span class="cap-sep"></span>
 
-          <button class="ib" :class="{ act: player.panel === 'speed' || s.speed !== 1 }" title="速度（T）" @click="player.openPanel('speed')">
+          <button class="ib" data-panel="speed" :class="{ act: player.panel === 'speed' || s.speed !== 1 }" title="速度（T）" @click="player.openPanel('speed')">
             <Gauge :size="23" />
             <span v-if="s.speed !== 1" class="tag">{{ s.speed }}</span>
           </button>
 
-          <button class="ib" :class="{ act: player.panel === 'chapters' }" title="片段（C）" @click="player.openPanel('chapters')">
+          <button class="ib" data-panel="chapters" :class="{ act: player.panel === 'chapters' }" title="片段（C）" @click="player.openPanel('chapters')">
             <BookMarked :size="23" />
           </button>
 
-          <button v-if="session?.seriesId" class="ib" :class="{ act: player.panel === 'episodes' }" title="选集（E）" @click="player.openPanel('episodes')">
+          <button v-if="session?.seriesId" class="ib" data-panel="episodes" :class="{ act: player.panel === 'episodes' }" title="选集（E）" @click="player.openPanel('episodes')">
             <ListVideo :size="23" />
           </button>
 
-          <button class="ib dm" :class="{ act: player.panel === 'danmaku', off: !player.danmakuOn }" title="弹幕（D）" @click="player.openPanel('danmaku')">
+          <button class="ib dm" data-panel="danmaku" :class="{ act: player.panel === 'danmaku', off: !player.danmakuOn }" title="弹幕（D）" @click="player.openPanel('danmaku')">
             <MessagesSquare :size="23" />
           </button>
 
