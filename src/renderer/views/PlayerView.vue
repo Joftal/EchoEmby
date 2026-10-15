@@ -26,7 +26,7 @@ import TitleArt from '../components/TitleArt.vue';
 import { SPEED_STEPS, usePlayerStore } from '../stores/player';
 import { useAppStore } from '../stores/app';
 import { fmtClock } from '../lib/format';
-import { VOLUME_MAX, type PlayMethod } from '../../shared/types';
+import { VOLUME_MAX } from '../../shared/types';
 
 const player = usePlayerStore();
 const app = useAppStore();
@@ -37,8 +37,6 @@ const media = computed(() => player.media);
 const step = computed(() => app.config?.settings.player.seekStepMs || 10000);
 const skipSec = computed(() => Math.round(step.value / 1000));
 const hideAfter = computed(() => app.config?.settings.player.controlsTimeoutMs || 3200);
-
-const METHOD_CN: Record<PlayMethod, string> = { DirectPlay: '直接播放', DirectStream: '直接串流', Transcode: '转码' };
 
 const visible = ref(true);
 const dragging = ref(false);
@@ -71,7 +69,6 @@ const badges = computed(() => {
   if (vid?.codec) out.push({ text: vid.codec.toUpperCase() });
   if (aud?.codec) out.push({ text: aud.codec.toUpperCase() });
   if (m.fps) out.push({ text: `${m.fps.toFixed(2)} fps` });
-  if (session.value?.method) out.push({ text: METHOD_CN[session.value.method] });
   return out;
 });
 
