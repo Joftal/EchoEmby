@@ -171,6 +171,7 @@ const positionTicks = (u: any): number => Number(u?.PlaybackPositionTicks ?? u?.
 const mapItem = (r: any): LibraryItem => ({
   id: r.Id,
   type: r.Type,
+  collectionType: r.CollectionType,
   name: r.Name,
   originalTitle: r.OriginalTitle,
   seriesName: r.SeriesName,
@@ -213,6 +214,36 @@ async function http(url: string, init: RequestInit, timeoutMs: number): Promise<
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Answers the whole app shares, held beside the class that asks them: every IPC call builds a fresh
+ *  client, so an instance field would cache nothing. Keyed by account because a token for one server
+ *  cannot answer for another, and an in-flight slot because the lobby asks twice in the same tick —
+ *  once for its own rows and once through the renderer's rail. */
+const TTL = 10 * 60_000;
+const session = new Map<string, { at: number; value: unknown; pending: Promise<unknown> | null }>();
+
+function sessionCached<T>(key: string, load: () => Promise<T>): Promise<T> {
+  const hit = session.get(key);
+  if (hit?.pending) return hit.pending as Promise<T>;
+  if (hit && Date.now() - hit.at < TTL) return Promise.resolve(hit.value as T);
+  const slot: { at: number; value: unknown; pending: Promise<unknown> | null } = { at: 0, value: undefined, pending: null };
+  session.set(key, slot);
+  const pending = load().then(
+    value => {
+      slot.pending = null;
+      slot.at = Date.now();
+      slot.value = value;
+      return value;
+    },
+    e => {
+      slot.pending = null;
+      session.delete(key);
+      throw e;
+    },
+  );
+  slot.pending = pending;
+  return pending;
 }
 
 export class EmbyClient {
@@ -334,22 +365,59 @@ export class EmbyClient {
     return j?.ServerName || '';
   }
 
+  /** The raw folder list. Left uncached on purpose: the account editor calls it to prove a moved folder
+   *  still answers under the same token, and a cache keyed by account would hand back the old server's
+   *  answer. Everything that only wants to read the libraries goes through `libraryViews`. */
+  /** What a cached library answer belongs to. The address and name are part of it because the account
+   *  editor can move an account onto another server without changing its id, and the rail must not go on
+   *  showing the old one's folders. */
+  private get libraryKey(): string {
+    return `${this.account.accountId}|${this.account.baseUrl}|${this.account.username}`;
+  }
+
   async views(): Promise<LibraryItem[]> {
     const j = await this.get<any>(`/Users/${this.account.userId}/Views`, { GroupByCollectionType: true });
     return (j.Items || []).map(mapItem);
   }
 
+  async libraryViews(): Promise<LibraryItem[]> {
+    return sessionCached(`views|${this.libraryKey}`, () => this.views());
+  }
+
+  /** The libraries worth putting on screen. Views answers with every folder the account may see, and an
+   *  empty one looks identical to a merely quiet one (measured: 播放列表 and 合集 answer empty on both
+   *  gateways), so each folder is asked the same question the browse page will ask and the ones that
+   *  answer with nothing are dropped. A failed probe keeps its library: only a proven-empty answer hides it.
+   *  Held for the session in the main process rather than per window — the lobby and the player window ask
+   *  the same thirteen questions of the same account, and the answer only changes when the server's does. */
+  async navViews(): Promise<LibraryItem[]> {
+    return sessionCached(`navViews|${this.libraryKey}`, async () => {
+      const all = await this.libraryViews();
+      const filled = await Promise.all(
+        all.map(v =>
+          this.items({ ParentId: v.id, IncludeItemTypes: 'Movie,Series,BoxSet,Playlist,Video', Recursive: true, Limit: 1 })
+            .then(x => x.length > 0)
+            .catch(() => true),
+        ),
+      );
+      return all.filter((_, i) => filled[i]);
+    });
+  }
+
   /**
    * Neither server answers Views with ItemCount, so the totals come from a
-   * one-item page of each type: the answer only needs TotalRecordCount.
+   * one-item page of each type: the answer only needs TotalRecordCount. Held for
+   * the session because the rail repaints them on every page of the app.
    */
   async counts(): Promise<{ movies: number; series: number }> {
-    const total = async (type: string) => {
-      const j = await this.get<any>(`/Users/${this.account.userId}/Items`, { IncludeItemTypes: type, Recursive: true, Limit: 1 }, 12000);
-      return Number(j?.TotalRecordCount) || 0;
-    };
-    const [movies, series] = await Promise.all([total('Movie'), total('Series')]);
-    return { movies, series };
+    return sessionCached(`counts|${this.libraryKey}`, async () => {
+      const total = async (type: string) => {
+        const j = await this.get<any>(`/Users/${this.account.userId}/Items`, { IncludeItemTypes: type, Recursive: true, Limit: 1 }, 12000);
+        return Number(j?.TotalRecordCount) || 0;
+      };
+      const [movies, series] = await Promise.all([total('Movie'), total('Series')]);
+      return { movies, series };
+    });
   }
 
   async items(params: Record<string, string | number | boolean | undefined>): Promise<LibraryItem[]> {
@@ -384,10 +452,16 @@ export class EmbyClient {
     return (j.Items || []).map(mapItem);
   }
 
-  /** Latest answers with the series itself, so the episode position has to come from a parallel pass. */
-  private async newestEpisodes(parentId: string): Promise<Map<string, LibraryItem>> {
+  /** Latest answers with the series itself, so the episode position has to come from a parallel pass.
+   *  The pass is 400 rows because the badges are worth it: measured, the series a row shows sit as deep as
+   *  position 379 of that pull, so a shorter page would silently drop them. What it does not need is a
+   *  folder that cannot hold an episode at all — the three libraries this server labels movies each answered
+   *  with zero rows. Reading the type off the Views row costs no round trip, unlike waiting to see whether
+   *  the Latest row happened to hold a series. */
+  private async newestEpisodes(folder: LibraryItem): Promise<Map<string, LibraryItem>> {
+    if (folder.collectionType === 'movies') return new Map();
     const eps = await this.items({
-      ParentId: parentId,
+      ParentId: folder.id,
       Recursive: true,
       IncludeItemTypes: 'Episode',
       SortBy: 'DateCreated',
@@ -400,26 +474,38 @@ export class EmbyClient {
     return m;
   }
 
-  async homeRows(): Promise<LibraryRow[]> {
-    const views = await this.views();
+  /** The 在看 row on its own. Closing the player changes which titles are in it and in what order, and
+   *  that is the only part of the lobby a stopped film can move — a 新加入 row is a library's ingest order
+   *  and does not care what was watched. Asked alone, it is one round trip instead of the fifteen the
+   *  whole lobby costs. */
+  async resumeRow(): Promise<LibraryRow | null> {
     const raw = await this.items({ Recursive: true, MediaTypes: 'Video', SortBy: 'DatePlayed', SortOrder: 'Descending', Limit: 18, IsResumable: true });
     // The row is newest-played first, so the first card per series is the episode to resume.
     const seen = new Set<string>();
-    const resume = raw.filter(x => {
+    const items = raw.filter(x => {
       const key = x.seriesName ? x.parentId || x.seriesName : x.id;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     });
+    return items.length ? { key: 'resume', title: '继续观看', items } : null;
+  }
+
+  async homeRows(): Promise<LibraryRow[]> {
+    // Asked side by side: the resume row is the slowest single answer on this page (measured: 1.4s against
+    // the 0.6s a library list takes), so making the rows wait for the rail's empty-folder probes would have
+    // pushed the whole lobby back by 0.45s. The raw list is the right ask here: a folder that turns out
+    // empty yields no row, which is what the filter at the end of this method already does.
+    const [views, resume] = await Promise.all([this.libraryViews(), this.resumeRow()]);
     const rows: LibraryRow[] = [];
-    if (resume.length) rows.push({ key: 'resume', title: '继续观看', items: resume });
+    if (resume) rows.push(resume);
     const latest = await Promise.all(
       views.slice(0, 8).map(async v => {
         const [items, newest] = await Promise.all([
           this.get<any>(`/Users/${this.account.userId}/Items/Latest`, { ParentId: v.id, Limit: 18, Fields: FIELDS, ImageTypeLimit: 1, EnableImageTypes: 'Primary,Backdrop,Logo' })
             .then(j => (j || []).map(mapItem))
             .catch(() => []),
-          this.newestEpisodes(v.id),
+          this.newestEpisodes(v),
         ]);
         for (const it of items) {
           const e = it.type === 'Series' ? newest.get(it.id) : undefined;

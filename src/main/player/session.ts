@@ -17,6 +17,7 @@ import {
   type PlaybackSource,
   type PlayMethod,
   type QualityTier,
+  type WatchedRecord,
 } from '../../shared/types';
 import { MpvKernel } from './kernel';
 import { StreamBridge } from './bridge';
@@ -28,6 +29,9 @@ export interface PlayerOut {
   state(s: PlayerState): void;
   session(s: PlayerSession | null): void;
   media(m: PlayerMedia): void;
+  /** Where the film stopped, sent on the way out so the lobby can write the number onto the card it
+   *  already holds instead of re-reading the whole page to find it. */
+  watched(w: WatchedRecord): void;
   /** Bring the library window back once the player is gone. */
   reveal(): void;
 }
@@ -489,6 +493,7 @@ export class PlayerController {
   async close(): Promise<void> {
     this.tearing = true;
     this.stopTicker();
+    const w = this.watchedRecord();
     if (this.current && this.state.durationMs) await this.report('stopped').catch(() => undefined);
     this.current = null;
     await this.kernel?.quit().catch(() => undefined);
@@ -498,12 +503,23 @@ export class PlayerController {
     this.state = emptyPlayerState();
     this.media = emptyPlayerMedia();
     this.out.state(this.state);
+    if (w) this.out.watched(w);
     this.out.session(null);
     this.out.media(this.media);
     this.out.reveal();
   }
 
-  /** Quit-time teardown: the same shutdown, but a window that is already going away must not be talked to. */
+  /** The last position the state line carried, before the shutdown blanks it. Null when nothing really
+   *  played: a window opened and closed again has no number worth writing onto a card. */
+  private watchedRecord(): WatchedRecord | null {
+    const c = this.current;
+    if (!c || !this.state.durationMs) return null;
+    return { itemId: c.itemId, positionMs: this.state.positionMs, durationMs: this.state.durationMs };
+  }
+
+  /** Quit-time teardown: the same shutdown, but a window that is already going away must not be talked to.
+   *  The server still gets the stopped report; the lobby's write-back does not, because the page that
+   *  would read it is being destroyed and the ask it triggers would only delay the exit. */
   async shutdown(): Promise<void> {
     this.stopTicker();
     if (this.current && this.state.durationMs) await this.report('stopped').catch(() => undefined);

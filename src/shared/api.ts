@@ -1,4 +1,4 @@
-import type { Account, AppConfig, BangumiScore, CsmGuide, DanmakuQuery, DanmakuTrack, DanmakuTrackInfo, FacetOption, ImdbRating, IpcResult, LibraryItem, LibraryRow, MetaKeys, NetProbe, PlayerCommand, PlayerMedia, PlayerSession, PlayerState, RtScores, Settings, SettingsPatch, TmdbMeta, TmdbSimilar, TmdbStills, TraktScores } from './types';
+import type { Account, AppConfig, BangumiScore, CsmGuide, DanmakuQuery, DanmakuTrack, DanmakuTrackInfo, FacetOption, ImdbRating, IpcResult, LibraryItem, LibraryRow, MetaKeys, NetProbe, PlayerCommand, PlayerMedia, PlayerSession, PlayerState, RtScores, Settings, SettingsPatch, TmdbMeta, TmdbSimilar, TmdbStills, TraktScores, WatchedRecord } from './types';
 
 export interface EchoEmbyApi {
   app: {
@@ -18,6 +18,9 @@ export interface EchoEmbyApi {
   emby: {
     views(): Promise<IpcResult<LibraryItem[]>>;
     homeRows(): Promise<IpcResult<LibraryRow[]>>;
+    /** Just the 在看 row, for the one moment the lobby has to be re-read: the film that stopped is the
+     *  only thing on the page whose row, order or membership can have changed. */
+    resumeRow(): Promise<IpcResult<LibraryRow | null>>;
     items(params: Record<string, string | number | boolean>): Promise<IpcResult<LibraryItem[]>>;
     /** The library's own genre labels, used to fill the 分类 dropdown. */
     genres(): Promise<IpcResult<FacetOption[]>>;
@@ -54,6 +57,9 @@ export interface EchoEmbyApi {
     /** null is the player being closed: the session identity only exists while something is loaded. */
     onSession(cb: (s: PlayerSession | null) => void): () => void;
     onMedia(cb: (m: PlayerMedia) => void): () => void;
+    /** Where the file stopped, sent once when playback ends. The lobby needs this and nothing else from
+     *  the player, so it is its own channel rather than another reader on the 4 Hz state stream. */
+    onWatched(cb: (w: WatchedRecord) => void): () => void;
   };
   danmaku: {
     /** The candidate tracks for one item, from whichever source the settings name. An empty list is a

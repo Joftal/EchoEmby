@@ -34,6 +34,7 @@ export class AppServices {
       state: s => this.broadcast('player:state', s),
       session: s => this.broadcast('player:session', s),
       media: m => this.broadcast('player:media', m),
+      watched: w => this.broadcast('player:watched', w),
       reveal: () => this.getMainWindow()?.show(),
     };
     this.player = new PlayerController(this.windows, out, this.rendererUrl);
@@ -138,8 +139,9 @@ export class AppServices {
       return true;
     }));
 
-    ipcMain.handle('emby:views', () => wrap(() => this.client().views()));
+    ipcMain.handle('emby:views', () => wrap(() => this.client().navViews()));
     ipcMain.handle('emby:homeRows', () => wrap(() => this.client().homeRows()));
+    ipcMain.handle('emby:resumeRow', () => wrap(() => this.client().resumeRow()));
     ipcMain.handle('emby:items', (_e, params) => wrap(() => this.client().items(params)));
     ipcMain.handle('emby:genres', () => wrap(() => this.client().genres()));
     ipcMain.handle('emby:item', (_e, id: string) => wrap(() => this.client().item(id)));

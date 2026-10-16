@@ -118,6 +118,9 @@ export interface StudioRef {
 export interface LibraryItem {
   id: string;
   type: string;
+  /** Only a library folder carries one: `movies`, `tvshows`, `boxsets`. The lobby reads it to skip the
+   *  newest-episode pass over a folder that cannot hold an episode. */
+  collectionType?: string;
   name: string;
   /** The server's non-localised title; outside sources slug off this because `name` is often Chinese. */
   originalTitle?: string;
@@ -369,6 +372,14 @@ export interface PlayerNav {
   itemId: string;
   /** 已有集号时是「第 3 集」，没有时是那一集自己的名字。 */
   label: string;
+}
+
+/** Where a film stopped, sent once on the way out of the player. The state line has already been
+ *  blanked by then, so this is the only place the number still exists after the window is gone. */
+export interface WatchedRecord {
+  itemId: string;
+  positionMs: number;
+  durationMs: number;
 }
 
 /** The identity of what is playing, plus everything the panels list. Changes only when the file or the

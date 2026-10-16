@@ -28,6 +28,7 @@ const api: EchoEmbyApi = {
   emby: {
     views: () => invoke('emby:views'),
     homeRows: () => invoke('emby:homeRows'),
+    resumeRow: () => invoke('emby:resumeRow'),
     items: params => invoke('emby:items', params),
     genres: () => invoke('emby:genres'),
     item: id => invoke('emby:item', id),
@@ -59,6 +60,7 @@ const api: EchoEmbyApi = {
     onState: cb => on('player:state', cb),
     onSession: cb => on('player:session', cb),
     onMedia: cb => on('player:media', cb),
+    onWatched: cb => on('player:watched', cb),
   },
   danmaku: {
     search: q => invoke('danmaku:search', q),
