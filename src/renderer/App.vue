@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import AppSideNav from './components/AppSideNav.vue';
 import AppTitleBar from './components/AppTitleBar.vue';
+import { pageDir } from './router';
 import { useAppStore } from './stores/app';
 
 const route = useRoute();
@@ -31,8 +32,17 @@ onMounted(() => {
     </Transition>
     <main class="content">
       <router-view v-slot="{ Component }">
-        <transition :name="overlay ? 'fade' : 'page'" mode="out-in">
-          <component :is="Component" />
+        <!-- type="animation" because the move is keyframes, not a transition (see base.css). No mode:
+             the arrival starts while the departure is still running, which is what puts a new page on
+             screen immediately instead of 400ms of body wash. keep-alive covers the lobby only — it is
+             the one page a reader returns to often and the one whose rebuild was measurable (scroll
+             position, carousel slide and 157 card entrances all replayed). No :key on the component:
+             DetailView reuses its instance across a sibling switch and that reuse is what lets the
+             second title dissolve into the first instead of tearing the page down. -->
+        <transition :name="overlay ? 'fade' : pageDir" type="animation">
+          <keep-alive include="HomeView">
+            <component :is="Component" />
+          </keep-alive>
         </transition>
       </router-view>
     </main>

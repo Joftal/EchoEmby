@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onActivated, onBeforeUnmount, onDeactivated, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import type { LibraryItem } from '../../shared/types';
 import HeroBanner from '../components/home/HeroBanner.vue';
@@ -89,13 +89,32 @@ async function onPlay(item: LibraryItem): Promise<void> {
   if (!ok) say(player.error || '无法开始播放');
 }
 
-onMounted(async () => {
+/* The lobby is kept alive, so its work happens on activate rather than mount: onActivated fires on the
+   first mount too, and then again on every return. Returning used to cost a full rebuild — scroll back
+   to the top, carousel back to slide one, 157 card entrances replayed, one 86ms frame. Now the tree is
+   re-attached as it was and only the scroll position has to be put back by hand, because KeepAlive
+   detaches the element and a detached scroller forgets where it was.
+   The `rows` check stays: switching account calls store.invalidate(), which empties the rows while the
+   cached tree sits detached, so the lobby has to notice it came back to nothing. */
+let savedScroll = 0;
+
+onActivated(async () => {
+  const el = scroller.value;
+  if (el) {
+    el.scrollTop = savedScroll;
+    scroll.value = savedScroll;
+    atTop.value = savedScroll < 420;
+  }
   if (!store.ready) await store.init();
   if (!store.account) {
     router.replace('/login');
     return;
   }
   if (!store.rows.length) await store.loadHome();
+});
+
+onDeactivated(() => {
+  savedScroll = scroller.value?.scrollTop ?? 0;
 });
 
 onBeforeUnmount(() => {

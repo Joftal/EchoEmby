@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue';
 import type { LibraryItem } from '../../../shared/types';
 import { fmtDate, fmtElapsed, ticksToMs } from '../../lib/format';
 import { genreLabels } from '../../lib/genres';
@@ -121,12 +121,21 @@ function hold(): void {
 }
 
 onMounted(() => {
-  arm();
   document.addEventListener('visibilitychange', onVisibility);
 });
 onBeforeUnmount(() => {
   disarm();
   document.removeEventListener('visibilitychange', onVisibility);
+});
+/* The lobby is kept alive now, so the carousel has to stop counting while it is off screen — the
+   timeout would otherwise fire against a detached tree and the reader would come back to a slide they
+   never saw. `hovering` is cleared rather than trusted: leaving through the hero's own 详情 button
+   detaches the element with the pointer still inside it, so no mouseleave ever arrives and the hold
+   would stay on for good. */
+onActivated(arm);
+onDeactivated(() => {
+  hold();
+  hovering.value = false;
 });
 function onVisibility(): void {
   if (document.hidden) hold();

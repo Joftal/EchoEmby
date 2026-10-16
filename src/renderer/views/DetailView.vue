@@ -23,10 +23,13 @@ const item = ref<LibraryItem | null>(null);
 const seasons = ref<LibraryItem[]>([]);
 const episodes = ref<LibraryItem[]>([]);
 const seasonId = ref('');
-const loading = ref(true);
 const error = ref('');
 const playErr = ref('');
 const favBusy = ref(false);
+/** A sibling switch (详情 -> 详情) reuses this instance, so the old title dims out and the new one dims
+ *  in rather than the page collapsing to a loading line and rebuilding: measured 2079px -> 816px ->
+ *  2242px of height with scrollTop clamped 700 -> 0 on every switch. */
+const swap = ref(false);
 
 /** The six score sources, asked once per title and shared with the hero's strip. */
 const scores = useScores(() => item.value);
@@ -202,7 +205,8 @@ const fav = computed(() => !!item.value?.userData?.isFavorite);
 
 async function loadEpisodes(sid: string, seriesId = props.id) {
   seasonId.value = sid;
-  episodes.value = [];
+  // The old season's stills would otherwise hang on the new season's episode numbers for the few
+  // hundred ms TMDB takes; the episode row itself keeps its height so the page does not jump.
   stills.value = {};
   if (!sid) return;
   const r = await window.echoemby.emby.episodes({ seriesId, seasonId: sid });
@@ -242,21 +246,23 @@ function onSeason(v: string | string[]): void {
 watch(
   () => props.id,
   async id => {
-    loading.value = true;
     error.value = '';
     similar.value = [];
-    stills.value = {};
     backdrops.value = [];
     viewer.value = null;
-    heroBackdrop.value = '';
     titleUrls.value = [];
-    item.value = null;
-    seasons.value = [];
-    episodes.value = [];
+    // Nothing is cleared on a switch: the old title stays on screen, dimmed, until the new one is in
+    // hand, so the page never collapses to a skeleton and rebuilds its height under the reader.
+    swap.value = item.value !== null;
+    if (!swap.value) {
+      item.value = null;
+      seasons.value = [];
+      episodes.value = [];
+    }
     const r = await window.echoemby.emby.item(id);
-    loading.value = false;
     if (!r.ok || !r.data) {
       error.value = r.error || '打不开这一项';
+      swap.value = false;
       return;
     }
     const it = r.data;
@@ -286,6 +292,7 @@ watch(
     } else if (it.type === 'Season') {
       await loadEpisodes(it.id, it.parentId || '');
     }
+    swap.value = false;
   },
   { immediate: true },
 );
@@ -321,20 +328,30 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
   <div ref="scroller" class="page" @scroll.passive="onScroll">
     <button class="back" @click="router.back()">←</button>
     <p v-if="playErr" class="err banner">{{ playErr }}</p>
-    <p v-if="loading" class="muted pad">加载中…</p>
+    <template v-if="!item && !error">
+      <section class="hero sk"></section>
+      <div class="flow">
+        <div v-for="n in 2" :key="n" class="block skb">
+          <div class="skhd"></div>
+          <div class="skrow"><div v-for="m in 5" :key="m" class="skcd"></div></div>
+        </div>
+      </div>
+    </template>
     <p v-else-if="error" class="err pad">{{ error }}</p>
 
     <template v-else-if="item">
       <section class="hero">
         <div class="stage" :style="{ transform: `translate3d(0, ${Math.round(scroll * 0.28)}px, 0)` }">
-          <img v-if="heroBackdrop" :src="heroBackdrop" alt="" decoding="async" />
+          <Transition name="heroart">
+            <img v-if="heroBackdrop" :key="heroBackdrop" :src="heroBackdrop" alt="" decoding="async" />
+          </Transition>
         </div>
         <div class="wash"></div>
         <div
           class="hero-in"
           :style="{ opacity: Math.max(0, 1 - scroll / 260), transform: `translate3d(0, ${Math.round(scroll * 0.4)}px, 0)` }"
         >
-          <div class="copy">
+          <div class="copy sw" :class="{ on: swap }">
             <div class="text">
               <TitleArt :urls="titleUrls" :name="item.name" />
               <p v-if="item.tagline" class="tagline">{{ item.tagline }}</p>
@@ -352,7 +369,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
         </div>
       </section>
 
-      <div class="flow">
+      <div class="flow sw" :class="{ on: swap }">
         <HScroller v-if="episodes.length" class="block">
           <template #header>
             <div class="ep-head">
@@ -822,7 +839,6 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
 .smeta { margin: 2px 0 0; display: flex; gap: 8px; font-size: 12.5px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .smeta .srate { color: #b8860b; font-weight: 650; }
 
-.muted { color: var(--text-dim); font-weight: 500; font-size: 13px; }
 .err { color: var(--danger); }
 .banner { margin: 0 0 12px; padding: 0 44px; }
 
@@ -937,4 +953,70 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
 .lb-nx-leave-to { opacity: 0; transform: translate3d(-52px, 0, 0); }
 .lb-pv-enter-from { opacity: 0; transform: translate3d(-52px, 0, 0); }
 .lb-pv-leave-to { opacity: 0; transform: translate3d(52px, 0, 0); }
+/* The dim a sibling switch puts on the text while the new title loads. The hero art is not part of
+   it: the art cross-fades old frame to new frame instead, which is the continuity the switch needs. */
+.sw {
+  transition: opacity 0.18s var(--ease), transform 0.18s var(--ease);
+}
+.sw.on {
+  opacity: 0;
+  transform: translate3d(0, 6px, 0);
+}
+.heroart-enter-active,
+.heroart-leave-active {
+  transition: opacity 0.34s var(--ease);
+}
+.heroart-enter-from,
+.heroart-leave-to {
+  opacity: 0;
+}
+/* Blocks cascade in as they arrive instead of popping in one frame apart. They mount once per title,
+   so a sibling switch that only swaps their data does not replay the rise. */
+.flow > .block {
+  animation: block-in 0.34s var(--ease) both;
+}
+.flow > .block:nth-child(2) {
+  animation-delay: 0.06s;
+}
+.flow > .block:nth-child(3) {
+  animation-delay: 0.12s;
+}
+.flow > .block:nth-child(4) {
+  animation-delay: 0.18s;
+}
+@keyframes block-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* The first-arrival skeleton is the shape of the page it stands in for: a hero band and two rows, so
+   the wipe uncovers something the size of what is coming rather than a line of text. */
+.hero.sk {
+  background: var(--shimmer);
+  animation: sh 1.3s linear infinite;
+}
+.skb .skhd {
+  width: 190px;
+  height: 20px;
+  margin-bottom: 14px;
+  border-radius: 6px;
+  background: var(--shimmer);
+  animation: sh 1.3s linear infinite;
+}
+.skb .skrow {
+  display: flex;
+  gap: 14px;
+}
+.skb .skcd {
+  width: 150px;
+  aspect-ratio: 2 / 3;
+  border-radius: var(--radius);
+  background: var(--shimmer);
+  animation: sh 1.3s linear infinite;
+}
 </style>

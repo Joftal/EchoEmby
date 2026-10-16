@@ -71,6 +71,20 @@
      content keeps its gap: measured constant at 36.5px across the whole sweep. Staggering the two
      layers instead bought about 8fps and left a 105px hole mid-flight, which reads as latency. */
   --rail-dur: 0.32s;
+  /* The page move. Depth decides the axis: 详情 sits one level under the shelves, so going in travels
+     from the right and coming back from the left, while two shelves — or two titles inside 详情 — have
+     nothing between them spatially and only cross over, on a shorter clock because nothing travels.
+     Distances are percentages of the window so the move reads the same at the 860px minimum and at a
+     wide window (4% is 54px here). Only the page that is leaving scales: an arrival that scales
+     rasterises its text at the wrong size for the whole move and lands soft.
+     The move is a wipe, not a cross-dissolve: the arriving page is opaque and a clip uncovers it while
+     the departing page slides away underneath, so the two never blend into each other (a 50/50 blend
+     of two text pages, captured mid-flight, is unreadable). --page-slide is how far the departing page
+     travels; the clip does the rest, so the travel stays cheap on a 157-card lobby. */
+  --page-dur: 0.3s;
+  --page-flat: 0.2s;
+  --page-slide: 24%;
+  --page-recede: 0.97;
   /* Labels squeeze away with the panel, but reappear only once the space is there. */
   --fade-t: 0.22s;
   --fade-d: 0.1s;
@@ -91,6 +105,12 @@
      so the row skeletons on the loading screen nearly disappeared (fix-min.png). */
   --bg-skel: #e2e2ea;
   --shimmer: linear-gradient(100deg, var(--bg-skel) 30%, var(--bg-elev) 50%, var(--bg-skel) 70%);
+  /* The pastel wash, shared by body::before and by every page in flight (see the page transitions). */
+  --wash:
+    radial-gradient(58% 46% at 14% 4%, rgba(255, 208, 226, 0.28), transparent 62%),
+    radial-gradient(52% 44% at 86% 2%, rgba(203, 214, 255, 0.26), transparent 64%),
+    radial-gradient(66% 56% at 74% 98%, rgba(226, 208, 252, 0.24), transparent 66%),
+    radial-gradient(50% 40% at 4% 92%, rgba(208, 238, 244, 0.22), transparent 62%);
 }
 
 @keyframes sh {
@@ -121,18 +141,17 @@ body {
 
 /* The pastel wash every page sits on; the lobby hero art covers it, the lists let it show.
    Kept pale on purpose: the wash is the ground for 11-13px meta text, and a saturated blob
-   behind it lowers the contrast of the very lines that need to be read. */
+   behind it lowers the contrast of the very lines that need to be read.
+   It lives in a variable because a page in flight has to carry its own copy: the wipe uncovers an
+   opaque page, and an opaque page that did not paint the wash would land as a flat rectangle over
+   the one leaving. */
 body::before {
   content: '';
   position: fixed;
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  background:
-    radial-gradient(58% 46% at 14% 4%, rgba(255, 208, 226, 0.28), transparent 62%),
-    radial-gradient(52% 44% at 86% 2%, rgba(203, 214, 255, 0.26), transparent 64%),
-    radial-gradient(66% 56% at 74% 98%, rgba(226, 208, 252, 0.24), transparent 66%),
-    radial-gradient(50% 40% at 4% 92%, rgba(208, 238, 244, 0.22), transparent 62%);
+  background: var(--wash);
 }
 #app {
   position: relative;
@@ -193,26 +212,107 @@ input::placeholder {
   -webkit-app-region: no-drag;
 }
 
-.page-enter-active,
-.page-leave-active {
-  transition: opacity 0.24s var(--ease), transform 0.3s var(--ease);
-}
-.page-enter-from {
-  opacity: 0;
-  transform: translate3d(2.5%, 0, 0);
-}
-.page-leave-to {
-  opacity: 0;
-  transform: translate3d(-2.5%, 0, 0);
+/* Page transitions, written as keyframe animations rather than transitions. 资源库/设置/服务器 put
+   `transition: padding var(--rail-dur)` on their own `.page`, and a scoped `.page[data-v-x]` outranks a
+   global single-class rule, so the old `.page-*` pair resolved to `padding` alone and never moved
+   anything on those three routes (measured: transitionProperty "padding", dur 0.32s, opacity pinned at
+   1 — they cut hard while 首页 and 详情 faded). An animation is a different property, so the rail's
+   padding tween and the page move now run side by side instead of one silently cancelling the other.
+
+   The move is a wipe, not a cross-dissolve: a clip uncovers the arriving page while the departing one
+   slides away underneath. A dissolve of two text pages was captured mid-flight at 37%/62% opacity and
+   is unreadable — every line doubled. A wipe has no blended frame at all: at any instant each pixel
+   belongs to exactly one page. */
+.content > .page::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-color: var(--bg);
+  background-image: var(--wash);
 }
 
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.22s var(--ease);
+/* Both ends are spelled as inset(): clip-path interpolates between two insets, but from an inset to
+   the implicit `none` it jumps discretely at the halfway point (captured: the arriving page was fully
+   open at 50% of the move), which turns the wipe into a cut. */
+@keyframes page-open-right {
+  from { clip-path: inset(0 0 0 100%); }
+  to { clip-path: inset(0 0 0 0%); }
 }
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
+@keyframes page-open-left {
+  from { clip-path: inset(0 100% 0 0); }
+  to { clip-path: inset(0 0% 0 0); }
+}
+@keyframes page-open-down {
+  from { clip-path: inset(0 0 100% 0); }
+  to { clip-path: inset(0 0 0% 0); }
+}
+@keyframes page-exit-left {
+  to { transform: translate3d(calc(var(--page-slide) * -1), 0, 0) scale(var(--page-recede)); opacity: 0.5; }
+}
+@keyframes page-exit-right {
+  to { transform: translate3d(var(--page-slide), 0, 0) scale(var(--page-recede)); opacity: 0.5; }
+}
+@keyframes page-exit-dim {
+  to { opacity: 0.4; }
+}
+
+/* The departing page gets its own composited layer for the length of the move; without it the slide
+   and scale are a repaint of everything it holds — measured on lobby -> 详情, where the lobby is 157
+   cards and a 2000px scroller: 9 of 14 frames over 20ms, worst 163.6ms. The arriving page is uncovered
+   by a clip and never transforms, so it asks for the clip instead: a transform on it would drag its
+   viewport-fixed wash along and snap it back when the class comes off. */
+.push-leave-active,
+.pop-leave-active {
+  will-change: transform, opacity;
+}
+.flat-leave-active {
+  will-change: opacity;
+}
+.push-enter-active,
+.pop-enter-active,
+.flat-enter-active {
+  will-change: clip-path;
+}
+
+.push-enter-active { animation: page-open-right var(--page-dur) var(--rail-ease) both; }
+.push-leave-active { animation: page-exit-left var(--page-dur) var(--rail-ease) both; }
+.pop-enter-active { animation: page-open-left var(--page-dur) var(--rail-ease) both; }
+.pop-leave-active { animation: page-exit-right var(--page-dur) var(--rail-ease) both; }
+.flat-enter-active { animation: page-open-down var(--page-flat) var(--ease) both; }
+.flat-leave-active { animation: page-exit-dim var(--page-flat) var(--ease) both; }
+
+/* Both pages are on screen for the whole move, so the one leaving comes out of the flow — two
+   `height: 100%` blocks in .content would stack and park the arrival below the window — and sits under
+   it. `.shell .content` is spelled out to outrank the views' own `position: relative`, the same fight
+   the keyframes above are here to avoid. pointer-events go with it: a click halfway through a move
+   belongs to the page that is arriving. */
+.shell .content .push-leave-active,
+.shell .content .pop-leave-active,
+.shell .content .flat-leave-active {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+.push-enter-active,
+.pop-enter-active,
+.flat-enter-active {
+  z-index: 1;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+}
+@keyframes fade-out {
+  to { opacity: 0; }
+}
+.fade-enter-active {
+  animation: fade-in 0.22s var(--ease) both;
+}
+.fade-leave-active {
+  animation: fade-out 0.22s var(--ease) both;
 }
 
 @media (prefers-reduced-motion: reduce) {
