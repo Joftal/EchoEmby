@@ -22,6 +22,9 @@ function toggle(): void {
 onMounted(() => {
   document.documentElement.classList.toggle('overlay', overlay.value);
   void store.init();
+  // The player window runs this same file, and it is the one place that must not listen: it has no
+  // lobby to write back into, and a subscriber there would re-ask the resume row on every stop.
+  if (!overlay.value) store.watchPlayback();
 });
 </script>
 

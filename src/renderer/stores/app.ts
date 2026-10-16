@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
-import type { AppConfig, FacetOption, LibraryItem, LibraryRow, SettingsPatch, TmdbStills } from '../../shared/types';
+import type { AppConfig, FacetOption, LibraryItem, LibraryRow, SettingsPatch, TmdbStills, WatchedRecord } from '../../shared/types';
+import { clearEmbyCache, embyCached, patchItem, rescope } from '../lib/embycache';
 import { tmdbKind } from '../lib/scores';
 
 export const useAppStore = defineStore('app', () => {
@@ -23,6 +24,8 @@ export const useAppStore = defineStore('app', () => {
   async function init(): Promise<void> {
     const r = await window.echoemby.app.getConfig();
     if (r.ok && r.data) config.value = r.data;
+    // Every Emby answer on file is keyed by account, so the cache follows the same pointer.
+    rescope(account.value?.accountId || '');
     ready.value = true;
   }
 
@@ -41,6 +44,7 @@ export const useAppStore = defineStore('app', () => {
   /** Item ids are per-server and collide across them, so nothing may survive a switch. */
   function invalidate(): void {
     imgCache.clear();
+    clearEmbyCache();
     rows.value = [];
     views.value = [];
     viewsPromise = null;
@@ -115,26 +119,15 @@ export const useAppStore = defineStore('app', () => {
   function loadViews(): Promise<void> {
     if (views.value.length) return Promise.resolve();
     if (!viewsPromise) {
-      viewsPromise = (async () => {
-        const r = await window.echoemby.emby.views();
-        if (!r.ok) return;
-        const all = r.data || [];
-        /** Views answers with every library the account may see, and a library that holds nothing
-         *  looks identical to one that is merely quiet (measured: 播放列表 is empty on both gateways).
-         *  Ask the same question the browse page will ask, and drop the ones that answer with nothing.
-         *  A failed probe keeps the library: only a proven-empty answer may hide it. */
-        const filled = await Promise.all(
-          all.map(v =>
-            window.echoemby.emby
-              .items({ ParentId: v.id, IncludeItemTypes: 'Movie,Series,BoxSet,Playlist,Video', Recursive: true, Limit: 1 })
-              .then(x => (x.ok ? (x.data || []).length > 0 : true))
-              .catch(() => true),
-          ),
-        );
-        views.value = all.filter((_, i) => filled[i]);
-      })().finally(() => {
-        viewsPromise = null;
-      });
+      viewsPromise = embyCached('views', null, () => window.echoemby.emby.views())
+        .then(r => {
+          // The empty folders are already gone: the main process probes them once per account, because
+          // the lobby has to ask the same question to name its rows.
+          if (r.ok) views.value = r.data || [];
+        })
+        .finally(() => {
+          viewsPromise = null;
+        });
     }
     return viewsPromise;
   }
@@ -146,8 +139,7 @@ export const useAppStore = defineStore('app', () => {
   function loadGenres(): Promise<void> {
     if (genres.value.length) return Promise.resolve();
     if (!genresPromise) {
-      genresPromise = window.echoemby.emby
-        .genres()
+      genresPromise = embyCached('genres', null, () => window.echoemby.emby.genres())
         .then(r => {
           if (r.ok) genres.value = r.data || [];
         })
@@ -162,8 +154,8 @@ export const useAppStore = defineStore('app', () => {
     if (loading.value) return;
     loading.value = true;
     error.value = '';
-    // The rail's list comes from loadViews, not the raw Views reply: that one still carries the
-    // empty libraries, and writing it here would put them back after the rail had hidden them.
+    // Both asks land on the same Views answer, which the main process now holds for the account, so the
+    // rail does not have to wait for the rows and neither pays for the folder list twice.
     const [, rowsRes] = await Promise.all([loadViews(), window.echoemby.emby.homeRows()]);
     if (rowsRes.ok) rows.value = rowsRes.data || [];
     else error.value = rowsRes.error || '加载失败';
@@ -251,8 +243,7 @@ export const useAppStore = defineStore('app', () => {
     const acct = `${account.value?.accountId}|`;
     let tmdbId = seriesTmdb.get(acct + sid);
     if (!tmdbId) {
-      tmdbId = window.echoemby.emby
-        .item(sid)
+      tmdbId = embyCached('item', sid, () => window.echoemby.emby.item(sid))
         .then(r => (r.ok ? r.data?.providers?.tmdb || '' : ''))
         .catch(() => '');
       seriesTmdb.set(acct + sid, tmdbId);
@@ -287,5 +278,68 @@ export const useAppStore = defineStore('app', () => {
     return imageUrl({ id: item.parentId }, width);
   }
 
-  return { config, account, rows, views, genres, loading, error, ready, counts, init, login, switchTo, remove, update, saveSettings, loadCounts, loadHome, loadViews, loadGenres, imageUrl, backdropUrl, logoCandidates, itemArt };
+  /* ---------------------------------------------------------- writes that come back
+
+     Two facts change while the app is open and were only ever re-read from the server: where a title
+     stopped, and whether it is a favourite. Closing the player used to mean the whole lobby (fifteen
+     round trips) or nothing at all, depending on which page happened to be watching. These write the
+     accepted change onto every copy in hand, and re-ask only the one row whose membership really is
+     the server's decision. */
+
+  function userDataOf(it: LibraryItem): NonNullable<LibraryItem['userData']> {
+    return it.userData || (it.userData = {});
+  }
+
+  /** Both places a page can be holding this item: the cached answers (the detail page's own item, the
+   *  season's episode rows) and the lobby's rows, which come back on a channel of their own. */
+  function writeBack(id: string, edit: (item: LibraryItem) => void): void {
+    patchItem(id, edit);
+    for (const row of rows.value) for (const it of row.items) if (it.id === id) edit(it);
+  }
+
+  /** The row a stopped film can move, and the only one a write-back cannot produce: a title watched past
+   *  the server's cutoff leaves 继续观看, a new one enters at the top, and both orders are the server's.
+   *  Asked alone it is one round trip; the lobby's other rows are library ingest order. */
+  async function refreshResume(): Promise<void> {
+    const r = await window.echoemby.emby.resumeRow();
+    if (!r.ok) return;
+    const at = rows.value.findIndex(x => x.key === 'resume');
+    if (!r.data) {
+      if (at >= 0) rows.value.splice(at, 1);
+      return;
+    }
+    if (at >= 0) rows.value.splice(at, 1, r.data);
+    else rows.value.unshift(r.data);
+  }
+
+  async function rememberPlayback(w: WatchedRecord): Promise<void> {
+    const pct = w.durationMs > 0 ? Math.min(100, (w.positionMs / w.durationMs) * 100) : 0;
+    writeBack(w.itemId, it => {
+      const u = userDataOf(it);
+      u.positionMs = w.positionMs;
+      u.playedPercentage = Math.round(pct * 10) / 10;
+    });
+    await refreshResume();
+  }
+
+  async function setFavorite(id: string, on: boolean): Promise<boolean> {
+    const r = await window.echoemby.emby.favorite({ id, on });
+    if (r.ok)
+      writeBack(id, it => {
+        userDataOf(it).isFavorite = on;
+      });
+    return !!r.ok;
+  }
+
+  let offWatched: (() => void) | null = null;
+
+  /** Subscribe in the window that owns the lobby, once. The player runs this same bundle in a window of
+   *  its own; a subscriber there would have no rows to patch and would ask for the resume row a second
+   *  time on every stop. */
+  function watchPlayback(): void {
+    if (offWatched) return;
+    offWatched = window.echoemby.player.onWatched(w => void rememberPlayback(w));
+  }
+
+  return { config, account, rows, views, genres, loading, error, ready, counts, init, login, switchTo, remove, update, saveSettings, loadCounts, loadHome, loadViews, loadGenres, imageUrl, backdropUrl, logoCandidates, itemArt, setFavorite, watchPlayback };
 });
