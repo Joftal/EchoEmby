@@ -86,7 +86,7 @@ const seen = computed(() => seenLabel(props.item.userData?.playedPercentage, pro
 
 function open(): void {
   if (!target.value) return;
-  begin(root.value);
+  begin(root.value?.querySelector<HTMLImageElement>('img.show'), target.value, props.item);
   router.push(`/detail/${target.value}`);
 }
 </script>
@@ -94,7 +94,9 @@ function open(): void {
 <template>
   <article ref="root" class="lcard" :style="{ '--i': index }" tabindex="0" @click="open" @keydown.enter="open">
     <div class="thumb">
-      <div v-if="!loaded && !failed" class="skeleton"></div>
+      <Transition name="art-skel">
+        <div v-if="!loaded && !failed" class="skeleton"></div>
+      </Transition>
       <img v-if="url && !failed" :src="url" alt="" :class="{ show: loaded }" loading="lazy" decoding="async" @load="loaded = true" @error="onErr" />
       <span v-if="failed" class="ph">{{ (item.seriesName || item.name).slice(0, 1) }}</span>
     </div>
@@ -193,6 +195,7 @@ function open(): void {
      differently over every tile, and this letter is the only identifier when the server has no art. */
   color: var(--text-faint);
   background: linear-gradient(150deg, var(--bg), var(--bg-elev-2));
+  animation: fade-in 0.3s var(--ease) both;
 }
 .skeleton {
   position: absolute;

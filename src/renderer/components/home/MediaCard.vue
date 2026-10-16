@@ -112,7 +112,7 @@ const metaLine = computed(() => {
 function open(): void {
   // Episode cards inside their own series page resolve back to this route.
   if (!target.value || target.value === router.currentRoute.value.params.id) return;
-  begin(root.value);
+  begin(root.value?.querySelector<HTMLImageElement>('img.show'), target.value, props.item);
   router.push(`/detail/${target.value}`);
 }
 </script>
@@ -126,7 +126,9 @@ function open(): void {
     @click="open"
   >
     <div class="frame">
-      <div v-if="!loaded && !failed" class="skeleton"></div>
+      <Transition name="art-skel">
+        <div v-if="!loaded && !failed" class="skeleton"></div>
+      </Transition>
       <img v-if="url && !failed" :src="url" alt="" :class="{ show: loaded }" loading="lazy" decoding="async" @load="loaded = true" @error="onErr" />
       <span v-if="failed" class="ph">{{ (item.seriesName || item.name).slice(0, 1) }}</span>
 
@@ -159,15 +161,26 @@ function open(): void {
   cursor: pointer;
   padding: 0;
   scroll-snap-align: start;
+  /* The frame before its row has been revealed. The reveal is a keyframe, not a transition — the note
+     in ListCard has the measurement: BrowseView writes `in` into the grid's class at first render, so
+     the card's very first computed style already *was* its end state and nothing could animate into it.
+     The stagger used to hang off a transform transition, which is what held a late card's hover 374ms
+     after the pointer; here it only delays the entrance. */
   opacity: 0;
-  transform: translate3d(0, 22px, 0) scale(0.97);
-  transition:
-    opacity 0.5s var(--ease-out) calc(var(--i) * 34ms),
-    transform 0.6s var(--ease-out) calc(var(--i) * 34ms);
 }
 .in .card {
-  opacity: 1;
-  transform: none;
+  animation: card-in 0.56s var(--ease-out) both;
+  animation-delay: calc(var(--i) * 34ms);
+}
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 22px, 0) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .frame {
@@ -230,6 +243,7 @@ img.show {
      every tile. --text-faint on this plate is 6.4:1. */
   color: var(--text-faint);
   background: linear-gradient(150deg, var(--bg), var(--bg-elev-2));
+  animation: fade-in 0.3s var(--ease) both;
 }
 
 .skeleton {

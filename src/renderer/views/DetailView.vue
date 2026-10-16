@@ -3,16 +3,21 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router';
 import type { LibraryItem, MediaStreamInfo, PlaybackSource, TmdbSimilar, TmdbStills } from '../../shared/types';
 import HScroller from '../components/detail/HScroller.vue';
+import BlockPh from '../components/detail/BlockPh.vue';
 import FilterSelect from '../components/browse/FilterSelect.vue';
 import ScoreStrip from '../components/ScoreStrip.vue';
 import HeroPlay from '../components/HeroPlay.vue';
 import TitleArt from '../components/TitleArt.vue';
+import HeroSkeleton from '../components/HeroSkeleton.vue';
 import { tmdbKind as kindOf, useScores } from '../lib/scores';
 import { usePlayerStore } from '../stores/player';
 import { useAppStore } from '../stores/app';
 import { episodePosition, fmtDate, fmtDateTime, fmtRuntime, isPositionOnlyName, seenLabel } from '../lib/format';
 import { resumeTarget } from '../lib/resume';
 import { genreLabels } from '../lib/genres';
+import { embyCached } from '../lib/embycache';
+import { seedFor, seedItemFor, seedTypeFor } from '../lib/handoff';
+import { vReveal } from '../lib/reveal';
 
 const props = defineProps<{ id: string }>();
 const router = useRouter();
@@ -46,7 +51,6 @@ function onScroll(): void {
 
 const isSeries = computed(() => item.value?.type === 'Series');
 const isSeason = computed(() => item.value?.type === 'Season');
-const tmdbKind = computed(() => kindOf(item.value));
 
 const people = computed(() => item.value?.people || []);
 const ROLE_LABEL: Record<string, string> = { Director: '导演', Writer: '编剧', Producer: '制片' };
@@ -76,6 +80,15 @@ const astream = computed<MediaStreamInfo | undefined>(() => {
   const a = source.value?.audio || [];
   return a.find(x => x.isDefault) || a[0];
 });
+
+/** What this page will be, from the server's item when there is one and from the clicked card when there
+ *  is not yet — an Episode card opens its Season, and that is enough to know a rail is coming. */
+const pageType = computed(() => item.value?.type || seedTypeFor(props.id));
+/** The two arrivals tall enough to be felt: the season rail (370px, and the last thing to land) and the
+ *  file's technical block (487px). Both sit above other blocks, so each one pushed the rest of the page
+ *  down while the reader was already looking at it. Their heights are claimed here and filled in place. */
+const wantRail = computed(() => (pageType.value === 'Series' || pageType.value === 'Season') && !episodes.value.length);
+const wantTech = computed(() => pageType.value === 'Movie' && !source.value);
 
 /** image.tmdb.org answers directly on this machine (the API host needs the system proxy). */
 const stillUrl = (ep: number | undefined): string =>
@@ -165,6 +178,11 @@ watch(
 );
 
 const heroBackdrop = ref('');
+const heroPoster = ref('');
+/** What the plate shows. The card art this page was opened from is already in hand at the first frame, so
+ *  the flight has a landing rectangle and hands over the same decoded pixels; the item's own poster is only
+ *  asked for when there is no such art, because swapping the url mid-flight would blank the plate. */
+const plateSrc = computed(() => seedFor(props.id) || heroPoster.value);
 /** Ranked title treatments for this item; TitleArt walks them and falls back to the name. */
 const titleUrls = ref<string[]>([]);
 
@@ -209,7 +227,7 @@ async function loadEpisodes(sid: string, seriesId = props.id) {
   // hundred ms TMDB takes; the episode row itself keeps its height so the page does not jump.
   stills.value = {};
   if (!sid) return;
-  const r = await window.echoemby.emby.episodes({ seriesId, seasonId: sid });
+  const r = await embyCached('episodes', { seriesId, seasonId: sid }, () => window.echoemby.emby.episodes({ seriesId, seasonId: sid }));
   if (r.ok) episodes.value = r.data || [];
   const seasonNumber = seasons.value.find(x => x.id === sid)?.indexNumber ?? item.value?.indexNumber;
   const tmdbId = item.value?.providers?.tmdb || (isSeason.value ? await fetchParentTmdbId(seriesId) : '');
@@ -220,15 +238,12 @@ async function loadEpisodes(sid: string, seriesId = props.id) {
   }
 }
 
-const parentTmdbCache = new Map<string, string>();
+/** The Season page needs its series' TMDB id, which only the series' own item carries. The answer is
+ *  read through the Emby cache, so a page that already fetched this series costs nothing here. */
 async function fetchParentTmdbId(seriesId: string): Promise<string> {
   if (!seriesId) return '';
-  const cached = parentTmdbCache.get(seriesId);
-  if (cached !== undefined) return cached;
-  const r = await window.echoemby.emby.item(seriesId);
-  const id = r.ok ? r.data?.providers?.tmdb || '' : '';
-  parentTmdbCache.set(seriesId, id);
-  return id;
+  const r = await embyCached('item', seriesId, () => window.echoemby.emby.item(seriesId));
+  return r.ok ? r.data?.providers?.tmdb || '' : '';
 }
 
 /** The picker reads 「第1季」 from the season's index, falling back to its server name. */
@@ -241,6 +256,59 @@ const activeSeasonLabel = computed(() => {
 function onSeason(v: string | string[]): void {
   // A season always has one, so re-picking the current one (which answers with '') changes nothing.
   if (typeof v === 'string' && v) void loadEpisodes(v);
+}
+
+/** Which title the once-per-title asks (logo band, TMDB's similar titles and its stills) have been made
+ *  for. The row and the server's copy of it are the same work, so the second paint refines the item
+ *  without paying for them again. */
+let painted = '';
+/** The same rule for the season list and its episodes: re-loading the rail when the server's copy lands
+ *  would step on a season the reader may already have picked. */
+let loaded = '';
+
+/** Everything the page can draw from an item alone. A row from any list carries the name, the art tags,
+ *  the genres, the rating, the runtime and where the viewer stopped; only the cast, the tagline and the
+ *  file's technical block are detail-only, so this runs twice: once for the row, once for the answer. */
+function paint(it: LibraryItem): void {
+  const id = it.id;
+  item.value = it;
+  // Every art ask is fired rather than awaited. They were measured serial at 493ms for the hero, and the
+  // three of them have no order to keep: each writes its own slot when it answers. 300px is the plate at
+  // its widest on this window; the 1000px backdrop copy would be scaled away by it.
+  if (it.primaryImageTag) void app.imageUrl({ id: it.id, primaryImageTag: it.primaryImageTag }, 300).then(u => (props.id === id ? (heroPoster.value = u) : u));
+  if (it.backdropImageTag)
+    void app.backdropUrl({ id: it.id, backdropImageTag: it.backdropImageTag }, 1600).then(u => (props.id === id ? (heroBackdrop.value = u) : u));
+  else if (it.primaryImageTag) {
+    // No wide art on the server: reuse the poster as a soft backdrop rather than a flat gradient.
+    void app.imageUrl({ id: it.id, primaryImageTag: it.primaryImageTag }, 1000).then(u => (props.id === id ? (heroBackdrop.value = u) : u));
+  }
+
+  if (painted === id) return;
+  painted = id;
+  // The six score sources come through useScores, which keys them by item id and answers once.
+  const kind = kindOf(it);
+  const tmdbId = it.providers?.tmdb;
+  void app.logoCandidates(it).then(u => (props.id === id ? (titleUrls.value = u) : undefined));
+  if (kind && tmdbId) {
+    void window.echoemby.meta.tmdbSimilar({ kind, tmdbId }).then(x => (props.id === id ? (similar.value = x.ok ? x.data || [] : []) : undefined));
+    void window.echoemby.meta.tmdbImages({ kind, tmdbId }).then(x => (props.id === id ? (backdrops.value = x.ok ? x.data || [] : []) : undefined));
+  }
+}
+
+/** The season rail, started from whichever half of the pair painted the page — which is what takes the
+ *  seasons query out of the item query's critical path (measured: +350ms waiting for nothing). */
+async function loadChildren(it: LibraryItem): Promise<void> {
+  if (loaded === it.id) return;
+  loaded = it.id;
+  if (it.type === 'Series') {
+    const s = await embyCached('seasons', it.id, () => window.echoemby.emby.seasons(it.id));
+    if (props.id !== it.id) return;
+    seasons.value = s.ok ? s.data || [] : [];
+    const first = seasons.value.find(x => x.childCount) || seasons.value[0];
+    if (first) await loadEpisodes(first.id, it.id);
+  } else if (it.type === 'Season') {
+    await loadEpisodes(it.id, it.parentId || '');
+  }
 }
 
 watch(
@@ -256,42 +324,30 @@ watch(
     swap.value = item.value !== null;
     if (!swap.value) {
       item.value = null;
+      heroPoster.value = '';
+      heroBackdrop.value = '';
       seasons.value = [];
       episodes.value = [];
+      loaded = '';
+      // The row the card was drawn from is already this title, so the hero paints from it instead of
+      // waiting out a round trip measured at 493ms — and 2.0s when the gateway is having a slow minute.
+      const row = seedItemFor(id);
+      item.value = row;
+      if (row) {
+        paint(row);
+        void loadChildren(row);
+      }
     }
-    const r = await window.echoemby.emby.item(id);
+    const r = await embyCached('item', id, () => window.echoemby.emby.item(id));
     if (!r.ok || !r.data) {
-      error.value = r.error || '打不开这一项';
+      // A page the row already painted is not a failed page: the title is on screen, only the
+      // detail-only blocks stay away. The error line is for when nothing could be shown at all.
+      if (!item.value) error.value = r.error || '打不开这一项';
       swap.value = false;
       return;
     }
-    const it = r.data;
-    item.value = it;
-
-    const tag = it.backdropImageTag || it.primaryImageTag;
-    heroBackdrop.value = tag ? await app.backdropUrl({ id: it.id, backdropImageTag: it.backdropImageTag }, 1600) : '';
-    if (!it.backdropImageTag && it.primaryImageTag) {
-      // No wide art on the server: reuse the poster as a soft backdrop rather than a flat gradient.
-      heroBackdrop.value = await app.imageUrl({ id: it.id, primaryImageTag: it.primaryImageTag }, 1000);
-    }
-
-    // The six score sources come through useScores, which keys them by item id and answers once.
-    const kind = tmdbKind.value;
-    const tmdbId = it.providers?.tmdb;
-    void app.logoCandidates(it).then(u => (props.id === id ? (titleUrls.value = u) : undefined));
-    if (kind && tmdbId) {
-      void window.echoemby.meta.tmdbSimilar({ kind, tmdbId }).then(x => (props.id === id ? (similar.value = x.ok ? x.data || [] : []) : undefined));
-      void window.echoemby.meta.tmdbImages({ kind, tmdbId }).then(x => (props.id === id ? (backdrops.value = x.ok ? x.data || [] : []) : undefined));
-    }
-
-    if (it.type === 'Series') {
-      const s = await window.echoemby.emby.seasons(id);
-      seasons.value = s.ok ? s.data || [] : [];
-      const first = seasons.value.find(x => x.childCount) || seasons.value[0];
-      if (first) await loadEpisodes(first.id);
-    } else if (it.type === 'Season') {
-      await loadEpisodes(it.id, it.parentId || '');
-    }
+    paint(r.data);
+    void loadChildren(r.data);
     swap.value = false;
   },
   { immediate: true },
@@ -311,9 +367,7 @@ async function toggleFav() {
   const it = item.value;
   if (!it || favBusy.value) return;
   favBusy.value = true;
-  const next = !fav.value;
-  const r = await window.echoemby.emby.favorite({ id: it.id, on: next });
-  if (r.ok && it.userData) it.userData.isFavorite = next;
+  await app.setFavorite(it.id, !fav.value);
   favBusy.value = false;
 }
 
@@ -328,22 +382,12 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
   <div ref="scroller" class="page" @scroll.passive="onScroll">
     <button class="back" @click="router.back()">←</button>
     <p v-if="playErr" class="err banner">{{ playErr }}</p>
-    <template v-if="!item && !error">
-      <section class="hero sk"></section>
-      <div class="flow">
-        <div v-for="n in 2" :key="n" class="block skb">
-          <div class="skhd"></div>
-          <div class="skrow"><div v-for="m in 5" :key="m" class="skcd"></div></div>
-        </div>
-      </div>
-    </template>
-    <p v-else-if="error" class="err pad">{{ error }}</p>
-
-    <template v-else-if="item">
-      <section class="hero">
+    <Transition name="hero-swap">
+      <HeroSkeleton v-if="!item && !error" :poster="plateSrc" />
+      <section v-else-if="item" class="hero">
         <div class="stage" :style="{ transform: `translate3d(0, ${Math.round(scroll * 0.28)}px, 0)` }">
           <Transition name="heroart">
-            <img v-if="heroBackdrop" :key="heroBackdrop" :src="heroBackdrop" alt="" decoding="async" />
+            <img v-reveal v-if="heroBackdrop" :key="heroBackdrop" :src="heroBackdrop" alt="" decoding="async" />
           </Transition>
         </div>
         <div class="wash"></div>
@@ -352,6 +396,9 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
           :style="{ opacity: Math.max(0, 1 - scroll / 260), transform: `translate3d(0, ${Math.round(scroll * 0.4)}px, 0)` }"
         >
           <div class="copy sw" :class="{ on: swap }">
+            <div v-if="plateSrc" class="art">
+              <img :src="plateSrc" alt="" decoding="async" />
+            </div>
             <div class="text">
               <TitleArt :urls="titleUrls" :name="item.name" />
               <p v-if="item.tagline" class="tagline">{{ item.tagline }}</p>
@@ -368,7 +415,20 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
           </div>
         </div>
       </section>
+    </Transition>
 
+    <template v-if="!item && !error">
+      <div class="flow">
+        <BlockPh v-if="wantRail" kind="rail" />
+        <div v-for="n in 2" :key="n" class="block skb">
+          <div class="skhd"></div>
+          <div class="skrow"><div v-for="m in 5" :key="m" class="skcd"></div></div>
+        </div>
+      </div>
+    </template>
+    <p v-else-if="error" class="err pad">{{ error }}</p>
+
+    <template v-else-if="item">
       <div class="flow sw" :class="{ on: swap }">
         <HScroller v-if="episodes.length" class="block">
           <template #header>
@@ -389,7 +449,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
           </template>
           <button v-for="e in episodes" :key="e.id" class="epi" @click="play(e.id)">
             <div class="ethumb">
-              <img v-if="epArt[e.id] || stillUrl(e.indexNumber)" :src="epArt[e.id] || stillUrl(e.indexNumber)" alt="" loading="lazy" decoding="async" />
+              <img v-reveal v-if="epArt[e.id] || stillUrl(e.indexNumber)" :src="epArt[e.id] || stillUrl(e.indexNumber)" alt="" loading="lazy" decoding="async" />
               <span v-else class="ph">{{ (e.name || '?').slice(0, 1) }}</span>
               <span class="disc" role="presentation"><svg viewBox="0 0 24 24" width="18" height="18"><path d="M8 5l12 7-12 7z" fill="currentColor" /></svg></span>
               <span v-if="epSeen(e)" class="echip">{{ epSeen(e) }}</span>
@@ -405,6 +465,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
             </div>
           </button>
         </HScroller>
+        <BlockPh v-else-if="wantRail" kind="rail" />
 
         <section v-if="source" class="block">
           <h2>播放资源</h2>
@@ -459,11 +520,12 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
           </div>
           <p v-if="item.dateCreated" class="added">入库时间　{{ fmtDateTime(item.dateCreated) }}</p>
         </section>
+        <BlockPh v-else-if="wantTech" kind="tech" />
 
         <HScroller v-if="crew.length" title="演职员" :count="crew.length" class="block">
           <div v-for="p in crew" :key="p.id" class="person">
             <div class="face">
-              <img v-if="faces[p.id]" :src="faces[p.id]" alt="" loading="lazy" />
+              <img v-reveal v-if="faces[p.id]" :src="faces[p.id]" alt="" loading="lazy" />
               <span v-else class="ini">{{ p.name.slice(0, 1) }}</span>
             </div>
             <p class="pn">{{ p.name }}</p>
@@ -489,14 +551,14 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
 
         <HScroller v-if="backdrops.length" class="block" title="剧照" :count="backdrops.length">
           <button v-for="(b, i) in backdrops" :key="i" type="button" class="still" @click="openViewer(i)">
-            <img class="stillimg" :src="backdropUrl(b)" alt="" loading="lazy" decoding="async" />
+            <img v-reveal class="stillimg" :src="backdropUrl(b)" alt="" loading="lazy" decoding="async" />
           </button>
         </HScroller>
 
         <HScroller v-if="similar.length" class="block" title="相似作品" :count="similar.length">
           <div v-for="s in similar" :key="s.tmdbId" class="sim">
             <div class="sposter">
-              <img v-if="s.posterPath" :src="posterUrl(s.posterPath)" alt="" loading="lazy" decoding="async" />
+              <img v-reveal v-if="s.posterPath" :src="posterUrl(s.posterPath)" alt="" loading="lazy" decoding="async" />
               <span v-else class="ph">{{ s.title.slice(0, 1) }}</span>
             </div>
             <p class="stitle">{{ s.title }}</p>
@@ -529,7 +591,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
           <footer class="lb-foot">
             <div ref="strip" class="lb-strip" @wheel.prevent.stop="onStripWheel">
               <button v-for="(b, i) in backdrops" :key="i" type="button" class="lb-th" :class="{ on: i === viewer }" @click="jumpViewer(i)">
-                <img :src="backdropUrl(b)" alt="" draggable="false" loading="lazy" decoding="async" />
+                <img v-reveal :src="backdropUrl(b)" alt="" draggable="false" loading="lazy" decoding="async" />
               </button>
             </div>
             <p class="lb-count">{{ (viewer ?? 0) + 1 }} / {{ backdrops.length }}</p>
@@ -590,9 +652,13 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
   display: flex;
   align-items: flex-end;
   overflow: hidden;
-  /* The crop the shared-element flight aims at. FlyArt reads it off this element because the hero's own
-     img mounts only when the backdrop url arrives, which is after the flight has started. */
+  /* Where the wide backdrop sits when it is taller than the band. */
   --hero-pos: center 22%;
+  /* The hero's own dim, in one place: the real band paints it over its photo, and the first-arrival
+     skeleton paints it over nothing, so the shape the wipe uncovers is the shape that stays. */
+  --hero-ramp:
+    linear-gradient(to top, rgba(6, 8, 14, 0.86) 0, rgba(6, 8, 14, 0.82) 120px, rgba(6, 8, 14, 0.5) max(240px, 42%), rgba(6, 8, 14, 0.12) max(400px, 72%), transparent 100%),
+    linear-gradient(90deg, rgba(6, 8, 14, 0.5) 0%, rgba(6, 8, 14, 0.12) 46%, transparent 72%);
   transition: margin-left var(--rail-dur) var(--rail-ease);
 }
 /* Only the art layer parallaxes; a transform on the clipped .hero box emits a 1px seam at its edge. */
@@ -619,9 +685,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
 .wash {
   position: absolute;
   inset: 0;
-  background:
-    linear-gradient(to top, rgba(6, 8, 14, 0.86) 0, rgba(6, 8, 14, 0.82) 120px, rgba(6, 8, 14, 0.5) max(240px, 42%), rgba(6, 8, 14, 0.12) max(400px, 72%), transparent 100%),
-    linear-gradient(90deg, rgba(6, 8, 14, 0.5) 0%, rgba(6, 8, 14, 0.12) 46%, transparent 72%);
+  background: var(--hero-ramp);
 }
 .hero-in {
   position: relative;
@@ -636,6 +700,19 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
   align-items: flex-end;
   gap: 20px;
 }
+/* The poster plate: the same 2:3 shape and rounding the lobby hero uses, so the art a card was drawn
+   with grows into it as the same picture. Bottom-aligned with the copy, so its rectangle does not move
+   when the text above it changes height — which is what makes it safe to fly onto. */
+.art {
+  width: clamp(120px, 14vw, 196px);
+  flex: none;
+  aspect-ratio: 2 / 3;
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+.art img { display: block; width: 100%; height: 100%; object-fit: cover; }
+
 .text {
   flex: 1 1 auto;
   min-width: 0;
@@ -1001,18 +1078,13 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
     transform: none;
   }
 }
-/* The first-arrival skeleton is the shape of the page it stands in for: a hero band and two rows, so
-   the wipe uncovers something the size of what is coming rather than a line of text. */
-.hero.sk {
-  background: var(--shimmer);
-  animation: sh 1.3s linear infinite;
-}
 .skb .skhd {
   width: 190px;
   height: 20px;
   margin-bottom: 14px;
   border-radius: 6px;
   background: var(--shimmer);
+  background-size: 220% 100%;
   animation: sh 1.3s linear infinite;
 }
 .skb .skrow {
@@ -1024,6 +1096,7 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
   aspect-ratio: 2 / 3;
   border-radius: var(--radius);
   background: var(--shimmer);
+  background-size: 220% 100%;
   animation: sh 1.3s linear infinite;
 }
 </style>

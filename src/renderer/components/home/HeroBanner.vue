@@ -9,6 +9,7 @@ import ScoreStrip from '../ScoreStrip.vue';
 import TitleArt from '../TitleArt.vue';
 import { useAppStore } from '../../stores/app';
 import { usePlayerStore } from '../../stores/player';
+import { begin } from '../../lib/handoff';
 
 const props = defineProps<{ items: LibraryItem[]; scroll: number; resume?: LibraryItem[] }>();
 const emit = defineEmits<{ (e: 'play', item: LibraryItem): void; (e: 'open', item: LibraryItem): void }>();
@@ -26,6 +27,10 @@ let left = DUR;
 interface Art { url: string; wide: boolean; tries: number }
 const art = ref<Record<string, Art>>({});
 const pending = new Set<string>();
+/* Which slides have pixels. A slide turned `.on` while its image was still in flight, so the first
+   computed style was already the end state and the 1.1s crossfade could not run: measured on a cold
+   lobby, the band went from no photo to a full-contrast still in a single frame. */
+const decoded = ref<Record<string, boolean>>({});
 
 /* The title treatment rides along with the slide but answers for itself: the list is filled once per
    item, and TitleArt walks it. */
@@ -41,6 +46,10 @@ const playable = computed(() => ['Movie', 'Episode', 'Video'].includes(current.v
 /** The slide's own button reads the lobby's 继续观看 rows as its candidates: a Series card has no progress
  *  of its own, and the episode it stopped on is already in the store. */
 const target = computed(() => resumeTarget(current.value, props.resume || []));
+/** The id the page this button opens will seed its poster from — an episode slide opens its series, the
+ *  same resolution a row click makes, so both hand over the art the plate is already showing. */
+const detailId = computed(() => (current.value ? (current.value.type === 'Episode' ? current.value.parentId || '' : current.value.id) : ''));
+const plate = ref<HTMLImageElement | null>(null);
 const runtime = computed(() => fmtElapsed(ticksToMs(current.value?.runTimeTicks)));
 const genres = computed(() => genreLabels(current.value?.genres).slice(0, 3).join(' '));
 const date = computed(() => fmtDate(current.value?.premiereDate) || String(current.value?.productionYear || ''));
@@ -60,6 +69,13 @@ function need(it: LibraryItem | null): void {
   if (!(it.id in titleArt.value)) void fetchTitle(it);
 }
 
+function openDetail(): void {
+  // The plate is the hero art itself, so the flight starts from pixels that are already on screen.
+  if (detailId.value) begin(plate.value, detailId.value, current.value);
+  const it = current.value;
+  if (it) emit('open', it);
+}
+
 function srcFor(it: LibraryItem): string {
   const a = art.value[it.id];
   if (!a) return '';
@@ -69,6 +85,7 @@ function srcFor(it: LibraryItem): string {
 function onArtError(it: LibraryItem): void {
   const a = art.value[it.id];
   if (!a) return;
+  decoded.value[it.id] = false;
   const tries = a.tries + 1;
   if (a.wide && tries >= 3) {
     // No backdrop is coming; the poster art keeps the slide readable.
@@ -159,8 +176,8 @@ watch(
     @mouseleave="hovering = false"
   >
     <div class="stage" :style="{ transform: `translate3d(0, ${Math.round(scroll * 0.28)}px, 0)` }">
-      <div v-for="(it, i) in items" :key="it.id" class="slide" :class="{ on: i === idx }">
-        <img v-if="art[it.id]?.url" :src="srcFor(it)" :class="{ wide: art[it.id].wide }" alt="" decoding="async" @error="onArtError(it)" />
+      <div v-for="(it, i) in items" :key="it.id" class="slide" :class="{ on: i === idx && (!art[it.id]?.url || decoded[it.id]) }">
+        <img v-if="art[it.id]?.url" :src="srcFor(it)" :class="{ wide: art[it.id].wide }" alt="" decoding="async" @load="decoded[it.id] = true" @error="onArtError(it)" />
       </div>
     </div>
     <div class="wash"></div>
@@ -168,8 +185,8 @@ watch(
       class="copy"
       :style="{ opacity: Math.max(0, 1 - scroll / 240), transform: `translate3d(0, ${Math.round(scroll * 0.4)}px, 0)` }"
     >
-      <div v-if="current && art[current.id] && !art[current.id].wide && art[current.id].url" class="art">
-        <img :src="srcFor(current)" alt="" />
+      <div v-if="current && art[current.id]?.url && !art[current.id].wide && decoded[current.id]" class="art">
+        <img ref="plate" :src="srcFor(current)" alt="" />
       </div>
 
       <div class="text">
@@ -185,7 +202,7 @@ watch(
       </div>
       <div class="cta">
         <HeroPlay v-if="playable || target" :target="target" :busy="player.busy" @play="emit('play', target ? target.item : current)" />
-        <button class="ghost" @click="emit('open', current)">
+        <button class="ghost" @click="openDetail">
           <svg viewBox="0 0 24 24" width="15" height="15"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8" /><path d="M12 11v6M12 7.6v.9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" /></svg>
           {{ playable ? '详情' : '查看' }}
         </button>
@@ -328,6 +345,8 @@ watch(
   overflow: hidden;
   box-shadow: var(--shadow);
   aspect-ratio: 2 / 3;
+  /* It mounts on the decode, so this is the plate arriving rather than a fade over empty space. */
+  animation: fade-in 0.5s var(--ease) both;
 }
 .art img {
   width: 100%;
