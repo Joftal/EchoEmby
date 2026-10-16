@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import AppSideNav from './components/AppSideNav.vue';
 import AppTitleBar from './components/AppTitleBar.vue';
+import FlyArt from './components/FlyArt.vue';
 import { pageDir } from './router';
 import { useAppStore } from './stores/app';
 
@@ -46,6 +47,9 @@ onMounted(() => {
         </transition>
       </router-view>
     </main>
+    <!-- Sits over the pages and under any modal: the flying art passes the rail and the title bar on its
+         way to the hero, and it is gone long before a dialog can be open. -->
+    <FlyArt />
   </div>
 </template>
 

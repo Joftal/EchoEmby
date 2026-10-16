@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import type { LibraryItem } from '../../../shared/types';
 import { useAppStore } from '../../stores/app';
+import { begin } from '../../lib/handoff';
 import { fmtRuntime, seenLabel } from '../../lib/format';
 import { genreLabels } from '../../lib/genres';
 
@@ -84,7 +85,9 @@ const runtime = computed(() => fmtRuntime(props.item.runTimeTicks));
 const seen = computed(() => seenLabel(props.item.userData?.playedPercentage, props.item.runTimeTicks));
 
 function open(): void {
-  if (target.value) router.push(`/detail/${target.value}`);
+  if (!target.value) return;
+  begin(root.value);
+  router.push(`/detail/${target.value}`);
 }
 </script>
 

@@ -53,13 +53,16 @@
   --r-modal: 20px;
   --r-panel: 22px;
   /* Only the surfaces that can meet each other across a component boundary are in here: the rail is
-     under the title bar, both are under a toast, and the modal scrim is under nothing. The small
-     integers inside a component (the disc over its poster, the arrow over its track, the row over
-     the parallax layer) order themselves locally and stay as they are. */
+     under the title bar, both are under a toast and under the flying art, and the modal scrim is under
+     nothing. The small integers inside a component (the disc over its poster, the arrow over its track,
+     the row over the parallax layer) order themselves locally and stay as they are. */
   --z-top: 4;
   --z-rail: 6;
   --z-bar: 7;
   --z-toast: 9;
+  /* The shared-element clone flies out of a card that can be tucked under the rail, so it has to pass
+     over both the rail and the title bar; it is gone before any modal can be open. */
+  --z-fly: 12;
   --z-modal: 20;
   --ease: cubic-bezier(0.32, 0.72, 0, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);

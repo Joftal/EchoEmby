@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import type { LibraryItem } from '../../../shared/types';
 import { useAppStore } from '../../stores/app';
+import { begin } from '../../lib/handoff';
 import { episodePosition, fmtRuntime, isPositionOnlyName, seenLabel } from '../../lib/format';
 
 const props = withDefaults(
@@ -111,6 +112,7 @@ const metaLine = computed(() => {
 function open(): void {
   // Episode cards inside their own series page resolve back to this route.
   if (!target.value || target.value === router.currentRoute.value.params.id) return;
+  begin(root.value);
   router.push(`/detail/${target.value}`);
 }
 </script>

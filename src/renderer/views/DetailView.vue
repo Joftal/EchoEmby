@@ -586,6 +586,9 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
   display: flex;
   align-items: flex-end;
   overflow: hidden;
+  /* The crop the shared-element flight aims at. FlyArt reads it off this element because the hero's own
+     img mounts only when the backdrop url arrives, which is after the flight has started. */
+  --hero-pos: center 22%;
   transition: margin-left var(--rail-dur) var(--rail-ease);
 }
 /* Only the art layer parallaxes; a transform on the clipped .hero box emits a 1px seam at its edge. */
@@ -600,7 +603,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
   width: 100%;
   height: 100%;
   object-fit: cover;
-  object-position: center 22%;
+  object-position: var(--hero-pos);
   animation: kb 18s ease-in-out infinite alternate;
 }
 @keyframes kb {
