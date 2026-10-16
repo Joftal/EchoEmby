@@ -560,7 +560,11 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
      so a 36px disc sits at 21px. It used to hang off --titlebar-h, one row below that button. */
   top: 21px;
   left: calc(var(--nav-w) + 18px);
-  z-index: 4;
+  /* Over the hero band, which is a later sibling and would otherwise paint its art across the disc.
+     It used to be lifted over the title bar instead: the drag band sat on the top 23px of this 36px
+     button and answered the mouse (real click: centre did nothing, lower edge went back). The band is
+     now under the page and every control subtracts itself from it — see AppTitleBar and base.css. */
+  z-index: 1;
   width: 36px;
   height: 36px;
   border-radius: 50%;

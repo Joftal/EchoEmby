@@ -215,6 +215,26 @@ input::placeholder {
   -webkit-app-region: no-drag;
 }
 
+/* A control owns the pixels it paints. The regions merge in paint order — drag unions, no-drag
+   subtracts — so while the window's drag band was the top-most strip it re-covered every control that
+   scrolled under it and their visible UI was dead (measured on 浏览: a poster at y=0 lost 33% of its
+   box, rows 2-41). The band now paints below the page (AppTitleBar .grip), which puts these subtracts
+   after the union, so one rule here settles the whole class instead of per-view lifts.
+   Not [tabindex]: that matches the scrollers, and a no-drag over a full-height list would leave no
+   place in the band to grab the window. */
+button,
+a[href],
+input,
+select,
+textarea,
+summary,
+[role='button'],
+[role='tab'],
+[role='switch'],
+[role='checkbox'] {
+  -webkit-app-region: no-drag;
+}
+
 /* Page transitions, written as keyframe animations rather than transitions. 资源库/设置/服务器 put
    `transition: padding var(--rail-dur)` on their own `.page`, and a scoped `.page[data-v-x]` outranks a
    global single-class rule, so the old `.page-*` pair resolved to `padding` alone and never moved

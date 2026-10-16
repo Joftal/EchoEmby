@@ -259,7 +259,7 @@ onUnmounted(() => {
     <div class="surface" @click="onSurfaceClick" @dblclick="dblclick"></div>
     <DanmakuLayer />
 
-    <header class="pl-top drag">
+    <header class="pl-top">
       <div class="topin no-drag">
         <TitleArt class="art" :urls="titleUrls" :name="session?.name || '播放器'" />
       </div>
@@ -424,14 +424,36 @@ onUnmounted(() => {
   padding: 16px 20px 52px;
   background: linear-gradient(180deg, rgba(0, 0, 0, 0.72), transparent);
   z-index: 3;
+  /* Two halves of one defect. The box runs 52px below the last thing it draws, so as a hit target it was
+     a plate over the film: a click at y=75 hit-tested to this header and did nothing, y=160 reached the
+     影片 and toggled pause. And its own -webkit-app-region covered the same 121px as a window drag.
+     The plate lets the mouse go; the row's two ends take it back. */
+  pointer-events: none;
+}
+/* The grip is the row the chrome is painted in, not the gradient — and it stops with the chrome. An
+   invisible band over the top of the film would otherwise swallow the very gesture meant to wake the
+   player: a click there became a window drag. Regions ignore pointer-events, so this says it itself. */
+.pl-top::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 52px;
+  -webkit-app-region: drag;
+}
+.stage.hidden .pl-top::before {
+  -webkit-app-region: none;
 }
 .topin {
+  pointer-events: auto;
   display: flex;
   align-items: baseline;
   gap: 12px;
   min-width: 0;
 }
 .ends {
+  pointer-events: auto;
   display: flex;
   align-items: center;
   gap: 10px;
