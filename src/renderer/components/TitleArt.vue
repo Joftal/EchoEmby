@@ -21,7 +21,7 @@ const src = computed(() => props.urls[i.value] || '');
 
 <template>
   <div class="title">
-    <img v-if="src" :src="src" :alt="name" decoding="async" @error="i++" />
+    <img v-if="src" :key="src" :src="src" :alt="name" decoding="async" @error="i++" />
     <h1 v-else>{{ name }}</h1>
   </div>
 </template>
@@ -37,6 +37,9 @@ const src = computed(() => props.urls[i.value] || '');
   margin-bottom: var(--title-gap, 6px);
 }
 .title img {
+  /* A candidate the CDN refuses hands the slot to the next one; the template keys the node on its src so
+     this fade plays per try instead of a hard cut from one treatment to another. */
+  animation: fade-in 0.34s var(--ease) both;
   max-width: var(--title-w, min(100%, 520px));
   max-height: var(--title-h, clamp(52px, 6.8vw, 86px));
   object-fit: contain;

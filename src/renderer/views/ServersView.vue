@@ -160,6 +160,11 @@ h1 {
   gap: 14px;
   align-items: start;
 }
+/* The cards come out of the config read, so they land after the page carrying them has already been wiped
+   in. Each one fades as it mounts instead of the grid filling in a single frame. */
+.list > * {
+  animation: fade-in 0.3s var(--ease) both;
+}
 .empty {
   padding: 26px 0;
   font-size: 13px;
@@ -225,29 +230,5 @@ h1 {
 .sheet-leave-to .dlg {
   opacity: 0;
   transform: translate3d(0, 16px, 0) scale(0.97);
-}
-.toast {
-  position: fixed;
-  left: 50%;
-  bottom: 26px;
-  z-index: var(--z-toast);
-  transform: translateX(-50%);
-  padding: 9px 18px;
-  border-radius: 999px;
-  font-size: 13px;
-  color: var(--text);
-  background: rgba(255, 255, 255, 0.86);
-  border: 1px solid var(--line);
-  backdrop-filter: blur(14px) saturate(180%);
-  box-shadow: var(--shadow);
-}
-.toast-enter-active,
-.toast-leave-active {
-  transition: opacity 0.28s var(--ease), transform 0.34s var(--ease-out);
-}
-.toast-enter-from,
-.toast-leave-to {
-  opacity: 0;
-  transform: translate3d(-50%, 14px, 0);
 }
 </style>

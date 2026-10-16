@@ -74,6 +74,9 @@ h1 {
   border-top: 1px solid var(--line);
   display: grid;
   gap: 8px;
+  /* The list is not there until the config read comes back, and a block appearing between the form and the
+     bottom of the panel reads as the panel resizing rather than as an answer arriving. */
+  animation: fade-in 0.3s var(--ease) both;
 }
 .saved-t {
   font-size: 13px;

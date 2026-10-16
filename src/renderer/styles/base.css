@@ -74,20 +74,23 @@
      content keeps its gap: measured constant at 36.5px across the whole sweep. Staggering the two
      layers instead bought about 8fps and left a 105px hole mid-flight, which reads as latency. */
   --rail-dur: 0.32s;
-  /* The page move. Depth decides the axis: 详情 sits one level under the shelves, so going in travels
-     from the right and coming back from the left, while two shelves — or two titles inside 详情 — have
-     nothing between them spatially and only cross over, on a shorter clock because nothing travels.
-     Distances are percentages of the window so the move reads the same at the 860px minimum and at a
-     wide window (4% is 54px here). Only the page that is leaving scales: an arrival that scales
-     rasterises its text at the wrong size for the whole move and lands soft.
-     The move is a wipe, not a cross-dissolve: the arriving page is opaque and a clip uncovers it while
-     the departing page slides away underneath, so the two never blend into each other (a 50/50 blend
-     of two text pages, captured mid-flight, is unreadable). --page-slide is how far the departing page
-     travels; the clip does the rest, so the travel stays cheap on a 157-card lobby. */
-  --page-dur: 0.3s;
-  --page-flat: 0.2s;
-  --page-slide: 24%;
-  --page-recede: 0.97;
+  /* The page move. Direction is the history stack (see router.ts): a page you go into arrives from the
+     right and leaves to the left, a page you come back to arrives from the left — so 「哪里来哪里去」
+     holds on the way out and on the way back.
+     The arriving page is uncovered by a clip; the departing one stays where it is, is pushed a little by
+     its own children and is faded only once the wipe has covered most of it. Two defects were measured
+     out of the old slide-and-scale: the departing page carries a viewport-fixed ground, so translating
+     it moved the whole pastel wash and the wipe edge showed a seam of displaced background (at 50% of
+     the move the leaver's field sat 174px from the arrival's); and its animation ended at opacity 0.5,
+     so when Vue removed the node the old page popped out of existence half-painted. The travel now lives
+     on the page's children, which have no fixed anything to drag along, and the fade ends at 0.
+     One clock for both pages: a 0.26s fade under a 0.34s wipe put the old page at 0.15 opacity while
+     three quarters of the window was still showing it, which reads as the app blanking, not as a page
+     turning. Distances are percentages of the window so the move reads the same at the 860px minimum. */
+  --page-dur: 0.34s;
+  --page-flat: 0.22s;
+  --page-slide: 8%;
+  --page-push: 5%;
   /* Labels squeeze away with the panel, but reappear only once the space is there. */
   --fade-t: 0.22s;
   --fade-d: 0.1s;
@@ -105,9 +108,18 @@
      which reads as two loading states stacked on each other. The keyframes are global because a
      scoped <style> block renames them per component, which is how the duplicate got written.
      The base is its own step, not --bg-elev-2: #ececf1 on the #f4f4f7 page is a 3-point difference,
-     so the row skeletons on the loading screen nearly disappeared (fix-min.png). */
-  --bg-skel: #e2e2ea;
+     so the row skeletons on the loading screen nearly disappeared (fix-min.png). Measured again against
+     a screenshot: #e2e2ea gave the resting frame 1.17:1 over the page, which is a shape you can only just
+     make out, and the row of cards below a hero skeleton read as a blank page. #d3d4dc puts the resting
+     frame at ~1.35:1, where the blocks are unmistakable without becoming a grid of grey slabs. */
+  --bg-skel: #d3d4dc;
   --shimmer: linear-gradient(100deg, var(--bg-skel) 30%, var(--bg-elev) 50%, var(--bg-skel) 70%);
+  /* The same sweep for bars that sit on a dark ground — the hero band while its photo is still coming.
+     The pale one disappears there: measured at 1.22:1 against the ramp, which is an invisible bar. These
+     alphas put the trough of the sweep at ~2:1 and its crest at ~2.6:1, enough to read as something
+     loading without becoming the bright plate over the poster this hero has already been asked twice to
+     avoid. */
+  --shimmer-dark: linear-gradient(100deg, rgba(255, 255, 255, 0.15) 30%, rgba(255, 255, 255, 0.26) 50%, rgba(255, 255, 255, 0.15) 70%);
   /* The pastel wash, shared by body::before and by every page in flight (see the page transitions). */
   --wash:
     radial-gradient(58% 46% at 14% 4%, rgba(255, 208, 226, 0.28), transparent 62%),
@@ -242,10 +254,10 @@ summary,
    1 — they cut hard while 首页 and 详情 faded). An animation is a different property, so the rail's
    padding tween and the page move now run side by side instead of one silently cancelling the other.
 
-   The move is a wipe, not a cross-dissolve: a clip uncovers the arriving page while the departing one
-   slides away underneath. A dissolve of two text pages was captured mid-flight at 37%/62% opacity and
-   is unreadable — every line doubled. A wipe has no blended frame at all: at any instant each pixel
-   belongs to exactly one page. */
+   The arriving page is uncovered by a clip rather than faded in over the old one: at any instant each
+   pixel belongs to exactly one page, so no frame ever carries two sets of text (a 50/50 dissolve of two
+   pages was captured mid-move and every line was doubled). The departing page only fades — see the
+   comment on --page-dur for the two defects that measured out of the old slide-and-scale. */
 .content > .page::before {
   content: '';
   position: fixed;
@@ -267,30 +279,31 @@ summary,
   from { clip-path: inset(0 100% 0 0); }
   to { clip-path: inset(0 0% 0 0); }
 }
-@keyframes page-open-down {
-  from { clip-path: inset(0 0 100% 0); }
-  to { clip-path: inset(0 0 0% 0); }
+@keyframes page-out {
+  0%, 46% { opacity: 1; }
+  to { opacity: 0; }
 }
-@keyframes page-exit-left {
-  to { transform: translate3d(calc(var(--page-slide) * -1), 0, 0) scale(var(--page-recede)); opacity: 0.5; }
+/* The travel, on the page's own children. A pseudo-element is not a child, so the viewport-fixed ground
+   stays exactly where it is while the content moves over it — which is the whole point: the same motion
+   applied to the page itself moved that ground and put a seam of shifted wash along the wipe edge. */
+@keyframes children-left {
+  to { transform: translate3d(calc(var(--page-slide) * -1), 0, 0); }
 }
-@keyframes page-exit-right {
-  to { transform: translate3d(var(--page-slide), 0, 0) scale(var(--page-recede)); opacity: 0.5; }
+@keyframes children-right {
+  to { transform: translate3d(var(--page-slide), 0, 0); }
 }
-@keyframes page-exit-dim {
-  to { opacity: 0.4; }
+@keyframes arrive-right {
+  from { transform: translate3d(var(--page-push), 0, 0); }
+}
+@keyframes arrive-left {
+  from { transform: translate3d(calc(var(--page-push) * -1), 0, 0); }
 }
 
-/* The departing page gets its own composited layer for the length of the move; without it the slide
-   and scale are a repaint of everything it holds — measured on lobby -> 详情, where the lobby is 157
-   cards and a 2000px scroller: 9 of 14 frames over 20ms, worst 163.6ms. The arriving page is uncovered
-   by a clip and never transforms, so it asks for the clip instead: a transform on it would drag its
-   viewport-fixed wash along and snap it back when the class comes off. */
-.push-leave-active,
-.pop-leave-active {
-  will-change: transform, opacity;
-}
-.flat-leave-active {
+/* The leaving page is composited for the length of the move; without it the fade is a repaint of
+   everything it holds — measured on the lobby, which is 157 cards and a 2000px scroller. */
+.shell .content .push-leave-active,
+.shell .content .pop-leave-active,
+.shell .content .flat-leave-active {
   will-change: opacity;
 }
 .push-enter-active,
@@ -300,11 +313,32 @@ summary,
 }
 
 .push-enter-active { animation: page-open-right var(--page-dur) var(--rail-ease) both; }
-.push-leave-active { animation: page-exit-left var(--page-dur) var(--rail-ease) both; }
 .pop-enter-active { animation: page-open-left var(--page-dur) var(--rail-ease) both; }
-.pop-leave-active { animation: page-exit-right var(--page-dur) var(--rail-ease) both; }
-.flat-enter-active { animation: page-open-down var(--page-flat) var(--ease) both; }
-.flat-leave-active { animation: page-exit-dim var(--page-flat) var(--ease) both; }
+/* Out runs on the same clock as in, and holds while the wipe is still covering it. Both of those are
+   measured: a 0.26s fade on a 0.34s wipe left the old page at 0.15 opacity when the new one had
+   uncovered a quarter of the window, so three quarters of the screen was bare ground mid-move — the
+   frame reads as the app blanking rather than as a page turning. Coverage passes half the window at
+   46% of the move, which is where the fade is allowed to start. */
+.push-leave-active,
+.pop-leave-active {
+  animation: page-out var(--page-dur) linear both;
+}
+.flat-leave-active {
+  animation: page-out var(--page-flat) linear both;
+}
+.flat-enter-active { animation: page-open-right var(--page-flat) var(--ease) both; }
+.shell .content .push-leave-active > * {
+  animation: children-left var(--page-dur) var(--rail-ease) both;
+}
+.shell .content .pop-leave-active > * {
+  animation: children-right var(--page-dur) var(--rail-ease) both;
+}
+.shell .content .push-enter-active > * {
+  animation: arrive-right var(--page-dur) var(--rail-ease) both;
+}
+.shell .content .pop-enter-active > * {
+  animation: arrive-left var(--page-dur) var(--rail-ease) both;
+}
 
 /* Both pages are on screen for the whole move, so the one leaving comes out of the flow — two
    `height: 100%` blocks in .content would stack and park the arrival below the window — and sits under
@@ -338,9 +372,75 @@ summary,
   animation: fade-out 0.22s var(--ease) both;
 }
 
+/* One toast. Four pages each carried their own copy of this pill and its move, which is how they
+   drifted apart — the settings copy ended up 6% more opaque and without the blur, so the same
+   confirmation looked like a different control depending on where you were told about it. */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 26px;
+  z-index: var(--z-toast);
+  transform: translateX(-50%);
+  padding: 9px 18px;
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(14px) saturate(180%);
+  box-shadow: var(--shadow);
+}
+.toast-enter-active,
+.toast-leave-active {
+  transition: opacity 0.28s var(--ease), transform 0.34s var(--ease-out);
+}
+.toast-enter-from,
+.toast-leave-to {
+  opacity: 0;
+  transform: translate3d(-50%, 14px, 0);
+}
+
+/* The lines that stand in for content — nothing came back, or it failed. They appear where a list was
+   and disappear when it arrives, so a hard cut reads as a glitch rather than as an answer. Global,
+   because every page's `.err` is the same kind of message. */
+.err,
+.empty,
+.pl-empty {
+  animation: fade-in 0.3s var(--ease) both;
+}
+
+/* A card's art fades up over 0.45s, and its shimmer used to be pulled out the instant the picture
+   started, leaving the bare plate underneath showing through the first half of the fade. On a cold
+   lobby, 153 tiles were still arriving a second after the rows were on screen. Both card kinds name
+   the same transition so the two cannot drift apart again. */
+.art-skel-leave-active {
+  transition: opacity 0.45s var(--ease);
+}
+.art-skel-leave-to {
+  opacity: 0;
+}
+
+/* The hold `v-reveal` (lib/reveal.ts) puts a lazy photo in until its bytes arrive. Kept global because
+   the pages that use it — detail's stills, cast faces, episode thumbs, the player's episode panel — each
+   own their own `img` rules, and a scoped class cannot be shared by all of them. */
+.rv {
+  opacity: 0;
+  transition: opacity 0.4s var(--ease);
+}
+.rv.on {
+  opacity: 1;
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
+    /* The durations alone were not enough. Measured on a reduced-motion lobby: the row cascade still
+       held row 3 for 0.1s and row 6+ for 0.25s, so content arrived one row at a time with nothing
+       moving - a stagger is its own motion. And the skeleton's shimmer is `infinite`: squeezing its
+       1.3s loop into 0.01s leaves it re-running every frame, so it stops after one pass instead. */
+    transition-delay: 0s !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
   }
 }

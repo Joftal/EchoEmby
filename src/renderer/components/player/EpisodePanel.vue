@@ -3,6 +3,8 @@ import { computed, nextTick, ref, watch } from 'vue';
 import { usePlayerStore } from '../../stores/player';
 import { useAppStore } from '../../stores/app';
 import { episodePosition, fmtRuntime, isPositionOnlyName } from '../../lib/format';
+import { embyCached } from '../../lib/embycache';
+import { vReveal } from '../../lib/reveal';
 import type { LibraryItem } from '../../../shared/types';
 
 const player = usePlayerStore();
@@ -22,7 +24,7 @@ const strip = ref<HTMLElement | null>(null);
 /** The panel opens on the season being played, so the list never starts on 第 1 季 while 第 3 季 is on screen. */
 async function loadSeasons(): Promise<void> {
   if (!seriesId.value || seasons.value.length) return;
-  const r = await window.echoemby.emby.seasons(seriesId.value);
+  const r = await embyCached('seasons', seriesId.value, () => window.echoemby.emby.seasons(seriesId.value));
   if (!r.ok) return;
   seasons.value = r.data || [];
   active.value = seasonId.value && seasons.value.some(s => s.id === seasonId.value) ? seasonId.value : seasons.value[0]?.id || '';
@@ -31,7 +33,9 @@ async function loadSeasons(): Promise<void> {
 async function loadEpisodes(sid: string): Promise<void> {
   if (!seriesId.value || !sid) return;
   active.value = sid;
-  const r = await window.echoemby.emby.episodes({ seriesId: seriesId.value, seasonId: sid });
+  const r = await embyCached('episodes', { seriesId: seriesId.value, seasonId: sid }, () =>
+    window.echoemby.emby.episodes({ seriesId: seriesId.value, seasonId: sid }),
+  );
   if (r.ok) episodes.value = r.data || [];
   for (const e of episodes.value) {
     if (art.value[e.id] !== undefined) continue;
@@ -60,7 +64,9 @@ async function centerOnPlaying(): Promise<void> {
   const cell = el?.querySelector('.pl-cell.on');
   if (!el || !cell) return;
   const b = el.getBoundingClientRect(), c = cell.getBoundingClientRect();
-  el.scrollLeft += c.left + c.width / 2 - (b.left + b.width / 2);
+  // A jump of eight screens' worth of cells read as the panel being replaced rather than scrolled; this is
+  // the same move a wheel over the strip makes.
+  el.scrollTo({ left: el.scrollLeft + c.left + c.width / 2 - (b.left + b.width / 2), behavior: 'smooth' });
 }
 
 /** immediate: the session is already loaded by the time this menu mounts, so a watcher that only fires on
@@ -100,7 +106,7 @@ const titleOf = (ep: LibraryItem): string => (isPositionOnlyName(ep.name) ? '' :
     <div v-else ref="strip" class="pl-strip">
       <button v-for="ep in episodes" :key="ep.id" class="pl-cell" :class="{ on: ep.id === itemId }" @click="choose(ep.id)">
         <span class="art">
-          <img v-if="art[ep.id]" :src="art[ep.id]" :alt="ep.name" loading="lazy" @error="onArtFail(ep)" />
+          <img v-reveal v-if="art[ep.id]" :src="art[ep.id]" :alt="ep.name" loading="lazy" @error="onArtFail(ep)" />
           <template v-else>{{ ep.indexNumber ?? '' }}</template>
         </span>
         <span class="cap">

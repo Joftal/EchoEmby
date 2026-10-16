@@ -95,6 +95,10 @@ const marks = computed<Mark[]>(() => {
   flex-wrap: wrap;
   gap: 7px 13px;
 }
+/* The sources answer one at a time, so a mark can arrive while the hero is being read. */
+.strip > * {
+  animation: fade-in 0.3s var(--ease) both;
+}
 .b {
   display: inline-flex;
   align-items: center;

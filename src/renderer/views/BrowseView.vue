@@ -7,6 +7,7 @@ import ListCard from '../components/home/ListCard.vue';
 import RowScroller from '../components/home/RowScroller.vue';
 import FilterBar from '../components/browse/FilterBar.vue';
 import { defaultSort, filterParams, fromQuery, isFiltered, localSort, sortParams, toQuery, type Filters } from '../lib/filters';
+import { embyCached } from '../lib/embycache';
 import { useAppStore } from '../stores/app';
 import { usePlayerStore } from '../stores/player';
 
@@ -131,7 +132,7 @@ async function rememberSeries(ids: string[]): Promise<void> {
   // by one, which keeps the batch for the servers that do answer it.
   const missed = need.filter(id => !found.some(x => x.id === id));
   const singles = await Promise.all(
-    missed.map(id => window.echoemby.emby.item(id).then(x => (x.ok ? x.data : null))),
+    missed.map(id => embyCached('item', id, () => window.echoemby.emby.item(id)).then(x => (x.ok ? x.data : null))),
   );
   const next = { ...seriesById.value };
   for (const it of [...found, ...singles.filter((x): x is LibraryItem => !!x)]) next[it.id] = it;
@@ -640,17 +641,17 @@ h1 {
   display: block;
   width: 100%;
   height: 100%;
-  background: linear-gradient(100deg, #eeeef2 30%, #f7f7fa 50%, #eeeef2 70%);
+  background: var(--shimmer);
   background-size: 220% 100%;
-  animation: sh 1.4s linear infinite;
+  animation: sh 1.3s linear infinite;
 }
 .sk .cell:nth-child(n + 13) {
   opacity: 0.5;
 }
-@keyframes sh {
-  to {
-    background-position: -220% 0;
-  }
+/* The tile these stand in for is the art plus its two label lines, so the bare 2/3 box is 50px short
+   per row and the whole grid lifts as real cards land (measured: 204x306 cell against a 204x356 card). */
+.sk .cell:not(.list) {
+  margin-bottom: 49.3px;
 }
 
 .err,
@@ -689,6 +690,7 @@ h1 {
   background: var(--bg-elev);
   border: 1px solid var(--line);
   box-shadow: var(--shadow-sm);
+  animation: fade-in 0.3s var(--ease) both;
   transition: background var(--hov) var(--ease), color var(--hov) var(--ease), transform var(--hov) var(--ease-out), box-shadow var(--hov) var(--ease);
 }
 .more:hover {
@@ -696,29 +698,5 @@ h1 {
   color: var(--on-ink);
   box-shadow: var(--shadow);
   transform: translate3d(0, -2px, 0);
-}
-.toast {
-  position: fixed;
-  left: 50%;
-  bottom: 26px;
-  z-index: var(--z-toast);
-  transform: translateX(-50%);
-  padding: 9px 18px;
-  border-radius: 999px;
-  font-size: 13px;
-  color: var(--text);
-  background: rgba(255, 255, 255, 0.86);
-  border: 1px solid var(--line);
-  backdrop-filter: blur(14px) saturate(180%);
-  box-shadow: var(--shadow);
-}
-.toast-enter-active,
-.toast-leave-active {
-  transition: opacity 0.28s var(--ease), transform 0.34s var(--ease-out);
-}
-.toast-enter-from,
-.toast-leave-to {
-  opacity: 0;
-  transform: translate3d(-50%, 14px, 0);
 }
 </style>

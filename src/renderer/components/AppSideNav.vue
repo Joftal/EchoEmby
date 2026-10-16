@@ -170,7 +170,7 @@ watch(() => store.views.length, () => void nextTick(checkMore));
         </button>
       </section>
 
-      <section v-if="store.views.length" class="grp libs">
+      <section class="grp libs" :class="{ open: store.views.length }" :inert="!store.views.length">
         <div class="gsh">
           <p class="cap">资源库</p>
           <button
@@ -395,11 +395,22 @@ watch(() => store.views.length, () => void nextTick(checkMore));
   padding-bottom: 6px;
 }
 /* The library group holds a variable number of rows, so it collapses through the track rather
-   than by measured pixels: 1fr <-> 0fr interpolates, and .gsh clips the overflow. */
+   than by measured pixels: 1fr <-> 0fr interpolates, and .gsh clips the overflow.
+   It stays mounted while the library list is still in flight (measured: the views answer a second
+   after the rail does) and opens by the same transition, so the group grows into place instead of
+   appearing in one frame and pushing the nav down. `inert` keeps the rows untabbable until they exist. */
 .grp.libs {
   display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  padding-bottom: 0;
+  transition: grid-template-rows var(--rail-dur) var(--rail-ease), opacity calc(var(--rail-dur) * 0.6) var(--ease),
+    padding-bottom var(--rail-dur) var(--rail-ease);
+}
+.grp.libs.open {
   grid-template-rows: 1fr;
-  transition: grid-template-rows var(--rail-dur) var(--rail-ease);
+  opacity: 1;
+  padding-bottom: 6px;
 }
 .grp.libs .gsh {
   min-height: 0;

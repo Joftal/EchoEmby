@@ -147,7 +147,16 @@ async function runProbe(): Promise<void> {
 
 <template>
   <div class="page">
-    <div v-if="settings && player && dm" class="col">
+    <div v-if="!settings || !player || !dm" class="col">
+      <header class="head"><i class="sk skh"></i></header>
+      <div class="rows">
+        <div v-for="n in 5" :key="n" class="row">
+          <i class="sk skk"></i>
+          <i class="sk skg"></i>
+        </div>
+      </div>
+    </div>
+    <div v-else class="col">
       <header class="head">
         <h1>设置</h1>
       </header>
@@ -361,6 +370,29 @@ async function runProbe(): Promise<void> {
   padding: calc(var(--titlebar-h) + 22px) var(--side) 46px var(--gutter);
   transition: padding var(--rail-dur) var(--rail-ease);
 }
+/* The page is only drawn once all three blocks have come back from the config read, and a wipe that
+   uncovers a bare column reads as a page that failed rather than one that is thinking. These are the real
+   cards with their contents pressed in, at the height the rows have. */
+.sk {
+  display: block;
+  background: var(--shimmer);
+  background-size: 220% 100%;
+  animation: sh 1.3s linear infinite;
+}
+.skh {
+  width: 118px;
+  height: 30px;
+  border-radius: 8px;
+}
+.skk {
+  width: 44%;
+  height: 15px;
+}
+.skg {
+  width: 132px;
+  height: 30px;
+  border-radius: 999px;
+}
 .col {
   max-width: 720px;
   margin: 0 auto;
@@ -518,28 +550,5 @@ h1 {
 }
 .sw.on .track i {
   transform: translate3d(18px, 0, 0);
-}
-.toast {
-  position: fixed;
-  left: 50%;
-  bottom: 26px;
-  z-index: var(--z-toast);
-  transform: translateX(-50%);
-  padding: 9px 18px;
-  border-radius: 999px;
-  font-size: 13px;
-  color: var(--text);
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px solid var(--line);
-  box-shadow: var(--shadow);
-}
-.toast-enter-active,
-.toast-leave-active {
-  transition: opacity 0.28s var(--ease), transform 0.34s var(--ease-out);
-}
-.toast-enter-from,
-.toast-leave-to {
-  opacity: 0;
-  transform: translate3d(-50%, 14px, 0);
 }
 </style>

@@ -26,6 +26,7 @@ import TitleArt from '../components/TitleArt.vue';
 import { SPEED_STEPS, usePlayerStore } from '../stores/player';
 import { useAppStore } from '../stores/app';
 import { fmtClock } from '../lib/format';
+import { embyCached } from '../lib/embycache';
 import { VOLUME_MAX } from '../../shared/types';
 
 const player = usePlayerStore();
@@ -102,7 +103,7 @@ watch(
   async (id?: string) => {
     titleUrls.value = [];
     if (!id) return;
-    const r = await window.echoemby.emby.item(session.value?.seriesId || id);
+    const r = await embyCached('item', session.value?.seriesId || id, () => window.echoemby.emby.item(session.value?.seriesId || id));
     if (!r.ok || !r.data || session.value?.itemId !== id) return;
     titleUrls.value = await app.logoCandidates(r.data);
   },
@@ -665,6 +666,7 @@ onUnmounted(() => {
   background: rgba(12, 12, 16, 0.88);
   font-size: 14px;
   z-index: 4;
+  animation: fade-in 0.24s var(--ease) both;
 }
 .fail {
   position: absolute;
@@ -675,6 +677,9 @@ onUnmounted(() => {
   text-align: center;
   background: rgba(10, 10, 14, 0.82);
   z-index: 6;
+  /* The dim arrives over a picture that has just stopped, so it arrives as a dim rather than as a cut to
+     black. */
+  animation: fade-in 0.34s var(--ease) both;
 }
 .fail p {
   font-size: 15px;

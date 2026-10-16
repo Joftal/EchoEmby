@@ -83,7 +83,7 @@ onBeforeUnmount(() => {
           :item="it"
           :variant="variant"
           :width="width"
-          :index="i"
+          :index="i % 12"
           @play="emit('play', $event)"
         />
       </div>
