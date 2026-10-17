@@ -6,6 +6,7 @@ import { useAppStore } from '../../stores/app';
 import { begin } from '../../lib/handoff';
 import { fmtRuntime, seenLabel } from '../../lib/format';
 import { genreLabels } from '../../lib/genres';
+import { useTmdb } from '../../lib/scores';
 
 const props = withDefaults(defineProps<{ item: LibraryItem; index?: number; matchedGenres?: string[] }>(), {
   index: 0,
@@ -68,6 +69,22 @@ function onErr(): void {
 }
 
 const target = computed(() => (props.item.type === 'Episode' ? props.item.parentId : props.item.id));
+/* Synopsis and age rating come from the same ladder the detail page and the lobby hero use — TMDB, then the
+   server, then TMDB's non-Chinese line — and this row was the only surface left out of it. Measured on
+   待看: 26 of 48 rows had no overview at all and 32 carried no rating, while the server has an OfficialRating
+   for only 13-18 of 25 sampled titles. The ask rides the `near` gate above rather than the row's own mount,
+   so a page only reaches for the titles somebody can actually see, and it asks TMDB alone: IMDb, Trakt and
+   Bangumi would be six round trips per row for two lines of text this card cannot draw. */
+const tmdb = useTmdb(() => (near.value ? props.item : null));
+/* Age guidance is a property of the show, so an episode row takes it from the work above it. Its synopsis
+   is not: this page's 24 episode rows are one show, and the series paragraph under each of them would be
+   the same paragraph twenty-four times. TMDB does hold each episode's own line — it rides the season reply
+   the stills ask already makes, which a 2:3 card never triggers — and reaching it is its own change. */
+const isWork = computed(() => props.item.type !== 'Episode');
+const overview = computed(() =>
+  isWork.value ? tmdb.value?.overviewZh || props.item.overview || tmdb.value?.overviewOther || '' : props.item.overview || '',
+);
+const cert = computed(() => tmdb.value?.cert || props.item.officialRating || '');
 const rating = computed(() => {
   const r = props.item.communityRating;
   return r && r >= 6 ? r.toFixed(1) : '';
@@ -107,11 +124,11 @@ function open(): void {
         <span v-if="item.studio" class="studio">{{ item.studio }}</span>
       </div>
       <p v-if="meta" class="meta">{{ meta }}</p>
-      <p class="ov">{{ item.overview || '暂无简介。' }}</p>
+      <p class="ov">{{ overview || '暂无简介。' }}</p>
       <div class="badges">
         <span v-if="seen" class="b seen">{{ seen }}</span>
         <span v-if="rating" class="b rate">★ {{ rating }}</span>
-        <span v-if="item.officialRating" class="b cert">{{ item.officialRating }}</span>
+        <span v-if="cert" class="b cert">{{ cert }}</span>
         <span v-if="runtime" class="b time">{{ runtime }}</span>
       </div>
     </div>
