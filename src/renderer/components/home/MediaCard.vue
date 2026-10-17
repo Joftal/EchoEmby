@@ -80,7 +80,9 @@ const rating = computed(() => {
 });
 const sub = computed(() => {
   const i = props.item;
-  if (i.latestEpisode) return episodePosition(i.latestEpisode.season ?? 1, i.latestEpisode.episode);
+  // A row that does not say which season its latest episode sits in prints the episode alone: guessing 1
+  // would put a position on the card the server never claimed.
+  if (i.latestEpisode) return episodePosition(i.latestEpisode.season, i.latestEpisode.episode);
   if (i.indexNumber != null) return episodePosition(i.parentIndexNumber, i.indexNumber);
   if (i.childCount) return `${i.childCount} ${i.type === 'BoxSet' ? '部' : '季'}`;
   return '';
