@@ -1,5 +1,5 @@
 import { computed, reactive, watch, type ComputedRef } from 'vue';
-import type { BangumiScore, CsmGuide, ImdbRating, IpcResult, LibraryItem, RtScores, TmdbMeta, TraktScores } from '../../shared/types';
+import type { BangumiScore, CsmGuide, ImdbRating, IpcResult, LibraryItem, RtScores, TmdbMeta, TmdbSeasonRow, TraktScores } from '../../shared/types';
 
 /** Everything the score strip can draw, filled in per source as each one answers. */
 export interface Scores {
@@ -19,6 +19,26 @@ export function tmdbKind(item: LibraryItem | null | undefined): 'movie' | 'tv' |
   if (item?.type === 'Movie') return 'movie';
   if (item?.type === 'Series' || item?.type === 'Season') return 'tv';
   return null;
+}
+
+export const SEASON_TRUST = 0.67;
+
+/** TMDB's row for one season number, believed only while both sides agree about how big that season is.
+ *  Measured over 9 awkward shows and a 73-season sweep: where the numbering itself diverges — 物语 files
+ *  seasons 11-25 where TMDB stops at 5, 咒术回战 has a 季 3 TMDB never heard of — there is simply no row to
+ *  match, so that fallback costs no threshold. What a number still has to decide is the split-cour case:
+ *  咒术回战's 47 against TMDB's 59 (0.80) and 【推しの子】's 24 against 35 (0.69) are one season counted two
+ *  ways and keep TMDB's date and art, while 800 Meters' 1 against 3 (0.33) is a different cut. 0.67
+ *  separates them: 41 pairings believed, 1 refused. Believed or not, the episode count a page prints is
+ *  always the server's own, because that is the number its episode row has to match. */
+export function trustSeason(rows: TmdbSeasonRow[] | null | undefined, n?: number | null, count?: number): TmdbSeasonRow | null {
+  if (n == null || !rows) return null;
+  const t = rows.find(x => x.n === n);
+  if (!t) return null;
+  const a = count || 0;
+  const b = t.epCount || 0;
+  if (a && b && Math.min(a, b) / Math.max(a, b) < SEASON_TRUST) return null;
+  return t;
 }
 
 /* Keyed by item, so the lobby hero and the detail page ask once for the same title, and a title that

@@ -3,9 +3,10 @@ import { computed, nextTick, ref, watch } from 'vue';
 import { usePlayerStore } from '../../stores/player';
 import { useAppStore } from '../../stores/app';
 import { episodePosition, fmtRuntime, isPositionOnlyName, seasonTitle } from '../../lib/format';
+import { trustSeason } from '../../lib/scores';
 import { embyCached } from '../../lib/embycache';
 import { vReveal } from '../../lib/reveal';
-import type { LibraryItem } from '../../../shared/types';
+import type { LibraryItem, TmdbSeasonRow } from '../../../shared/types';
 
 const player = usePlayerStore();
 const app = useAppStore();
@@ -28,7 +29,31 @@ async function loadSeasons(): Promise<void> {
   if (!r.ok) return;
   seasons.value = r.data || [];
   active.value = seasonId.value && seasons.value.some(s => s.id === seasonId.value) ? seasonId.value : seasons.value[0]?.id || '';
+  void askTmdbNames();
 }
+
+/* Several of this library's seasons are filed under nothing but 「第 1 季」 while TMDB carries the name
+   somebody actually gave them: 鬼灭's server rows say only the position, where TMDB has 「立志篇」. The same
+   threshold the detail page uses is applied here rather than reinvented, because this list is a control —
+   naming 季 1 after a season that is 800 Meters' 3 would put a lie on the button that switches what plays.
+   One ask for the whole series, keyed to it, so a session that moves to another show cannot name these
+   chips from the last one's table. */
+const tmdbSeasons = ref<TmdbSeasonRow[]>([]);
+let tmdbAskedFor = '';
+async function askTmdbNames(): Promise<void> {
+  const sid = seriesId.value;
+  if (!sid || tmdbAskedFor === sid) return;
+  tmdbAskedFor = sid;
+  tmdbSeasons.value = [];
+  const it = await embyCached('item', sid, () => window.echoemby.emby.item(sid));
+  const id = it.ok ? String(it.data?.providers?.tmdb || '') : '';
+  if (!/^\d{1,8}$/.test(id)) return;
+  const m = await window.echoemby.meta.tmdb({ kind: 'tv', tmdbId: id });
+  if (m.ok && m.data && tmdbAskedFor === sid) tmdbSeasons.value = m.data.seasons || [];
+}
+
+const chipLabel = (s: LibraryItem): string =>
+  seasonTitle(s.indexNumber, s.name, trustSeason(tmdbSeasons.value, s.indexNumber, s.childCount)?.name);
 
 async function loadEpisodes(sid: string): Promise<void> {
   if (!seriesId.value || !sid) return;
@@ -98,7 +123,7 @@ const titleOf = (ep: LibraryItem): string => (isPositionOnlyName(ep.name) ? '' :
   <template v-else>
     <div v-if="seasons.length > 1" class="pl-chips">
       <button v-for="s in seasons" :key="s.id" class="pl-chip" :class="{ on: active === s.id }" @click="loadEpisodes(s.id)">
-        {{ seasonTitle(s.indexNumber, s.name) }}
+        {{ chipLabel(s) }}
       </button>
     </div>
 

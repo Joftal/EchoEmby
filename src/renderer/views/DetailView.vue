@@ -8,7 +8,7 @@ import ScoreStrip from '../components/ScoreStrip.vue';
 import HeroPlay from '../components/HeroPlay.vue';
 import TitleArt from '../components/TitleArt.vue';
 import HeroSkeleton from '../components/HeroSkeleton.vue';
-import { tmdbKind as kindOf, useScores } from '../lib/scores';
+import { tmdbKind as kindOf, trustSeason, useScores } from '../lib/scores';
 import { usePlayerStore } from '../stores/player';
 import { useAppStore } from '../stores/app';
 import { episodePosition, fmtDate, fmtDateTime, fmtRuntime, isPositionOnlyName, seenLabel, seasonTitle } from '../lib/format';
@@ -293,25 +293,9 @@ const seasonRow = computed<LibraryItem | null>(
 );
 const seasonNumber = computed(() => seasonRow.value?.indexNumber ?? item.value?.indexNumber ?? null);
 
-/* TMDB and this server do not always count the same season. Measured over 9 awkward shows and a 73-season
-   sweep: the sides agree on the episode count everywhere but one pairing, and where the numbering itself
-   diverges — 物语 files seasons 11-25 where TMDB stops at 5, 咒术回战 has a 季 3 TMDB never heard of — there
-   is simply no row to match, so that fallback costs no threshold. What a number still has to decide is the
-   split-cour case: 咒术回战's 47 against TMDB's 59 (0.80) and 【推しの子】's 24 against 35 (0.69) are one season
-   counted two ways and keep TMDB's date and art, while 800 Meters' 1 against 3 (0.33) is a different cut.
-   0.67 separates them: 41 pairings believed, 1 refused. Believed or not, the 集数 printed here is always the
-   server's own, because that is the number the episode row underneath has to match. */
-const SEASON_TRUST = 0.67;
-/** TMDB's row for one season number, believed only while both sides agree about how big that season is. */
-const trustRow = (n?: number | null, count?: number): TmdbSeasonRow | null => {
-  if (n == null) return null;
-  const t = scores.value.tmdb?.seasons?.find(x => x.n === n);
-  if (!t) return null;
-  const a = count || 0;
-  const b = t.epCount || 0;
-  if (a && b && Math.min(a, b) / Math.max(a, b) < SEASON_TRUST) return null;
-  return t;
-};
+/* TMDB and this server do not always count the same season. The threshold and the sweep that picked it
+   live in `trustSeason`, because the player's season chips have to refuse the same pairings this page does. */
+const trustRow = (n?: number | null, count?: number): TmdbSeasonRow | null => trustSeason(scores.value.tmdb?.seasons, n, count);
 const tmdbSeason = computed(() => trustRow(seasonNumber.value, seasonRow.value?.childCount));
 
 /* Asked from a watch rather than from `loadEpisodes`, because the trust test needs TMDB's meta and
