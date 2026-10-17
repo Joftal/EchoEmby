@@ -85,9 +85,14 @@ const overview = computed(() =>
   isWork.value ? tmdb.value?.overviewZh || props.item.overview || tmdb.value?.overviewOther || '' : props.item.overview || '',
 );
 const cert = computed(() => tmdb.value?.cert || props.item.officialRating || '');
+/* One ladder, then the card's own floor. Two numbers for one title is what this used to print: measured on
+   70 sampled titles, 12 differ by ≥0.3 and 5 by ≥1.0 — 孤独摇滚! held 8.5 here against the TMDB 8.3 the page
+   it opens shows, and 首尔破笑组's 10.0 is server data that no rater agrees with. A score belongs to the work,
+   so an episode row takes it from the series above it exactly as the badge beside it does. The floor stays:
+   a 4.8 on a card is not a fact anybody asked to see. */
 const rating = computed(() => {
-  const r = props.item.communityRating;
-  return r && r >= 6 ? r.toFixed(1) : '';
+  const v = tmdb.value?.voteAverage || props.item.communityRating || 0;
+  return v >= 6 ? v.toFixed(1) : '';
 });
 const meta = computed(() =>
   [

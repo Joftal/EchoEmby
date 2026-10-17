@@ -5,6 +5,7 @@ import type { LibraryItem } from '../../../shared/types';
 import { useAppStore } from '../../stores/app';
 import { begin } from '../../lib/handoff';
 import { episodePosition, fmtRuntime, isPositionOnlyName, seenLabel } from '../../lib/format';
+import { useTmdb } from '../../lib/scores';
 
 const props = withDefaults(
   defineProps<{ item: LibraryItem; variant?: 'poster' | 'still'; width?: number; index?: number }>(),
@@ -74,9 +75,14 @@ function onErr(): void {
 
 const target = computed(() => (props.item.type === 'Episode' ? props.item.parentId : props.item.id));
 const played = computed(() => Math.min(100, props.item.userData?.playedPercentage || 0));
+/* The number on this card has to be the number on the page it opens, or one title wears two of them. The
+   list rows already read TMDB first; this card read the server alone. It asks nobody today, so the ladder
+   is a new trip: one per title per session (episode rows fold into their series), gated by the same `near`
+   the art already rides, and the answer sits on disk for 30 days. */
+const tmdb = useTmdb(() => (near.value ? props.item : null));
 const rating = computed(() => {
-  const r = props.item.communityRating;
-  return r && r >= 6 ? r.toFixed(1) : '';
+  const v = tmdb.value?.voteAverage || props.item.communityRating || 0;
+  return v >= 6 ? v.toFixed(1) : '';
 });
 const sub = computed(() => {
   const i = props.item;
