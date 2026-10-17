@@ -15,7 +15,9 @@ import logoBangumi from '../assets/logos/bangumi.png';
 const props = defineProps<{ item: LibraryItem }>();
 
 const scores = useScores(() => props.item);
-const certText = computed(() => props.item.officialRating || scores.value.tmdb?.cert || '');
+/** TMDB first, the server second: measured on this library the server's `OfficialRating` is present on
+ *  only 13-18 of 25 sampled titles, while TMDB's `content_ratings` answers for nearly all of them. */
+const certText = computed(() => scores.value.tmdb?.cert || props.item.officialRating || '');
 
 interface Mark {
   k: string;
