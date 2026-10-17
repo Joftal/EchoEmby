@@ -38,7 +38,7 @@ export interface EchoEmbyApi {
     /** Null for a Latin title, which Bangumi's search cannot reach; only CJK names are looked up. */
     bangumi(title: string): Promise<IpcResult<BangumiScore | null>>;
     tmdb(input: { kind: 'movie' | 'tv'; tmdbId: string }): Promise<IpcResult<TmdbMeta | null>>;
-    tmdbStills(input: { tmdbId: string; season: number }): Promise<IpcResult<{ value: TmdbStills; any: boolean } | null>>;
+    tmdbStills(input: { tmdbId: string; season: number }): Promise<IpcResult<TmdbStills | null>>;
     tmdbSeasonCast(input: { tmdbId: string; season: number }): Promise<IpcResult<TmdbCredits | null>>;
     tmdbSimilar(input: { kind: 'movie' | 'tv'; tmdbId: string }): Promise<IpcResult<TmdbSimilar[]>>;
     tmdbImages(input: { kind: 'movie' | 'tv'; tmdbId: string }): Promise<IpcResult<string[]>>;

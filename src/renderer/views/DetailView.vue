@@ -373,8 +373,8 @@ watch(stillsKey, key => {
   const sid = seasonId.value;
   void window.echoemby.meta.tmdbStills({ tmdbId: id, season: Number(n) }).then(x => {
     if (!x.ok || !x.data) return;
-    stillsByKey.set(key, x.data.value);
-    if (seasonId.value === sid) stills.value = x.data.value;
+    stillsByKey.set(key, x.data);
+    if (seasonId.value === sid) stills.value = x.data;
   });
 });
 

@@ -256,7 +256,7 @@ export const useAppStore = defineStore('app', () => {
     if (!stills) {
       stills = window.echoemby.meta
         .tmdbStills({ tmdbId: showId, season })
-        .then(x => (x.ok && x.data ? x.data.value : {}))
+        .then(x => (x.ok && x.data ? x.data : {}))
         .catch(() => ({} as TmdbStills));
       seasonStills.set(key, stills);
     }

@@ -299,14 +299,9 @@ const sameSeason = (a: TmdbStills, b: TmdbStills): boolean => {
   return ka.length === kb.length && ka.every(k => a[+k] === b[+k]);
 };
 
-export interface SeasonStills {
-  value: TmdbStills;
-  /** True when TMDB has at least one episode still for this season. */
-  any: boolean;
-}
-
-/** Returns the season's episode stills; empty map (still `answered`) is a normal reply. */
-export async function tmdbSeasonStills(tmdbId: string, season: number): Promise<SeasonStills | null> {
+/** Returns the season's episode stills; an empty map (still `answered`) is a normal reply, and null means
+ *  this season was not asked, is not on TMDB, or is waiting out a recorded miss. */
+export async function tmdbSeasonStills(tmdbId: string, season: number): Promise<TmdbStills | null> {
   if (!/^\d{1,8}$/.test(tmdbId) || !Number.isInteger(season) || season < 0 || season > 500) return null;
   const token = tmdbToken();
   if (!token) return null;
@@ -315,7 +310,7 @@ export async function tmdbSeasonStills(tmdbId: string, season: number): Promise<
   const hit = s.stills[key];
   if (hit && Date.now() - hit.fetchedAt < ('missing' in hit ? MISS_TTL : STILLS_TTL)) {
     if ('missing' in hit) return null;
-    return { value: hit.value, any: Object.keys(hit.value).length > 0 };
+    return hit.value;
   }
   const { json, answered } = await fetchJson<any>(
     `https://api.themoviedb.org/3/tv/${tmdbId}/season/${season}?language=zh-CN`,
@@ -339,7 +334,7 @@ export async function tmdbSeasonStills(tmdbId: string, season: number): Promise<
     s.stills[key] = { value: next, fetchedAt: Date.now() };
     persist();
   }
-  return { value: next, any: Object.keys(next).length > 0 };
+  return next;
 }
 
 /* The season detail endpoint carries no cast at all — measured, its keys are id, _id, air_date,
