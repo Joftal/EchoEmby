@@ -77,8 +77,14 @@ const authQuery = (id: Identity, token?: string): URLSearchParams => {  const q 
 const authHeader = (id: Identity, token?: string): string =>
   `MediaBrowser Client="${id.clientName}", Device="${id.deviceName}", DeviceId="${id.deviceId}", Version="${id.clientVersion}"${token ? `, Token="${token}"` : ''}`;
 
+/* Only what `mapItem` actually reads. Twelve more used to be asked for and dropped on the floor —
+   `BasicSyncInfo`, `CanDelete`, `CanDownload`, `Status` and `PrimaryImageAspectRatio` are server-side joins
+   computed for every row of a 100-row page, and the five media fields (`MediaStreams`, `Container`,
+   `Bitrate`, `VideoRange`, `Width`/`Height`) are the flat copy of properties the tech block reads from
+   `MediaSources` on the detail reply instead. `Studio` was the odd one out: the list endpoints answer the
+   singular with a bare name and the plural with the same names, and both mappers read `Studios`. */
 const FIELDS =
-  'BasicSyncInfo,CanDelete,CanDownload,PrimaryImageAspectRatio,ProductionYear,Status,CommunityRating,OfficialRating,Overview,MediaStreams,Container,Bitrate,VideoRange,Width,Height,SeriesName,SeriesId,ParentId,ChildCount,Genres,PremiereDate,Studio,Studios,ProviderIds,OriginalTitle,DateCreated';
+  'ProductionYear,CommunityRating,OfficialRating,Overview,SeriesName,SeriesId,ParentId,ChildCount,Genres,PremiereDate,Studios,ProviderIds,OriginalTitle,DateCreated';
 
 /** People and Taglines are detail-only: on the list endpoints People would multiply every row by the
  *  cast size. DateCreated does come back on a list row when it is asked for, and the search page's
