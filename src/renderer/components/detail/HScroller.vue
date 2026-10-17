@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 
-/** A horizontal band that switches like the home rows: a snap track with edge arrows that fade in on
+/** A horizontal band that switches like the home rows: a track with edge arrows that fade in on
  *  hover and hide themselves at either end. The cards come in through the slot, so the caller decides
  *  whether a band holds poster cards, cast heads or stills. */
 const props = withDefaults(defineProps<{ title?: string; count?: number }>(), { title: '', count: 0 });
@@ -10,6 +10,12 @@ const track = ref<HTMLElement | null>(null);
 const atStart = ref(true);
 const atEnd = ref(true);
 
+/** Where the last press meant to leave the band. A press landing on a running glide has to build on this rather
+ *  than on the frame the animation happens to be passing, otherwise each new glide cancels the previous one and
+ *  keeps only the part it already travelled: three quick presses used to move two thirds of the way. */
+let want = 0;
+let gliding = false;
+
 function measure(): void {
   const el = track.value;
   if (!el) return;
@@ -17,10 +23,34 @@ function measure(): void {
   atEnd.value = el.scrollLeft + el.clientWidth >= el.scrollWidth - 2;
 }
 
-function nudge(dir: number): void {
+/** Any scroll that ends is the truth about where the band sits, so a wheel or a fling that lands between two
+ *  cards becomes the starting point of the next press instead of a stale target. */
+function settle(): void {
   const el = track.value;
   if (!el) return;
-  el.scrollBy({ left: dir * Math.round(el.clientWidth * 0.82), behavior: 'smooth' });
+  want = el.scrollLeft;
+  gliding = false;
+}
+
+/** One card's own width plus the gap, read off two adjacent cards. A share of the viewport would be the wrong
+ *  unit: it lands partway into a card, and nothing re-aligns the row any more. */
+function pitch(): number {
+  const el = track.value;
+  if (!el || el.children.length < 1) return 0;
+  const kids = el.children;
+  if (kids.length > 1) return kids[1].getBoundingClientRect().left - kids[0].getBoundingClientRect().left;
+  return kids[0].getBoundingClientRect().width + (parseFloat(getComputedStyle(el).columnGap) || 0);
+}
+
+function nudge(dir: number): void {
+  const el = track.value;
+  const p = pitch();
+  if (!el || p <= 0) return;
+  const cards = Math.max(1, Math.round((el.clientWidth * 0.82) / p));
+  const to = (gliding ? want : el.scrollLeft) + dir * cards * p;
+  want = Math.min(Math.max(0, Math.round(to / p) * p), el.scrollWidth - el.clientWidth);
+  gliding = true;
+  el.scrollTo({ left: want, behavior: 'smooth' });
 }
 
 onMounted(() => {
@@ -42,7 +72,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', measure));
       <button class="edge left" :class="{ off: atStart }" aria-label="向左" @click="nudge(-1)">
         <svg viewBox="0 0 24 24" width="18" height="18"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" /></svg>
       </button>
-      <div ref="track" class="track" @scroll.passive="measure">
+      <div ref="track" class="track" @scroll.passive="measure" @scrollend="settle">
         <slot />
       </div>
       <button class="edge right" :class="{ off: atEnd }" aria-label="向右" @click="nudge(1)">
@@ -95,16 +125,15 @@ h2 {
   gap: 14px;
   overflow-x: auto;
   scroll-behavior: smooth;
-  scroll-snap-type: x proximity;
-  scroll-padding: 0 var(--side) 0 var(--tuck);
+  /* No snap: proximity here behaved like mandatory, so it rewrote every ask onto its own grid (a press asked for
+     1082 px and got 1002), yanked a fling back ~110 px when it overshoot, and re-anchored an interrupted glide in
+     a single frame — the jump with no animation. nudge() counts whole cards instead, which is the same result with
+     the destination decided once, in code. */
   padding: 6px var(--side) 20px var(--tuck);
   scrollbar-width: none;
 }
 .track::-webkit-scrollbar {
   height: 0;
-}
-.track > :deep(*) {
-  scroll-snap-align: start;
 }
 .edge {
   position: absolute;
