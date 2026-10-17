@@ -33,8 +33,30 @@ function load(item: LibraryItem): void {
   // proxy, and writing to the raw target through a captured reference never hits the set trap, so every
   // source would land in the cache without the strip ever learning that it did.
   const s = cache[item.id];
+  /* An error is not an answer. Once every source has settled, any one of them that failed takes the item
+     back off `asked`, so the next visit tries again instead of living without it for the rest of the run.
+     Since the season's date, art, synopsis, credits and rating all ride TMDB's single answer, one lost
+     round trip used to cost the whole hero caption until the app was restarted. A source that answers
+     `null` is a real reply — this title simply has no Rotten Tomatoes page — and stays written off. */
+  let live = 0;
+  let errored = false;
+  const settle = (): void => {
+    live--;
+    if (!live && errored) asked.delete(item.id);
+  };
   const put = <K extends keyof Scores>(key: K, p: Promise<IpcResult<Scores[K] | null>>): void => {
-    void p.then(x => (s[key] = x.ok ? x.data || null : null));
+    live++;
+    void p.then(
+      x => {
+        if (x.ok) s[key] = x.data || null;
+        else errored = true;
+        settle();
+      },
+      () => {
+        errored = true;
+        settle();
+      },
+    );
   };
   const imdb = item.providers?.imdb || '';
   const kind = tmdbKind(item);
