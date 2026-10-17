@@ -168,7 +168,6 @@ function open(): void {
   text-align: left;
   cursor: pointer;
   padding: 0;
-  scroll-snap-align: start;
   /* The frame before its row has been revealed. The reveal is a keyframe, not a transition — the note
      in ListCard has the measurement: BrowseView writes `in` into the grid's class at first render, so
      the card's very first computed style already *was* its end state and nothing could animate into it.

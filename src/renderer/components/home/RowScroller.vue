@@ -15,6 +15,12 @@ const atStart = ref(true);
 const atEnd = ref(true);
 let observer: IntersectionObserver | null = null;
 
+/** Where the last press meant to leave the row. A press landing on a running glide builds on this rather than on
+ *  the frame the animation happens to be passing: asking from there cancels the previous glide and keeps only the
+ *  part it already travelled, so three quick presses moved two thirds of the way. */
+let want = 0;
+let gliding = false;
+
 function measure(): void {
   const el = track.value;
   if (!el) return;
@@ -22,10 +28,34 @@ function measure(): void {
   atEnd.value = el.scrollLeft + el.clientWidth >= el.scrollWidth - 2;
 }
 
-function nudge(dir: number): void {
+/** Any scroll that ends is the truth about where the row sits, so a wheel or a fling that lands between two cards
+ *  becomes the starting point of the next press instead of a stale target. */
+function settle(): void {
   const el = track.value;
   if (!el) return;
-  el.scrollBy({ left: dir * Math.round(el.clientWidth * 0.82), behavior: 'smooth' });
+  want = el.scrollLeft;
+  gliding = false;
+}
+
+/** One card's own width plus the gap, read off two adjacent cards. A share of the viewport would be the wrong
+ *  unit: it lands partway into a card, and nothing re-anchors the row any more. */
+function pitch(): number {
+  const el = track.value;
+  if (!el || el.children.length < 1) return 0;
+  const kids = el.children;
+  if (kids.length > 1) return kids[1].getBoundingClientRect().left - kids[0].getBoundingClientRect().left;
+  return kids[0].getBoundingClientRect().width + (parseFloat(getComputedStyle(el).columnGap) || 0);
+}
+
+function nudge(dir: number): void {
+  const el = track.value;
+  const p = pitch();
+  if (!el || p <= 0) return;
+  const cards = Math.max(1, Math.round((el.clientWidth * 0.82) / p));
+  const to = (gliding ? want : el.scrollLeft) + dir * cards * p;
+  want = Math.min(Math.max(0, Math.round(to / p) * p), el.scrollWidth - el.clientWidth);
+  gliding = true;
+  el.scrollTo({ left: want, behavior: 'smooth' });
 }
 
 /** The arrows centre on the poster band, not on the card: MediaCard's second label line is `v-if`'d,
@@ -76,7 +106,7 @@ onBeforeUnmount(() => {
       <button class="edge left" :class="{ off: atStart }" aria-label="向左" @click="nudge(-1)">
         <svg viewBox="0 0 24 24" width="18" height="18"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" /></svg>
       </button>
-      <div ref="track" class="track" @scroll.passive="measure">
+      <div ref="track" class="track" @scroll.passive="measure" @scrollend="settle">
         <MediaCard
           v-for="(it, i) in items"
           :key="it.id"
@@ -96,11 +126,10 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .row {
-  /* The only thing that moves here is the row box, and it slides inside .flow's static clip. Putting
-     the gutter on the scroller's own padding instead looks identical at rest but breaks the sweep:
-     scroll-padding-left cannot be transitioned, so the snap port jumps to its destination on frame one
-     and rewrites scrollLeft by the whole padding delta (measured: 142 = 214 - 72), parking the cards at
-     the collapsed line while the rail travels. A constant padding keeps that delta out of existence. */
+  /* The only thing that moves here is the row box, and it slides inside .flow's static clip. The gutter is paid by
+     this margin and the scroller's own padding never changes, so the cards travel with the box instead of being
+     re-inset under it mid-sweep (measured: a 142 = 214 - 72 inset delta parked them on the collapsed line while
+     the rail was still travelling). */
   margin-left: calc(var(--gutter) - var(--tuck) - var(--rail-x));
   padding: 16px 0 4px;
   transition: margin var(--rail-dur) var(--rail-ease);
@@ -150,10 +179,9 @@ h2 {
   gap: 14px;
   overflow-x: auto;
   scroll-behavior: smooth;
-  scroll-snap-type: x proximity;
-  /* Both insets are constant: the row's margin carries the rail, so the snap port and the resting card
-     can never disagree. */
-  scroll-padding: 0 var(--side) 0 var(--tuck);
+  /* No snap, for the three things it cost on the detail page's bands: it rewrote a press's destination onto its
+     own grid (1082 px asked, 1002 landed), yanked a fling back ~110 px when it overshot, and re-anchored a glide
+     interrupted by a wheel in a single frame. nudge() counts whole cards instead, so the alignment is decided once. */
   padding: 6px var(--side) 20px var(--tuck);
   scrollbar-width: none;
 }
