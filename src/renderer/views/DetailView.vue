@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import type { LibraryItem, MediaStreamInfo, PlaybackSource, TmdbSeasonRow, TmdbSimilar, TmdbStills } from '../../shared/types';
+import type { LibraryItem, MediaStreamInfo, PlaybackSource, TmdbCreditRow, TmdbSeasonCast, TmdbSeasonRow, TmdbSimilar, TmdbStills } from '../../shared/types';
 import HScroller from '../components/detail/HScroller.vue';
 import BlockPh from '../components/detail/BlockPh.vue';
 import ScoreStrip from '../components/ScoreStrip.vue';
@@ -65,12 +65,47 @@ const work = computed(() => (isSeason.value ? seriesItem.value || item.value : i
  *  reads its date, art and synopsis off. */
 const scores = useScores(() => work.value);
 
-const people = computed(() => item.value?.people || []);
+// The server files its people on the series and never on a season row (measured: 0 on every Season
+// page sampled), so a page opened on one season reads the show it belongs to rather than nobody.
+const people = computed(() => work.value?.people || []);
 const ROLE_LABEL: Record<string, string> = { Director: '导演', Writer: '编剧', Producer: '制片' };
-interface CrewRow { id: string; name: string; imageTag?: string; sub: string }
+interface CrewRow {
+  id: string;
+  name: string;
+  imageTag?: string;
+  sub: string;
+  /** Already a full URL, for the heads TMDB rather than the server dresses. */
+  face?: string;
+}
+/** The season on screen as TMDB bills it; null until both sides are believed about which season
+ *  this is. */
+const seasonCast = ref<TmdbSeasonCast | null>(null);
+
+/** Whether the season list is the better answer to the same question. TMDB bills a season by who
+ *  worked on it, and for an anime that is often almost nobody: measured, 鬼灭之刃 S1 carries 1 cast
+ *  row where the server holds 6, 物语系列 5 against 12, and 咒术回战 answers 0 on both sides. Where it
+ *  is at least as full as the show's own list — 模范出租车 S1: 19 rows against 5, every name in
+ *  Chinese where the server's are romanised — it is also the one describing the season on screen. */
+const useSeasonCast = computed(() => {
+  const c = seasonCast.value;
+  if (!c) return false;
+  return c.act.length + c.dir.length + c.write.length >= Math.max(3, people.value.length);
+});
+
 /** Directors, writers and producers share one avatar band with the cast — the reference shows a single
  *  row of circular heads, the role label underneath telling them apart, not a text credit list on top. */
 const crew = computed<CrewRow[]>(() => {
+  const sc = seasonCast.value;
+  if (sc && useSeasonCast.value) {
+    const rows: CrewRow[] = [];
+    const add = (list: TmdbCreditRow[], kind: string) => {
+      for (const p of list) rows.push({ id: `tm:${kind}:${p.name}`, name: p.name, sub: p.sub || kind, face: p.img ? faceUrl(p.img) : undefined });
+    };
+    add(sc.dir, '导演');
+    add(sc.write, '编剧');
+    add(sc.act, '演员');
+    return rows.slice(0, 30);
+  }
   const order: Record<string, number> = { Director: 0, Writer: 1, Producer: 2, Actor: 3 };
   const seen = new Set<string>();
   const out: CrewRow[] = [];
@@ -114,6 +149,9 @@ const stillUrl = (ep: number | undefined): string =>
   ep != null && stills.value[ep] ? `https://image.tmdb.org/t/p/w500${stills.value[ep]}` : '';
 const posterUrl = (p?: string): string => (p ? `https://image.tmdb.org/t/p/w342${p}` : '');
 const backdropUrl = (p: string): string => `https://image.tmdb.org/t/p/w780${p}`;
+/** The band draws each head at 110px, which is 137.5 device px at this window; w185 is the smallest
+ *  tier above that, and the largest one TMDB documents for a profile crop. */
+const faceUrl = (p: string): string => `https://image.tmdb.org/t/p/w185${p}`;
 
 /** One index into backdrops drives the whole viewer. Which way the last move went decides how the two
  *  frames slide; 0 means the viewer just opened, so the first frame only fades up. */
@@ -270,6 +308,39 @@ const trustRow = (n?: number | null, count?: number): TmdbSeasonRow | null => {
 };
 const tmdbSeason = computed(() => trustRow(seasonNumber.value, seasonRow.value?.childCount));
 
+/* Asked from a watch rather than from `loadEpisodes`, because the trust test needs TMDB's meta and
+   that usually lands after the first episode ask has already gone out. The answer is also held here,
+   keyed the same way: a switch back to a season the page already billed must repaint its band from
+   what is in hand, since the dedupe below deliberately skips asking for it twice. */
+const castAsked = new Set<string>();
+const castByKey = new Map<string, TmdbSeasonCast>();
+/** The key a season's credits are asked and held under; empty while there is no season both sides
+ *  believe, since an unbelieved season has no TMDB list to prefer. A function rather than an inline
+ *  getter because `loadEpisodes` has to look up the same key the watch is about to ask for. */
+const castKey = (): string => {
+  const id = String(work.value?.providers?.tmdb || '');
+  return tmdbSeason.value && seasonNumber.value != null && /^\d{1,8}$/.test(id)
+    ? `${seasonId.value}|${seasonNumber.value}|${id}`
+    : '';
+};
+watch(castKey, key => {
+  if (!key) return;
+  const hit = castByKey.get(key);
+  if (hit) {
+    seasonCast.value = hit;
+    return;
+  }
+  if (castAsked.has(key)) return;
+  castAsked.add(key);
+  const [, n, id] = key.split('|');
+  const sid = seasonId.value;
+  void window.echoemby.meta.tmdbSeasonCast({ tmdbId: id, season: Number(n) }).then(x => {
+    if (!x.ok || !x.data) return;
+    castByKey.set(key, x.data);
+    if (seasonId.value === sid) seasonCast.value = x.data;
+  });
+});
+
 /** What the hero prints for the season on screen. Derived rather than stored: a switch that writes one
  *  ref per field is one forgotten clear away to showing last season's synopsis under this season's name. */
 const pack = computed(() => {
@@ -320,6 +391,10 @@ async function loadEpisodes(sid: string, seriesId = props.id) {
   // and its art would dress the new one. The episode row keeps its height, so the page does not jump.
   stills.value = {};
   seasonArt.value = '';
+  // Repainted from what is already in hand rather than blanked: clicking the season already on screen
+  // re-enters here, and the watch does not fire for a key it has already seen, so a blind clear would
+  // drop this season's credits for the rest of the visit.
+  seasonCast.value = castByKey.get(castKey()) || null;
   if (!sid) return;
   const row = seasonRow.value;
   if (row?.primaryImageTag) {
@@ -666,7 +741,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
         <HScroller v-if="crew.length" title="演职员" :count="crew.length" class="block">
           <div v-for="p in crew" :key="p.id" class="person">
             <div class="face">
-              <img v-reveal v-if="faces[p.id]" :src="faces[p.id]" alt="" loading="lazy" />
+              <img v-reveal v-if="p.face || faces[p.id]" :src="p.face || faces[p.id]" alt="" loading="lazy" />
               <span v-else class="ini">{{ p.name.slice(0, 1) }}</span>
             </div>
             <p class="pn">{{ p.name }}</p>
