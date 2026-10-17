@@ -19,6 +19,12 @@ const STILLS_TTL = 14 * DAY;
 const SIMILAR_TTL = 7 * DAY;
 /** A miss is usually TMDB having no record for that id; asking again in a few days is cheap. */
 const MISS_TTL = 3 * DAY;
+/* Bump whenever the shape of a stored `meta` entry changes, so a table cached by an older build is
+   refetched once instead of being served for the rest of `META_TTL`. A shape marker is needed rather than
+   a field-presence test because some fields are written only when they carry something: a season TMDB
+   rates at 0 and a season row mapped by a build that never read the rating are then the same object, and
+   presence cannot tell them apart. */
+const META_SCHEMA = 2;
 
 type Kind = 'movie' | 'tv';
 type MetaEntry = TmdbMeta | { missing: true; fetchedAt: number };
@@ -201,10 +207,12 @@ const cachedMeta = (key: string): TmdbMeta | null => {
   if (!hit) return null;
   const ttl = 'missing' in hit ? MISS_TTL : META_TTL;
   if (Date.now() - hit.fetchedAt >= ttl) return null;
-  /* Entries written before the logo ranking needed the work's language carry no `originalLanguage` at
-     all, so they count as stale and are refetched once. Absence is the test, not emptiness: a title TMDB
-     lists with no language still stores `''` and then stays cached. */
-  return 'missing' in hit || !('originalLanguage' in hit) || !('overviewOther' in hit) || !('seasons' in hit) || !('cast' in hit) ? null : hit;
+  /* `schema` is the one staleness test. It replaces a run of presence checks (`originalLanguage`,
+     `overviewOther`, `seasons`, `cast`), each of which only worked while its field was written every
+     time — see `META_SCHEMA`. An entry from before the marker refetches once and is then rewritten with
+     it. */
+  if ('missing' in hit) return null;
+  return hit.schema === META_SCHEMA ? hit : null;
 };
 
 /** Returns the metadata TMDB has for one title, or null when TMDB does not (or no key is configured). */
@@ -227,15 +235,15 @@ export async function tmdbMeta(kind: Kind, tmdbId: string): Promise<TmdbMeta | n
     return null;
   }
   const out: TmdbMeta = {
+    schema: META_SCHEMA,
     fetchedAt: Date.now(),
     originalLanguage: String(json.original_language || '').toLowerCase(),
     seasons: seasonTable(json.seasons),
     cast: creditPack(json.credits),
   };
   const ov = typeof json.overview === 'string' ? json.overview.trim() : '';
-  /* Always written, even when TMDB has no synopsis: `cachedMeta` reads the absence of this key as "an
-     entry from before the language ladder", and a title that genuinely has no text must not be refetched
-     on every open. */
+  /* Both halves of the synopsis ladder are written every time, the non-Chinese one even when empty, so a
+     title TMDB has no text for stays cached instead of being re-asked on every open. */
   if (ov && hasHan(ov)) out.overviewZh = ov;
   out.overviewOther = ov;
   const v = num(json.vote_average);

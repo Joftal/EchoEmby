@@ -243,6 +243,9 @@ export interface TmdbSeasonRow {
 /** TMDB fields we merge in for one title, cached by `kind:tmdbId`. Every field here fills a hole the
  *  Emby server left empty; none of them replaces data the server already returns. */
 export interface TmdbMeta {
+  /** Which build of this shape wrote the entry, checked against `META_SCHEMA` in the main process on every
+   *  read. Always written; an entry without it predates the marker and is refetched once. */
+  schema: number;
   /** TMDB's synopsis when it came back in Chinese (either script). Asked first, above the server's. */
   overviewZh?: string;
   /** The same field when it came back in anything else — on a `language=zh-CN` ask that means English
@@ -256,16 +259,14 @@ export interface TmdbMeta {
   writers?: string[];
   /** US certification (`PG-13`, `TV-14`) or the closest first-listed country when there is no US entry. */
   cert?: string;
-  /** TMDB's whole season table, in season order. Empty for a movie. Always written: its absence marks an
-   *  entry cached before the season split existed, which `cachedMeta` then refetches once. */
+  /** TMDB's whole season table, in season order. Empty for a movie. */
   seasons: TmdbSeasonRow[];
-  /** A movie's own credits, read off the same request. Always written — empty arrays for a series, whose
-   *  band is billed season by season — and the absence of the key is what marks an entry cached before
-   *  this field existed, so those get refetched once. */
+  /** A movie's own credits, read off the same request. A series keeps its band season by season, so its
+   *  three lists come back empty and the writers it may still need ride `writers` above. */
   cast: TmdbCredits;
-  /** The language TMDB records the work as having been made in (`ja`, `ko`, `zh`). Always present on
-   *  entries written since the logo ranking started using it as its fourth tier; `''` when TMDB has no
-   *  record. The Emby server does not carry this field, so this is the only copy we have. */
+  /** The language TMDB records the work as having been made in (`ja`, `ko`, `zh`). The Emby server does
+   *  not carry this field, so this is the only copy we have; `''` when TMDB has no record. It is the
+   *  fourth tier of the logo ranking. */
   originalLanguage: string;
   fetchedAt: number;
 }
