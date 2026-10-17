@@ -15,8 +15,13 @@ import type { TmdbCreditRow, TmdbCredits, TmdbMeta, TmdbSeasonRow, TmdbSimilar, 
 const DAY = 86_400_000;
 const META_TTL = 30 * DAY;
 const STILLS_TTL = 14 * DAY;
+/** A season's crew is re-billed only when the season itself changes, which is on the same clock as its
+ *  stills — but on its own name, so tuning the picture strip cannot silently retune the credit band. */
+const CAST_TTL = 14 * DAY;
 /** A recommendation list drifts slowly; a week keeps it fresh without a request on every open. */
 const SIMILAR_TTL = 7 * DAY;
+/** Backdrops for the 剧照 strip age as lazily as the recommendation list does, under their own name. */
+const IMAGES_TTL = 7 * DAY;
 /** A miss is usually TMDB having no record for that id; asking again in a few days is cheap. */
 const MISS_TTL = 3 * DAY;
 /* Bump whenever the shape of a stored `meta` entry changes, so a table cached by an older build is
@@ -350,7 +355,7 @@ export async function tmdbSeasonCast(tmdbId: string, season: number): Promise<Tm
   const key = `tv:${tmdbId}/${season}`;
   const s = load();
   const hit = s.cast[key];
-  if (hit && Date.now() - hit.fetchedAt < ('missing' in hit ? MISS_TTL : STILLS_TTL)) {
+  if (hit && Date.now() - hit.fetchedAt < ('missing' in hit ? MISS_TTL : CAST_TTL)) {
     return 'missing' in hit ? null : hit.value;
   }
   const { json, answered } = await fetchJson<any>(
@@ -422,7 +427,7 @@ export async function tmdbImages(kind: Kind, tmdbId: string): Promise<string[]> 
   const key = `b2:${kind}:${tmdbId}`;
   const s = load();
   const hit = s.images[key];
-  if (hit && Date.now() - hit.fetchedAt < SIMILAR_TTL) return hit.value;
+  if (hit && Date.now() - hit.fetchedAt < IMAGES_TTL) return hit.value;
 
   const { json, answered } = await fetchJson<any>(
     `https://api.themoviedb.org/3/${kind}/${tmdbId}/images?include_image_language=en,null`,
