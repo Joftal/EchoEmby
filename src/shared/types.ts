@@ -218,16 +218,43 @@ export interface BangumiScore {
   fetchedAt: number;
 }
 
+/** One row of the per-season table TMDB returns inside the work-level detail — measured over the 73
+ *  seasons of 43 titles on this library, `air_date` and `poster_path` were present for every season of
+ *  every one of them, so a season's date and art cost no request of their own. `overview` is where it
+ *  splits: present with Chinese for the Asian titles, empty for 9号秘事 / 19号消防局 / 56天 / 800 Meters,
+ *  which is why the server's own season synopsis stays in the ladder. */
+export interface TmdbSeasonRow {
+  /** TMDB's `season_number`, the number we have to line the server's `IndexNumber` up against. */
+  n: number;
+  epCount: number;
+  /** `YYYY-MM-DD`, empty when TMDB has not dated the season. */
+  airDate: string;
+  /** image.tmdb.org path, empty when there is no season poster. */
+  poster: string;
+  name?: string;
+  ovZh?: string;
+  ovOther?: string;
+}
+
 /** TMDB fields we merge in for one title, cached by `kind:tmdbId`. Every field here fills a hole the
  *  Emby server left empty; none of them replaces data the server already returns. */
 export interface TmdbMeta {
+  /** TMDB's synopsis when it came back in Chinese (either script). Asked first, above the server's. */
   overviewZh?: string;
+  /** The same field when it came back in anything else — on a `language=zh-CN` ask that means English
+   *  or the work's own language, which is what TMDB serves when it has no Chinese record. Kept because
+   *  the server has no synopsis at all for some titles, and one line in a foreign language still beats
+   *  「暂无简介」。 */
+  overviewOther?: string;
   voteAverage?: number;
   voteCount?: number;
   /** Names from the Writing department, up to three, only used when the server has no Writer people. */
   writers?: string[];
   /** US certification (`PG-13`, `TV-14`) or the closest first-listed country when there is no US entry. */
   cert?: string;
+  /** TMDB's whole season table, in season order. Empty for a movie. Always written: its absence marks an
+   *  entry cached before the season split existed, which `cachedMeta` then refetches once. */
+  seasons: TmdbSeasonRow[];
   /** The language TMDB records the work as having been made in (`ja`, `ko`, `zh`). Always present on
    *  entries written since the logo ranking started using it as its fourth tier; `''` when TMDB has no
    *  record. The Emby server does not carry this field, so this is the only copy we have. */

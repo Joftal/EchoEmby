@@ -2,7 +2,7 @@ import { app, net } from 'electron';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import * as config from '../config';
-import type { TmdbMeta, TmdbSimilar, TmdbStills } from '../../shared/types';
+import type { TmdbMeta, TmdbSeasonRow, TmdbSimilar, TmdbStills } from '../../shared/types';
 
 /**
  * TMDB is the outside source with a real API and a Chinese locale, so it fills the four gaps Emby
@@ -99,6 +99,33 @@ const pickWriters = (crew: any[]): string[] => {
   return out;
 };
 
+/** TMDB's season table, trimmed to what a season page can show: its own date, art, size and synopsis.
+ *  Rows are capped because one library here files a season per 季 of a long-running show, and a kept
+ *  synopsis costs ~200 bytes a row. */
+const SEASON_ROWS_CAP = 80;
+
+const seasonTable = (rows: any[] | undefined): TmdbSeasonRow[] => {
+  const out: TmdbSeasonRow[] = [];
+  for (const r of rows || []) {
+    const n = num(r?.season_number);
+    if (n === undefined) continue;
+    const ov = typeof r?.overview === 'string' ? r.overview.trim() : '';
+    const name = typeof r?.name === 'string' ? r.name.trim() : '';
+    const row: TmdbSeasonRow = {
+      n,
+      epCount: num(r?.episode_count) || 0,
+      airDate: typeof r?.air_date === 'string' ? r.air_date : '',
+      poster: typeof r?.poster_path === 'string' ? r.poster_path : '',
+    };
+    if (name) row.name = name;
+    if (ov && hasHan(ov)) row.ovZh = ov;
+    else if (ov) row.ovOther = ov;
+    out.push(row);
+    if (out.length >= SEASON_ROWS_CAP) break;
+  }
+  return out;
+};
+
 /** `answered` distinguishes "TMDB says this id does not exist" from "TMDB did not reply", which
  *  matters because only the former should be cached as a miss. */
 const fetchJson = async <T>(url: string, cred: string): Promise<{ json: T | null; answered: boolean }> => {
@@ -142,7 +169,7 @@ const cachedMeta = (key: string): TmdbMeta | null => {
   /* Entries written before the logo ranking needed the work's language carry no `originalLanguage` at
      all, so they count as stale and are refetched once. Absence is the test, not emptiness: a title TMDB
      lists with no language still stores `''` and then stays cached. */
-  return 'missing' in hit || !('originalLanguage' in hit) ? null : hit;
+  return 'missing' in hit || !('originalLanguage' in hit) || !('overviewOther' in hit) || !('seasons' in hit) ? null : hit;
 };
 
 /** Returns the metadata TMDB has for one title, or null when TMDB does not (or no key is configured). */
@@ -164,9 +191,17 @@ export async function tmdbMeta(kind: Kind, tmdbId: string): Promise<TmdbMeta | n
     persist();
     return null;
   }
-  const out: TmdbMeta = { fetchedAt: Date.now(), originalLanguage: String(json.original_language || '').toLowerCase() };
+  const out: TmdbMeta = {
+    fetchedAt: Date.now(),
+    originalLanguage: String(json.original_language || '').toLowerCase(),
+    seasons: seasonTable(json.seasons),
+  };
   const ov = typeof json.overview === 'string' ? json.overview.trim() : '';
+  /* Always written, even when TMDB has no synopsis: `cachedMeta` reads the absence of this key as "an
+     entry from before the language ladder", and a title that genuinely has no text must not be refetched
+     on every open. */
   if (ov && hasHan(ov)) out.overviewZh = ov;
+  out.overviewOther = ov;
   const v = num(json.vote_average);
   const vc = num(json.vote_count);
   if (v !== undefined && vc !== undefined && vc > 0) {
