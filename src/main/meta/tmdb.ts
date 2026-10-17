@@ -2,7 +2,7 @@ import { app, net } from 'electron';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import * as config from '../config';
-import type { TmdbCreditRow, TmdbCredits, TmdbMeta, TmdbSeasonRow, TmdbSimilar, TmdbStills } from '../../shared/types';
+import type { TmdbCreditRow, TmdbCredits, TmdbEpisodeRow, TmdbMeta, TmdbSeasonRow, TmdbSimilar, TmdbStills } from '../../shared/types';
 
 /**
  * TMDB is the outside source with a real API and a Chinese locale, so it fills the four gaps Emby
@@ -39,7 +39,8 @@ type CastEntry = { value: TmdbCredits; fetchedAt: number } | { missing: true; fe
 interface Store {
   /** key = `${kind}:${tmdbId}` */
   meta: Record<string, MetaEntry>;
-  /** key = `tv:${tmdbId}/${season}` */
+  /** key = `tv2:${tmdbId}/${season}`; the `2` is the episode rows' own shape — an entry from before it holds
+   *  a bare path per episode and no synopsis, and a shape test at read time would be longer than a refetch. */
   stills: Record<string, StillsEntry>;
   /** key = `tv:${tmdbId}/${season}`; the season's own credit list, trimmed to what the band shows. */
   cast: Record<string, CastEntry>;
@@ -320,16 +321,22 @@ const served = (m: TmdbMeta): TmdbMeta => ({ ...m, cert: readableCert(m.cert) })
 const sameSeason = (a: TmdbStills, b: TmdbStills): boolean => {
   const ka = Object.keys(a);
   const kb = Object.keys(b);
-  return ka.length === kb.length && ka.every(k => a[+k] === b[+k]);
+  if (ka.length !== kb.length) return false;
+  return ka.every((k) => {
+    const x = a[+k];
+    const y = b[+k];
+    return !!y && x.p === y.p && x.ovZh === y.ovZh && x.ovOther === y.ovOther;
+  });
 };
 
-/** Returns the season's episode stills; an empty map (still `answered`) is a normal reply, and null means
- *  this season was not asked, is not on TMDB, or is waiting out a recorded miss. */
+/** Returns what TMDB bills for one season's episodes — each episode's still and its own line; an empty map
+ *  (still `answered`) is a normal reply, and null means this season was not asked, is not on TMDB, or is
+ *  waiting out a recorded miss. */
 export async function tmdbSeasonStills(tmdbId: string, season: number): Promise<TmdbStills | null> {
   if (!/^\d{1,8}$/.test(tmdbId) || !Number.isInteger(season) || season < 0 || season > 500) return null;
   const token = tmdbToken();
   if (!token) return null;
-  const key = `tv:${tmdbId}/${season}`;
+  const key = `tv2:${tmdbId}/${season}`;
   const s = load();
   const hit = s.stills[key];
   if (hit && Date.now() - hit.fetchedAt < ('missing' in hit ? MISS_TTL : STILLS_TTL)) {
@@ -349,8 +356,18 @@ export async function tmdbSeasonStills(tmdbId: string, season: number): Promise<
   const next: TmdbStills = {};
   for (const ep of json.episodes) {
     const n = num(ep?.episode_number);
+    if (n === undefined) continue;
     const p = typeof ep?.still_path === 'string' ? ep.still_path : '';
-    if (n !== undefined && p) next[n] = p;
+    /* The episode's own paragraph rides the same reply as its still and used to be thrown away. Held in the
+       two halves the rest of the ladder uses, because `language=zh-CN` answers in Chinese only where TMDB
+       has a Chinese record — the rest comes back in the work's own language, which still beats a blank line.
+       Measured cost on the two seasons this library now holds (223 episodes): 140 bytes an episode stored,
+       against 40 for the picture path alone — so ~2.6 KB for a 26-episode season, ~27 KB for a 195-episode one. */
+    const ov = typeof ep?.overview === 'string' ? ep.overview.trim() : '';
+    const row: TmdbEpisodeRow = { p };
+    if (ov && hasHan(ov)) row.ovZh = ov;
+    else if (ov) row.ovOther = ov;
+    if (p || ov) next[n] = row;
   }
   const prev: TmdbStills | undefined = hit && !('missing' in hit) ? hit.value : undefined;
   // Do not rewrite the file if nothing changed — the file is shared with the meta map.

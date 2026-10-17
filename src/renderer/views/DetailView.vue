@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import type { LibraryItem, MediaStreamInfo, PlaybackSource, TmdbCreditRow, TmdbCredits, TmdbSeasonRow, TmdbSimilar, TmdbStills } from '../../shared/types';
+import type { LibraryItem, MediaStreamInfo, PlaybackSource, TmdbCreditRow, TmdbCredits, TmdbEpisodeRow, TmdbSeasonRow, TmdbSimilar, TmdbStills } from '../../shared/types';
 import HScroller from '../components/detail/HScroller.vue';
 import BlockPh from '../components/detail/BlockPh.vue';
 import ScoreStrip from '../components/ScoreStrip.vue';
@@ -149,8 +149,19 @@ const wantRail = computed(() => (pageType.value === 'Series' || pageType.value =
 const wantTech = computed(() => pageType.value === 'Movie' && !source.value);
 
 /** image.tmdb.org answers directly on this machine (the API host needs the system proxy). */
-const stillUrl = (ep: number | undefined): string =>
-  ep != null && stills.value[ep] ? `https://image.tmdb.org/t/p/w500${stills.value[ep]}` : '';
+const stillRow = (ep: number | undefined): TmdbEpisodeRow | undefined => (ep == null ? undefined : stills.value[ep]);
+const stillUrl = (ep: number | undefined): string => {
+  const p = stillRow(ep)?.p;
+  return p ? `https://image.tmdb.org/t/p/w500${p}` : '';
+};
+/** The episode's own paragraph, in the order the work-level one above it uses: TMDB in Chinese, then the
+ *  server's line, then TMDB in whatever else it filed. The server carries no overview for 475 of the
+ *  library's 600 sampled episodes, and TMDB's line for each of them arrives inside the season reply the
+ *  pictures were already being asked for. */
+const epOverview = (e: LibraryItem): string => {
+  const r = stillRow(e.indexNumber);
+  return r?.ovZh || e.overview || r?.ovOther || '';
+};
 const posterUrl = (p?: string): string => (p ? `https://image.tmdb.org/t/p/w342${p}` : '');
 const backdropUrl = (p: string): string => `https://image.tmdb.org/t/p/w780${p}`;
 /** The band draws each head at 110px, which is 137.5 device px at this window; w185 is the smallest
@@ -711,7 +722,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
                 <span v-if="e.premiereDate">{{ fmtDate(e.premiereDate) }}</span>
                 <span>{{ fmtRuntime(e.runTimeTicks) }}</span>
               </p>
-              <p v-if="e.overview" class="eov">{{ e.overview }}</p>
+              <p v-if="epOverview(e)" class="eov">{{ epOverview(e) }}</p>
             </div>
           </button>
         </HScroller>

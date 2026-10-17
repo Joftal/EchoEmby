@@ -78,8 +78,8 @@ const target = computed(() => (props.item.type === 'Episode' ? props.item.parent
 const tmdb = useTmdb(() => (near.value ? props.item : null));
 /* Age guidance is a property of the show, so an episode row takes it from the work above it. Its synopsis
    is not: this page's 24 episode rows are one show, and the series paragraph under each of them would be
-   the same paragraph twenty-four times. TMDB does hold each episode's own line — it rides the season reply
-   the stills ask already makes, which a 2:3 card never triggers — and reaching it is its own change. */
+   the same paragraph twenty-four times. TMDB's line for each episode is kept and the detail page prints it,
+   but it rides the season reply these rows never ask for — a 2:3 card takes the server's paragraph or none. */
 const isWork = computed(() => props.item.type !== 'Episode');
 const overview = computed(() =>
   isWork.value ? tmdb.value?.overviewZh || props.item.overview || tmdb.value?.overviewOther || '' : props.item.overview || '',

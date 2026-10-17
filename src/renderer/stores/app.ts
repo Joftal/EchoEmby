@@ -260,9 +260,9 @@ export const useAppStore = defineStore('app', () => {
         .catch(() => ({} as TmdbStills));
       seasonStills.set(key, stills);
     }
-    const path = (await stills)[ep];
+    const row = (await stills)[ep];
     // w500 is the size the detail page already uses for these; a card is 300 css px = 375 device px here.
-    return path ? `https://image.tmdb.org/t/p/w500${path}` : '';
+    return row?.p ? `https://image.tmdb.org/t/p/w500${row.p}` : '';
   }
 
   /** An Episode rarely has art of its own here: measured on the 在看 row, 48 of 60 rows carry no Primary tag

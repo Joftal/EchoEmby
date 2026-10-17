@@ -273,8 +273,21 @@ export interface TmdbMeta {
   fetchedAt: number;
 }
 
-/** Episode stills for one season; keys are TMDB's episode numbers (1-based), values are image.tmdb.org paths. */
-export type TmdbStills = Record<number, string>;
+/** One episode as TMDB billed it: its still, and the paragraph written for that episode alone. Both arrive
+ *  inside the season reply the pictures were asked for, so keeping the text costs bytes and no round trip —
+ *  measured at about 100 bytes an episode on top of the 40 its path already takes. */
+export interface TmdbEpisodeRow {
+  /** image.tmdb.org path, empty when TMDB has no still for this episode. */
+  p: string;
+  /** The episode's synopsis when TMDB has it in Chinese, either script. Asked first, above the server's. */
+  ovZh?: string;
+  /** The same line when it came back in anything else, kept for the last rung of the ladder. */
+  ovOther?: string;
+}
+
+/** The season's episodes, keyed by TMDB's episode numbers (1-based). An episode with neither art nor text
+ *  gets no row at all. */
+export type TmdbStills = Record<number, TmdbEpisodeRow>;
 
 /** One head in a season's credit list: the name as TMDB localises it, the character it played or
  *  the role label the band prints, and its `profile_path`. */
