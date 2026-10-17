@@ -232,10 +232,7 @@ export async function tmdbMeta(kind: Kind, tmdbId: string): Promise<TmdbMeta | n
   const key = `${kind}:${tmdbId}`;
   const hit = metaHit(key);
   if (hit.state === 'miss') return null;
-  /* A `0` written before the pickers below refused it would otherwise hold a badge open for the rest of
-     the TTL, so the read path refuses it too. */
-  if (hit.state === 'fresh')
-    return hit.value.cert === '0' ? { ...hit.value, cert: '' } : hit.value;
+  if (hit.state === 'fresh') return served(hit.value);
 
   const base = `https://api.themoviedb.org/3/${kind}/${tmdbId}`;
   /* `credits` comes along for both kinds because the writers the credit band falls back to are inside it.
@@ -274,7 +271,7 @@ export async function tmdbMeta(kind: Kind, tmdbId: string): Promise<TmdbMeta | n
   if (cert) out.cert = cert;
   s.meta[key] = out;
   persist();
-  return out;
+  return served(out);
 }
 
 /* Germany files what any child may watch under the number 0, and a badge that reads 「0」 looks like a
@@ -297,6 +294,28 @@ const pickTvCert = (results: any[] | undefined): string | undefined => {
   const first = results.find(r => r?.rating && r.rating !== '0');
   return first ? String(first.rating) : undefined;
 };
+
+/** The families a Chinese viewer reads without help: the MPAA letters and the one `TV-` series the server
+ *  itself files. Every other shape below is a foreign board's code. */
+const READABLE_CERT = /^(G|PG|PG-?13|R|NC-?17|AP|TV-Y(-?7)?|TV-G|TV-PG|TV-14|TV-MA|TV-A)$/;
+
+/* Measured over the 213 titles this library has a cert for on disk: 64 answers are in the family above, 74
+   are a bare age (`12`, `16`, `19`), 48 are an age wearing a country's uniform (`+13`, `MA 15+`, `M18`,
+   `NC16`, `U/A 16+`, `12A`) and 27 carry no number a badge could print (`M`, `ATP`, `NR`, `L`, `IIB`, `0`) —
+   43 distinct strings for what is one question. TMDB files a work under whichever country answers first, so
+   which of those a title lands on is not a property of the work. */
+/** What a badge may print: the readable family verbatim, any other age as 「N+」 like the 番剧 mark already
+ *  does, and nothing for a code that carries no number — that hole is the server's to fill. Applied on every
+ *  read instead of at write so tuning it reaches the entries already on disk without a refetch. */
+const readableCert = (raw?: string): string => {
+  const v = (raw || '').trim();
+  if (!v || v === '0') return '';
+  if (READABLE_CERT.test(v)) return v;
+  const n = Number(v.match(/\d+/)?.[0]);
+  return n > 0 && n <= 25 ? `${n}+` : '';
+};
+
+const served = (m: TmdbMeta): TmdbMeta => ({ ...m, cert: readableCert(m.cert) });
 
 const sameSeason = (a: TmdbStills, b: TmdbStills): boolean => {
   const ka = Object.keys(a);

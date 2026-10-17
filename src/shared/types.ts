@@ -256,7 +256,10 @@ export interface TmdbMeta {
   voteAverage?: number;
   /** Names from the Writing department, up to three, only used when the server has no Writer people. */
   writers?: string[];
-  /** US certification (`PG-13`, `TV-14`) or the closest first-listed country when there is no US entry. */
+  /** The age board TMDB filed for this work, already shaped for a badge: `TV-MA` and the MPAA letters as
+   *  they came, any other country's age as 「16+」, and `''` for the codes that carry no number at all —
+   *  those leave the surface to the server's own `OfficialRating`. The raw string stays on disk so the
+   *  shaping can be retuned without a refetch. */
   cert?: string;
   /** TMDB's whole season table, in season order. Empty for a movie. */
   seasons: TmdbSeasonRow[];
