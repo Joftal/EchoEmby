@@ -369,7 +369,10 @@ const metaLine = computed(() => {
     : [
         premiered.value,
         item.value?.childCount ? `${item.value.childCount} ${item.value.type === 'BoxSet' ? '部' : '季'}` : '',
-        fmtRuntime(item.value?.runTimeTicks),
+        // A show's own RunTimeTicks is neither its seasons' nor its episodes' — measured 64 分钟 for a
+        // season that runs 17 小时 18 分 — so the one line that number belongs to stays empty until the
+        // season rows arrive and `pack` can sum a real one.
+        isSeries.value || isSeason.value ? '' : fmtRuntime(item.value?.runTimeTicks),
       ];
   return parts.filter(Boolean).join(' · ');
 });
