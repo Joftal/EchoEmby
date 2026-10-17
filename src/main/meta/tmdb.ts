@@ -225,7 +225,10 @@ export async function tmdbMeta(kind: Kind, tmdbId: string): Promise<TmdbMeta | n
   if (cached) return cached;
 
   const base = `https://api.themoviedb.org/3/${kind}/${tmdbId}`;
-  const q = '?language=zh-CN&append_to_response=credits,release_dates,content_ratings';
+  /* `credits` comes along for both kinds because the writers the credit band falls back to are inside it.
+     The certification half is asked per kind: a movie's rating is read off `release_dates`, a show's off
+     `content_ratings`, and neither has a use for the other. */
+  const q = `?language=zh-CN&append_to_response=${kind === 'movie' ? 'credits,release_dates' : 'credits,content_ratings'}`;
   const { json, answered } = await fetchJson<any>(base + q, token);
   const s = load();
   if (!answered) return null;
@@ -239,7 +242,9 @@ export async function tmdbMeta(kind: Kind, tmdbId: string): Promise<TmdbMeta | n
     fetchedAt: Date.now(),
     originalLanguage: String(json.original_language || '').toLowerCase(),
     seasons: seasonTable(json.seasons),
-    cast: creditPack(json.credits),
+    /* The actor list is kept for a movie only, because that is the one page that reads it; a show's band
+       is billed season by season, and the appended `credits` is still walked here for its writers. */
+    cast: kind === 'movie' ? creditPack(json.credits) : { act: [], dir: [], write: [] },
   };
   const ov = typeof json.overview === 'string' ? json.overview.trim() : '';
   /* Both halves of the synopsis ladder are written every time, the non-Chinese one even when empty, so a
@@ -247,11 +252,9 @@ export async function tmdbMeta(kind: Kind, tmdbId: string): Promise<TmdbMeta | n
   if (ov && hasHan(ov)) out.overviewZh = ov;
   out.overviewOther = ov;
   const v = num(json.vote_average);
-  const vc = num(json.vote_count);
-  if (v !== undefined && vc !== undefined && vc > 0) {
-    out.voteAverage = Math.round(v * 10) / 10;
-    out.voteCount = vc;
-  }
+  /* Only a rating somebody actually cast counts: TMDB answers 0 votes and an empty average for a title
+     nobody rated. `vote_count` is read as that gate and then dropped — no surface shows the number. */
+  if (v !== undefined && (num(json.vote_count) || 0) > 0) out.voteAverage = Math.round(v * 10) / 10;
   const writers = pickWriters(json.credits?.crew || []);
   if (writers.length) out.writers = writers;
   const cert = kind === 'movie' ? pickMovieCert(json.release_dates?.results) : pickTvCert(json.content_ratings?.results);

@@ -254,7 +254,6 @@ export interface TmdbMeta {
    *  「暂无简介」。 */
   overviewOther?: string;
   voteAverage?: number;
-  voteCount?: number;
   /** Names from the Writing department, up to three, only used when the server has no Writer people. */
   writers?: string[];
   /** US certification (`PG-13`, `TV-14`) or the closest first-listed country when there is no US entry. */
