@@ -46,11 +46,13 @@ function load(item: LibraryItem): void {
   const tmdbId = item.providers?.tmdb;
   if (kind && tmdbId) put('tmdb', window.echoemby.meta.tmdb({ kind, tmdbId }));
   // CSM reverse-looks-up by title slug, so it wants the Latin original title when there is one.
+  // Neither title-keyed source is asked for a Season row: its name is 「第一季」, a position rather than a
+  // title, and the page that needs the answer is the series above it, which asks for itself.
   const csmTitle = item.originalTitle || item.name;
-  if (kind && csmTitle) put('csm', window.echoemby.meta.csm({ kind, title: csmTitle }));
+  if (kind && item.type !== 'Season' && csmTitle) put('csm', window.echoemby.meta.csm({ kind, title: csmTitle }));
   // Bangumi is the opposite half: its search only reaches CJK names, and that is where the anime and
   // domestic-drama titles this server holds are actually reviewed.
-  if (kind && item.name) put('bgm', window.echoemby.meta.bangumi(item.name));
+  if (kind && item.type !== 'Season' && item.name) put('bgm', window.echoemby.meta.bangumi(item.name));
 }
 
 /** Scores for whatever item the getter currently returns; a new item swaps the whole set at once. */
