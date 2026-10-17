@@ -154,8 +154,11 @@ const fetchJson = async <T>(url: string, cred: string): Promise<{ json: T | null
       headers: v4 ? { Authorization: `Bearer ${cred}`, Accept: 'application/json' } : { Accept: 'application/json' },
       signal: ctrl.signal,
     });
-    if (res.status >= 500) return { json: null, answered: false };
-    if (!res.ok) return { json: null, answered: true };
+    /* Only a 404 is TMDB answering 「no such title」. Every other bad status is silence, not an answer:
+       401/403 means our own key is wrong, 429 means we are being throttled, and a 5xx — or the empty 502
+       this machine's proxy paints over a failed lookup — means the request never got through. Recording
+       any of those as a miss would hide a title's whole season for MISS_TTL. */
+    if (!res.ok) return { json: null, answered: res.status === 404 };
     const text = await res.text();
     try {
       return { json: JSON.parse(text) as T, answered: true };
@@ -202,17 +205,18 @@ const creditPack = (c: any): TmdbCredits => {
   };
 };
 
-const cachedMeta = (key: string): TmdbMeta | null => {
+const metaHit = (key: string): { state: 'miss' } | { state: 'cold' } | { state: 'fresh'; value: TmdbMeta } => {
   const hit = load().meta[key];
-  if (!hit) return null;
-  const ttl = 'missing' in hit ? MISS_TTL : META_TTL;
-  if (Date.now() - hit.fetchedAt >= ttl) return null;
+  if (!hit) return { state: 'cold' };
+  if (Date.now() - hit.fetchedAt >= ('missing' in hit ? MISS_TTL : META_TTL)) return { state: 'cold' };
+  /* A recorded miss is its own state because `tmdbMeta` reads a null as 「go and ask」. Without it, a title
+     TMDB genuinely does not have costs a request on every open instead of one per MISS_TTL. */
+  if ('missing' in hit) return { state: 'miss' };
   /* `schema` is the one staleness test. It replaces a run of presence checks (`originalLanguage`,
      `overviewOther`, `seasons`, `cast`), each of which only worked while its field was written every
      time — see `META_SCHEMA`. An entry from before the marker refetches once and is then rewritten with
      it. */
-  if ('missing' in hit) return null;
-  return hit.schema === META_SCHEMA ? hit : null;
+  return hit.schema === META_SCHEMA ? { state: 'fresh', value: hit } : { state: 'cold' };
 };
 
 /** Returns the metadata TMDB has for one title, or null when TMDB does not (or no key is configured). */
@@ -221,8 +225,9 @@ export async function tmdbMeta(kind: Kind, tmdbId: string): Promise<TmdbMeta | n
   const token = tmdbToken();
   if (!token) return null;
   const key = `${kind}:${tmdbId}`;
-  const cached = cachedMeta(key);
-  if (cached) return cached;
+  const hit = metaHit(key);
+  if (hit.state === 'miss') return null;
+  if (hit.state === 'fresh') return hit.value;
 
   const base = `https://api.themoviedb.org/3/${kind}/${tmdbId}`;
   /* `credits` comes along for both kinds because the writers the credit band falls back to are inside it.
