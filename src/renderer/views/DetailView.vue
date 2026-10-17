@@ -197,21 +197,68 @@ function jumpViewer(i: number): void {
   viewer.value = i;
 }
 /* The strip is a horizontal rail, so a normal wheel over it should push it sideways rather than scroll nothing.
-   The deltas are merged into one move per frame because a trackpad fires an event every ~16 ms and a smooth
-   scroll restarted that often never gets going. It used to be `scrollLeft += delta`, which teleported: one
-   notch put the rail 300 px away in a single frame, while a click on a thumb eased the same rail over ~700 ms.
-   Two hands on one rail, and only one of them was smooth. */
-let stripDelta = 0;
+   It used to merge the deltas and hand each frame a fresh `scrollBy({ behavior: 'smooth' })`, which restarts its
+   own ease-in every ~16 ms: a streamed gesture crawled and hitched instead of running. Now the wheel only moves
+   a target and one loop follows it, so a stream keeps its speed and a lone notch still eases. */
+let stripWant = 0;
+let stripRun = false;
 let stripFrame = 0;
+function stopStrip(): void {
+  stripRun = false;
+  if (stripFrame) cancelAnimationFrame(stripFrame);
+  stripFrame = 0;
+}
+function followStrip(): void {
+  stripFrame = 0;
+  const el = strip.value;
+  if (!el) {
+    stripRun = false;
+    return;
+  }
+  const want = Math.max(0, Math.min(el.scrollWidth - el.clientWidth, stripWant));
+  const before = el.scrollLeft;
+  const gap = want - before;
+  if (Math.abs(gap) < 0.7) {
+    el.scrollLeft = want;
+    stripRun = false;
+    return;
+  }
+  el.scrollLeft = before + gap * 0.22;
+  // A rail that cannot go further, or one whose offset rounds every nudge away, must not spin.
+  if (el.scrollLeft === want || el.scrollLeft === before) stripRun = false;
+  else stripFrame = requestAnimationFrame(followStrip);
+}
 function onStripWheel(e: WheelEvent): void {
-  stripDelta += e.deltaY || e.deltaX;
-  if (stripFrame) return;
-  stripFrame = requestAnimationFrame(() => {
-    stripFrame = 0;
-    const d = stripDelta;
-    stripDelta = 0;
-    strip.value?.scrollBy({ left: d, behavior: 'smooth' });
-  });
+  const el = strip.value;
+  if (!el) return;
+  const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+  if (!d) return;
+  if (!stripRun) {
+    // Wherever a thumb click or a drag left the rail is where the gesture starts, and writing the offset back
+    // is also what cancels the centring glide, so the two hands never pull the rail against each other.
+    const live = el.scrollLeft;
+    el.scrollLeft = live;
+    stripWant = live;
+  }
+  stripWant += d;
+  stripRun = true;
+  if (!stripFrame) stripFrame = requestAnimationFrame(followStrip);
+}
+/** Pull the thumb being looked at to the middle of the rail. It writes to the same target the wheel does
+ *  instead of calling `scrollIntoView`: a native glide keeps its destination to itself, so one notch used to
+ *  abandon a twenty-four-thumb jump where it happened to be (measured: 680 of 2380). One target, and the
+ *  notches add to the jump instead. */
+function centerStrip(i: number): void {
+  const el = strip.value;
+  const thumb = el?.children[i] as HTMLElement | undefined;
+  if (!el || !thumb) return;
+  // Both boxes are read in the same frame, so this is the distance from wherever the rail currently sits —
+  // which is what a target the wheel is still allowed to add to has to be.
+  const b = el.getBoundingClientRect();
+  const r = thumb.getBoundingClientRect();
+  stripWant = el.scrollLeft + (r.left + r.width / 2) - (b.left + b.width / 2);
+  stripRun = true;
+  if (!stripFrame) stripFrame = requestAnimationFrame(followStrip);
 }
 function onViewerKey(e: KeyboardEvent): void {
   if (viewer.value == null) return;
@@ -229,7 +276,7 @@ watch(viewer, i => {
     const p = backdrops.value[(i + d + n) % n];
     if (p) new Image().src = bigUrl(p);
   }
-  void nextTick(() => (strip.value?.children[i] as HTMLElement | undefined)?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' }));
+  void nextTick(() => centerStrip(i));
 });
 
 /* Capture phase, because the titlebar owns Esc as 「go home」 on the same window and registers before this
@@ -237,9 +284,7 @@ watch(viewer, i => {
 onMounted(() => window.addEventListener('keydown', onViewerKey, true));
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onViewerKey, true);
-  if (stripFrame) cancelAnimationFrame(stripFrame);
-  stripFrame = 0;
-  stripDelta = 0;
+  stopStrip();
 });
 
 const faces = ref<Record<string, string>>({});
@@ -1363,10 +1408,12 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
   overflow-x: auto;
   padding: 4px 2px;
   scrollbar-width: none;
-  /* The selected thumb is the only thing here worth snapping to: a wheel that stops with the frame you are
-     looking at clipped in half under the edge fade reads as lost, and that is where a click already centers
-     it. Proximity, so wheeling away to browse is never pulled back. */
-  scroll-snap-type: x proximity;
+  /* No snap on this rail. Proximity looks harmless, but Chrome resolves a scripted scroll that lands near a
+     snap point onto that point instead: 240 px asked of a rail sitting at its snap position read back as 0,
+     while the same write with the snap switched off landed on 240. The follow loop advances by a fraction of
+     the gap each frame, so a snap here cancels the wheel one frame at a time, which is the 「滚不动、有时候会
+     丢失」 the wheel was blamed for. Centering is a click's job, and the edge fade already says the rest is off
+     the rail. */
   /* Same edge fade as the rail's list: a thumb clipped straight in half reads as broken, not as scrollable. */
   mask-image: linear-gradient(90deg, transparent, #000 22px, #000 calc(100% - 22px), transparent);
 }
@@ -1385,7 +1432,7 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
   transition: opacity var(--hov) var(--ease), transform var(--hov) var(--ease-out), border-color var(--hov) var(--ease);
 }
 .lb-th:hover { opacity: 0.8; transform: translateY(-2px); }
-.lb-th.on { opacity: 1; border-color: rgba(255, 255, 255, 0.9); transform: none; scroll-snap-align: center; }
+.lb-th.on { opacity: 1; border-color: rgba(255, 255, 255, 0.9); transform: none; }
 .lb-th img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .lb-count { margin: 0; font-size: 13px; font-weight: 600; color: rgba(255, 255, 255, 0.72); font-variant-numeric: tabular-nums; letter-spacing: 0.03em; }
 
