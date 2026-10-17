@@ -677,7 +677,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
             </div>
             <div class="text">
               <TitleArt :urls="titleUrls" :name="item.name" />
-              <p v-if="item.tagline" class="tagline">{{ item.tagline }}</p>
+              <p v-if="work?.tagline" class="tagline">{{ work?.tagline }}</p>
               <div class="line">{{ metaLine }}</div>
               <ScoreStrip v-if="work" :item="work" :season-vote="pack?.vote || 0" :season-label="pack?.tag" class="badges" />
               <p class="overview">{{ overviewText || '暂无简介。' }}</p>
