@@ -44,6 +44,7 @@ const api: EchoEmbyApi = {
     bangumi: title => invoke('meta:bangumi', title),
     tmdb: input => invoke('meta:tmdb', input),
     tmdbStills: input => invoke('meta:tmdbStills', input),
+    tmdbSeasonCast: input => invoke('meta:tmdbSeasonCast', input),
     tmdbSimilar: input => invoke('meta:tmdbSimilar', input),
     tmdbImages: input => invoke('meta:tmdbImages', input),
     tmdbLogos: input => invoke('meta:tmdbLogos', input),

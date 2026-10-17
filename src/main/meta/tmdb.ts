@@ -2,7 +2,7 @@ import { app, net } from 'electron';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import * as config from '../config';
-import type { TmdbMeta, TmdbSeasonRow, TmdbSimilar, TmdbStills } from '../../shared/types';
+import type { TmdbCreditRow, TmdbMeta, TmdbSeasonCast, TmdbSeasonRow, TmdbSimilar, TmdbStills } from '../../shared/types';
 
 /**
  * TMDB is the outside source with a real API and a Chinese locale, so it fills the four gaps Emby
@@ -23,12 +23,15 @@ const MISS_TTL = 3 * DAY;
 type Kind = 'movie' | 'tv';
 type MetaEntry = TmdbMeta | { missing: true; fetchedAt: number };
 type StillsEntry = { value: TmdbStills; fetchedAt: number } | { missing: true; fetchedAt: number };
+type CastEntry = { value: TmdbSeasonCast; fetchedAt: number } | { missing: true; fetchedAt: number };
 
 interface Store {
   /** key = `${kind}:${tmdbId}` */
   meta: Record<string, MetaEntry>;
   /** key = `tv:${tmdbId}/${season}` */
   stills: Record<string, StillsEntry>;
+  /** key = `tv:${tmdbId}/${season}`; the season's own credit list, trimmed to what the band shows. */
+  cast: Record<string, CastEntry>;
   /** key = `${kind}:${tmdbId}`; TMDB `/similar`, capped list of poster-only rows. */
   similar: Record<string, { value: TmdbSimilar[]; fetchedAt: number }>;
   /** key = `${kind}:${tmdbId}`; image.tmdb.org backdrop paths for the 剧照 strip. */
@@ -45,9 +48,9 @@ const load = (): Store => {
   if (store) return store;
   let next: Store;
   try {
-    next = { meta: {}, stills: {}, similar: {}, images: {}, logos: {}, ...JSON.parse(readFileSync(file(), 'utf8')) };
+    next = { meta: {}, stills: {}, cast: {}, similar: {}, images: {}, logos: {}, ...JSON.parse(readFileSync(file(), 'utf8')) };
   } catch {
-    next = { meta: {}, stills: {}, similar: {}, images: {}, logos: {} };
+    next = { meta: {}, stills: {}, cast: {}, similar: {}, images: {}, logos: {} };
   }
   store = next;
   return next;
@@ -281,6 +284,59 @@ export async function tmdbSeasonStills(tmdbId: string, season: number): Promise<
     persist();
   }
   return { value: next, any: Object.keys(next).length > 0 };
+}
+
+/* The season detail endpoint carries no cast at all — measured, its keys are id, _id, air_date,
+   episodes, name, networks, overview, poster_path, season_number, vote_average — so the credits have
+   to be asked for by name. The dedicated season credits route is the cheap way: 1.4-16.5 KB against
+   the 24 KB-2.1 MB a season detail costs, and it answers 404 rather than empty for a season TMDB
+   does not have, which is what the miss entry below is for. */
+const CREDIT_ACT_CAP = 24;
+const CREDIT_CREW_CAP = 4;
+
+const creditRows = (rows: any[] | undefined, sub: string | ((r: any) => string), cap: number): TmdbCreditRow[] => {
+  const out: TmdbCreditRow[] = [];
+  const seen = new Set<string>();
+  for (const r of rows || []) {
+    const name = typeof r?.name === 'string' ? r.name.trim() : '';
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    out.push({ name, sub: typeof sub === 'string' ? sub : String(sub(r) || '').trim(), img: typeof r?.profile_path === 'string' ? r.profile_path : '' });
+    if (out.length >= cap) break;
+  }
+  return out;
+};
+
+/** The three lists the cast band shows for one season, in TMDB's own billing order. */
+export async function tmdbSeasonCast(tmdbId: string, season: number): Promise<TmdbSeasonCast | null> {
+  if (!/^\d{1,8}$/.test(tmdbId) || !Number.isInteger(season) || season < 0 || season > 500) return null;
+  const token = tmdbToken();
+  if (!token) return null;
+  const key = `tv:${tmdbId}/${season}`;
+  const s = load();
+  const hit = s.cast[key];
+  if (hit && Date.now() - hit.fetchedAt < ('missing' in hit ? MISS_TTL : STILLS_TTL)) {
+    return 'missing' in hit ? null : hit.value;
+  }
+  const { json, answered } = await fetchJson<any>(
+    `https://api.themoviedb.org/3/tv/${tmdbId}/season/${season}/credits?language=zh-CN`,
+    token,
+  );
+  if (!answered) return null;
+  if (!json || (!Array.isArray(json.cast) && !Array.isArray(json.crew))) {
+    s.cast[key] = { missing: true, fetchedAt: Date.now() };
+    persist();
+    return null;
+  }
+  const crew: any[] = Array.isArray(json.crew) ? json.crew : [];
+  const value: TmdbSeasonCast = {
+    act: creditRows(json.cast, r => String(r?.character || ''), CREDIT_ACT_CAP),
+    dir: creditRows(crew.filter(r => r?.department === 'Directing'), '导演', CREDIT_CREW_CAP),
+    write: creditRows(crew.filter(r => r?.department === 'Writing'), '编剧', CREDIT_CREW_CAP),
+  };
+  s.cast[key] = { value, fetchedAt: Date.now() };
+  persist();
+  return value;
 }
 
 const SIMILAR_CAP = 12;

@@ -265,6 +265,25 @@ export interface TmdbMeta {
 /** Episode stills for one season; keys are TMDB's episode numbers (1-based), values are image.tmdb.org paths. */
 export type TmdbStills = Record<number, string>;
 
+/** One head in a season's credit list: the name as TMDB localises it, the character it played or
+ *  the role label the band prints, and its `profile_path`. */
+export interface TmdbCreditRow {
+  name: string;
+  sub: string;
+  /** image.tmdb.org path, empty when the person has no avatar. */
+  img: string;
+}
+
+/** A season's own credits. Kept as three lists rather than TMDB's department array, because the raw
+ *  `crew` is not a cast list: measured over 8 seasons, 鬼灭之刃's S1 carries 51 crew rows of which 25
+ *  are Visual Effects while its `cast` holds one person. Only the departments the band has a label
+ *  for survive the trip. */
+export interface TmdbSeasonCast {
+  dir: TmdbCreditRow[];
+  write: TmdbCreditRow[];
+  act: TmdbCreditRow[];
+}
+
 /** One video/audio/subtitle track as the server describes it. Field presence depends on Type, so all
  *  are optional; the table renders whichever the stream carries. */
 export interface MediaStreamInfo {
