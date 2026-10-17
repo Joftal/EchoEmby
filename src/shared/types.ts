@@ -231,6 +231,10 @@ export interface TmdbSeasonRow {
   airDate: string;
   /** image.tmdb.org path, empty when there is no season poster. */
   poster: string;
+  /** TMDB's number for this season alone, written only when somebody has rated it (measured: 爱的迫降 S1
+   *  8.8 and 背着善宰跑 8.3, while both shows' 特别篇 answer 0). It rides the work-level request the page
+   *  already makes, so a season's rating costs nothing to know. */
+  voteAverage?: number;
   name?: string;
   ovZh?: string;
   ovOther?: string;

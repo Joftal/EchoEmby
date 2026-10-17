@@ -12,7 +12,9 @@ import logoBangumi from '../assets/logos/bangumi.png';
 
 /** The line of platform marks the detail page and the lobby hero both put over their art. It fetches
  *  its own data through useScores, so a caller only hands it the item it is already showing. */
-const props = defineProps<{ item: LibraryItem }>();
+/* A detail page showing one season hands its number here: TMDB rates a season on its own, and the
+ *  work-level answer is the one the mark falls back to when that season has none. */
+const props = defineProps<{ item: LibraryItem; seasonVote?: number; seasonLabel?: string }>();
 
 const scores = useScores(() => props.item);
 /** TMDB first, the server second: measured on this library the server's `OfficialRating` is present on
@@ -54,12 +56,13 @@ const marks = computed<Mark[]>(() => {
     out.push({ k: 'corn', logo: logoPopcorn, text: `${rt.popcorn}%`, hint: `烂番茄 观众 ${rt.popcorn}%`, url: rt.url || '' });
   if (scores.value.imdb)
     out.push({ k: 'imdb', logo: logoImdb, text: scores.value.imdb.rating.toFixed(1), hint: 'IMDb 评分', url: `https://www.imdb.com/title/${imdb}/` });
-  if (scores.value.tmdb?.voteAverage)
+  const tmdbVote = props.seasonVote || scores.value.tmdb?.voteAverage || 0;
+  if (tmdbVote)
     out.push({
       k: 'tmdb',
       logo: logoTmdb,
-      text: scores.value.tmdb.voteAverage.toFixed(1),
-      hint: 'TMDB 评分',
+      text: tmdbVote.toFixed(1),
+      hint: props.seasonVote ? `TMDB ${props.seasonLabel || '本季'} 评分` : 'TMDB 评分',
       url: kind && tmdbId ? `https://www.themoviedb.org/${kind}/${tmdbId}` : '',
     });
   if (scores.value.trakt?.rating != null)

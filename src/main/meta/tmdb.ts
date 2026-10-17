@@ -120,6 +120,8 @@ const seasonTable = (rows: any[] | undefined): TmdbSeasonRow[] => {
       airDate: typeof r?.air_date === 'string' ? r.air_date : '',
       poster: typeof r?.poster_path === 'string' ? r.poster_path : '',
     };
+    const vote = num(r?.vote_average);
+    if (vote) row.voteAverage = Math.round(vote * 10) / 10;
     if (name) row.name = name;
     if (ov && hasHan(ov)) row.ovZh = ov;
     else if (ov) row.ovOther = ov;

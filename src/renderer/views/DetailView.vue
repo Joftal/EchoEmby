@@ -351,14 +351,20 @@ const pack = computed(() => {
   const row = seasonRow.value;
   const t = tmdbSeason.value;
   if (!row && !t) return null;
+  const label = seasonTitle(seasonNumber.value, row?.name, t?.name);
   return {
-    label: seasonTitle(seasonNumber.value, row?.name, t?.name),
+    label,
+    /** The same season without the subtitle it may carry, for the one place the sentence has to stay
+     *  short: 爱的迫降's first season is filed as 「全 1 季」, so the hero reads 「第 1 季 · 全 1 季」 and a
+     *  tooltip that repeated it would read as a stumble. */
+    tag: seasonNumber.value != null && seasonNumber.value > 0 ? `第 ${seasonNumber.value} 季` : label,
     date: fmtDate(t?.airDate) || fmtDate(row?.premiereDate) || premiered.value,
     eps: row?.childCount ?? t?.epCount ?? 0,
     /* The season's length summed from the rows in hand, and only when those rows are this season's. The
        server's Series-level RunTimeTicks is neither this season's nor any episode's (measured: 64 分钟 for a
        season that runs 17 小时 18 分), so there is no cheaper number to put here while the fetch is out. */
     runtime: episodeSeason.value === seasonId.value ? fmtRuntime(episodes.value.reduce((a, e) => a + (e.runTimeTicks || 0), 0)) : '',
+    vote: t?.voteAverage || 0,
     overview: t?.ovZh || row?.overview || t?.ovOther || '',
   };
 });
@@ -647,7 +653,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
               <TitleArt :urls="titleUrls" :name="item.name" />
               <p v-if="item.tagline" class="tagline">{{ item.tagline }}</p>
               <div class="line">{{ metaLine }}</div>
-              <ScoreStrip v-if="work" :item="work" class="badges" />
+              <ScoreStrip v-if="work" :item="work" :season-vote="pack?.vote || 0" :season-label="pack?.tag" class="badges" />
               <p class="overview">{{ overviewText || '暂无简介。' }}</p>
             </div>
             <div class="actions">
