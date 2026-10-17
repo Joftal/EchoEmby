@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import type { LibraryItem, MediaStreamInfo, PlaybackSource, TmdbCreditRow, TmdbSeasonCast, TmdbSeasonRow, TmdbSimilar, TmdbStills } from '../../shared/types';
+import type { LibraryItem, MediaStreamInfo, PlaybackSource, TmdbCreditRow, TmdbCredits, TmdbSeasonRow, TmdbSimilar, TmdbStills } from '../../shared/types';
 import HScroller from '../components/detail/HScroller.vue';
 import BlockPh from '../components/detail/BlockPh.vue';
 import ScoreStrip from '../components/ScoreStrip.vue';
@@ -79,24 +79,28 @@ interface CrewRow {
 }
 /** The season on screen as TMDB bills it; null until both sides are believed about which season
  *  this is. */
-const seasonCast = ref<TmdbSeasonCast | null>(null);
+const seasonCast = ref<TmdbCredits | null>(null);
 
-/** Whether the season list is the better answer to the same question. TMDB bills a season by who
- *  worked on it, and for an anime that is often almost nobody: measured, 鬼灭之刃 S1 carries 1 cast
- *  row where the server holds 6, 物语系列 5 against 12, and 咒术回战 answers 0 on both sides. Where it
- *  is at least as full as the show's own list — 模范出租车 S1: 19 rows against 5, every name in
- *  Chinese where the server's are romanised — it is also the one describing the season on screen. */
-const useSeasonCast = computed(() => {
-  const c = seasonCast.value;
-  if (!c) return false;
-  return c.act.length + c.dir.length + c.write.length >= Math.max(3, people.value.length);
+/* Whichever TMDB list actually bills the thing on screen, once it is at least as full as the server's.
+ *  For a season that means its own credits — measured, 鬼灭之刃 S1 answers 1 cast row where the server
+ *  holds 6 and 物语系列 5 against 12, so those keep the show's list — while 模范出租车 S1's 19 rows against
+ *  5, every name in Chinese where the server's are romanised, is both fuller and the one describing the
+ *  season. A movie needs no such ask: the title request already carries its whole cast, and the same
+ *  test says whether to believe it (八佰 34 Chinese names against the server's 24 romanised, 霸王别姬
+ *  24 against 0, 爱情公寓 13 against 0, while 007 answers 62 rows of which 19 are Chinese). */
+const tmdbCast = computed<TmdbCredits | null>(() => {
+  const enough = (c: TmdbCredits | null | undefined) =>
+    c && c.act.length + c.dir.length + c.write.length >= Math.max(3, people.value.length) ? c : null;
+  const season = enough(seasonCast.value);
+  if (season) return season;
+  return item.value?.type === 'Movie' ? enough(scores.value.tmdb?.cast) : null;
 });
 
 /** Directors, writers and producers share one avatar band with the cast — the reference shows a single
  *  row of circular heads, the role label underneath telling them apart, not a text credit list on top. */
 const crew = computed<CrewRow[]>(() => {
-  const sc = seasonCast.value;
-  if (sc && useSeasonCast.value) {
+  const sc = tmdbCast.value;
+  if (sc) {
     const rows: CrewRow[] = [];
     const add = (list: TmdbCreditRow[], kind: string) => {
       for (const p of list) rows.push({ id: `tm:${kind}:${p.name}`, name: p.name, sub: p.sub || kind, face: p.img ? faceUrl(p.img) : undefined });
@@ -313,7 +317,7 @@ const tmdbSeason = computed(() => trustRow(seasonNumber.value, seasonRow.value?.
    keyed the same way: a switch back to a season the page already billed must repaint its band from
    what is in hand, since the dedupe below deliberately skips asking for it twice. */
 const castAsked = new Set<string>();
-const castByKey = new Map<string, TmdbSeasonCast>();
+const castByKey = new Map<string, TmdbCredits>();
 /** The key a season's credits are asked and held under; empty while there is no season both sides
  *  believe, since an unbelieved season has no TMDB list to prefer. A function rather than an inline
  *  getter because `loadEpisodes` has to look up the same key the watch is about to ask for. */

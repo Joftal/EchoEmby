@@ -255,6 +255,10 @@ export interface TmdbMeta {
   /** TMDB's whole season table, in season order. Empty for a movie. Always written: its absence marks an
    *  entry cached before the season split existed, which `cachedMeta` then refetches once. */
   seasons: TmdbSeasonRow[];
+  /** A movie's own credits, read off the same request. Always written — empty arrays for a series, whose
+   *  band is billed season by season — and the absence of the key is what marks an entry cached before
+   *  this field existed, so those get refetched once. */
+  cast: TmdbCredits;
   /** The language TMDB records the work as having been made in (`ja`, `ko`, `zh`). Always present on
    *  entries written since the logo ranking started using it as its fourth tier; `''` when TMDB has no
    *  record. The Emby server does not carry this field, so this is the only copy we have. */
@@ -274,11 +278,11 @@ export interface TmdbCreditRow {
   img: string;
 }
 
-/** A season's own credits. Kept as three lists rather than TMDB's department array, because the raw
+/** The three lists the 演职员 band draws, for one season or for one movie. Kept as lists rather than off TMDB's raw department array, because the
  *  `crew` is not a cast list: measured over 8 seasons, 鬼灭之刃's S1 carries 51 crew rows of which 25
  *  are Visual Effects while its `cast` holds one person. Only the departments the band has a label
  *  for survive the trip. */
-export interface TmdbSeasonCast {
+export interface TmdbCredits {
   dir: TmdbCreditRow[];
   write: TmdbCreditRow[];
   act: TmdbCreditRow[];

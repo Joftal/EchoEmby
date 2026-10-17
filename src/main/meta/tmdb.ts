@@ -2,7 +2,7 @@ import { app, net } from 'electron';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import * as config from '../config';
-import type { TmdbCreditRow, TmdbMeta, TmdbSeasonCast, TmdbSeasonRow, TmdbSimilar, TmdbStills } from '../../shared/types';
+import type { TmdbCreditRow, TmdbCredits, TmdbMeta, TmdbSeasonRow, TmdbSimilar, TmdbStills } from '../../shared/types';
 
 /**
  * TMDB is the outside source with a real API and a Chinese locale, so it fills the four gaps Emby
@@ -23,7 +23,7 @@ const MISS_TTL = 3 * DAY;
 type Kind = 'movie' | 'tv';
 type MetaEntry = TmdbMeta | { missing: true; fetchedAt: number };
 type StillsEntry = { value: TmdbStills; fetchedAt: number } | { missing: true; fetchedAt: number };
-type CastEntry = { value: TmdbSeasonCast; fetchedAt: number } | { missing: true; fetchedAt: number };
+type CastEntry = { value: TmdbCredits; fetchedAt: number } | { missing: true; fetchedAt: number };
 
 interface Store {
   /** key = `${kind}:${tmdbId}` */
@@ -164,6 +164,36 @@ const fetchJson = async <T>(url: string, cred: string): Promise<{ json: T | null
 
 const tmdbToken = (): string | null => config.get().meta?.tmdbV4Token || null;
 
+/* One department array, three lists. Measured over 8 seasons: 鬼灭之刃's S1 carries 51 crew rows of which
+   25 are Visual Effects while its `cast` holds one person, so only the departments the band has a label
+   for survive the trip. The caps are what keep a 68-row movie page (`007` answers 62 cast rows) from
+   costing the cache more than a 12-row season. */
+const CREDIT_ACT_CAP = 24;
+const CREDIT_CREW_CAP = 4;
+
+const creditRows = (rows: any[] | undefined, sub: string | ((r: any) => string), cap: number): TmdbCreditRow[] => {
+  const out: TmdbCreditRow[] = [];
+  const seen = new Set<string>();
+  for (const r of rows || []) {
+    const name = typeof r?.name === 'string' ? r.name.trim() : '';
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    out.push({ name, sub: typeof sub === 'string' ? sub : String(sub(r) || '').trim(), img: typeof r?.profile_path === 'string' ? r.profile_path : '' });
+    if (out.length >= cap) break;
+  }
+  return out;
+};
+
+/** From anything shaped like a `credits` answer — a season's, or a movie's appended onto the title. */
+const creditPack = (c: any): TmdbCredits => {
+  const crew: any[] = Array.isArray(c?.crew) ? c.crew : [];
+  return {
+    act: creditRows(c?.cast, (r) => String(r?.character || ''), CREDIT_ACT_CAP),
+    dir: creditRows(crew.filter((r) => r?.department === 'Directing'), '导演', CREDIT_CREW_CAP),
+    write: creditRows(crew.filter((r) => r?.department === 'Writing'), '编剧', CREDIT_CREW_CAP),
+  };
+};
+
 const cachedMeta = (key: string): TmdbMeta | null => {
   const hit = load().meta[key];
   if (!hit) return null;
@@ -172,7 +202,7 @@ const cachedMeta = (key: string): TmdbMeta | null => {
   /* Entries written before the logo ranking needed the work's language carry no `originalLanguage` at
      all, so they count as stale and are refetched once. Absence is the test, not emptiness: a title TMDB
      lists with no language still stores `''` and then stays cached. */
-  return 'missing' in hit || !('originalLanguage' in hit) || !('overviewOther' in hit) || !('seasons' in hit) ? null : hit;
+  return 'missing' in hit || !('originalLanguage' in hit) || !('overviewOther' in hit) || !('seasons' in hit) || !('cast' in hit) ? null : hit;
 };
 
 /** Returns the metadata TMDB has for one title, or null when TMDB does not (or no key is configured). */
@@ -198,6 +228,7 @@ export async function tmdbMeta(kind: Kind, tmdbId: string): Promise<TmdbMeta | n
     fetchedAt: Date.now(),
     originalLanguage: String(json.original_language || '').toLowerCase(),
     seasons: seasonTable(json.seasons),
+    cast: creditPack(json.credits),
   };
   const ov = typeof json.overview === 'string' ? json.overview.trim() : '';
   /* Always written, even when TMDB has no synopsis: `cachedMeta` reads the absence of this key as "an
@@ -291,24 +322,8 @@ export async function tmdbSeasonStills(tmdbId: string, season: number): Promise<
    to be asked for by name. The dedicated season credits route is the cheap way: 1.4-16.5 KB against
    the 24 KB-2.1 MB a season detail costs, and it answers 404 rather than empty for a season TMDB
    does not have, which is what the miss entry below is for. */
-const CREDIT_ACT_CAP = 24;
-const CREDIT_CREW_CAP = 4;
-
-const creditRows = (rows: any[] | undefined, sub: string | ((r: any) => string), cap: number): TmdbCreditRow[] => {
-  const out: TmdbCreditRow[] = [];
-  const seen = new Set<string>();
-  for (const r of rows || []) {
-    const name = typeof r?.name === 'string' ? r.name.trim() : '';
-    if (!name || seen.has(name)) continue;
-    seen.add(name);
-    out.push({ name, sub: typeof sub === 'string' ? sub : String(sub(r) || '').trim(), img: typeof r?.profile_path === 'string' ? r.profile_path : '' });
-    if (out.length >= cap) break;
-  }
-  return out;
-};
-
 /** The three lists the cast band shows for one season, in TMDB's own billing order. */
-export async function tmdbSeasonCast(tmdbId: string, season: number): Promise<TmdbSeasonCast | null> {
+export async function tmdbSeasonCast(tmdbId: string, season: number): Promise<TmdbCredits | null> {
   if (!/^\d{1,8}$/.test(tmdbId) || !Number.isInteger(season) || season < 0 || season > 500) return null;
   const token = tmdbToken();
   if (!token) return null;
@@ -328,12 +343,7 @@ export async function tmdbSeasonCast(tmdbId: string, season: number): Promise<Tm
     persist();
     return null;
   }
-  const crew: any[] = Array.isArray(json.crew) ? json.crew : [];
-  const value: TmdbSeasonCast = {
-    act: creditRows(json.cast, r => String(r?.character || ''), CREDIT_ACT_CAP),
-    dir: creditRows(crew.filter(r => r?.department === 'Directing'), '导演', CREDIT_CREW_CAP),
-    write: creditRows(crew.filter(r => r?.department === 'Writing'), '编剧', CREDIT_CREW_CAP),
-  };
+  const value = creditPack(json);
   s.cast[key] = { value, fetchedAt: Date.now() };
   persist();
   return value;

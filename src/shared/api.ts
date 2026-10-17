@@ -1,4 +1,4 @@
-import type { Account, AppConfig, BangumiScore, CsmGuide, DanmakuQuery, DanmakuTrack, DanmakuTrackInfo, FacetOption, ImdbRating, IpcResult, LibraryItem, LibraryRow, MetaKeys, NetProbe, PlayerCommand, PlayerMedia, PlayerSession, PlayerState, RtScores, Settings, SettingsPatch, TmdbMeta, TmdbSeasonCast, TmdbSimilar, TmdbStills, TraktScores, WatchedRecord } from './types';
+import type { Account, AppConfig, BangumiScore, CsmGuide, DanmakuQuery, DanmakuTrack, DanmakuTrackInfo, FacetOption, ImdbRating, IpcResult, LibraryItem, LibraryRow, MetaKeys, NetProbe, PlayerCommand, PlayerMedia, PlayerSession, PlayerState, RtScores, Settings, SettingsPatch, TmdbCredits, TmdbMeta, TmdbSimilar, TmdbStills, TraktScores, WatchedRecord } from './types';
 
 export interface EchoEmbyApi {
   app: {
@@ -39,7 +39,7 @@ export interface EchoEmbyApi {
     bangumi(title: string): Promise<IpcResult<BangumiScore | null>>;
     tmdb(input: { kind: 'movie' | 'tv'; tmdbId: string }): Promise<IpcResult<TmdbMeta | null>>;
     tmdbStills(input: { tmdbId: string; season: number }): Promise<IpcResult<{ value: TmdbStills; any: boolean } | null>>;
-    tmdbSeasonCast(input: { tmdbId: string; season: number }): Promise<IpcResult<TmdbSeasonCast | null>>;
+    tmdbSeasonCast(input: { tmdbId: string; season: number }): Promise<IpcResult<TmdbCredits | null>>;
     tmdbSimilar(input: { kind: 'movie' | 'tv'; tmdbId: string }): Promise<IpcResult<TmdbSimilar[]>>;
     tmdbImages(input: { kind: 'movie' | 'tv'; tmdbId: string }): Promise<IpcResult<string[]>>;
     /** The title treatments on TMDB's page, ranked 简体中文 → 繁体中文 → 英文 → 影视语言 → 其他. */
