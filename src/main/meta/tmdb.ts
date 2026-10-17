@@ -42,7 +42,9 @@ interface Store {
   /** key = `tv2:${tmdbId}/${season}`; the `2` is the episode rows' own shape — an entry from before it holds
    *  a bare path per episode and no synopsis, and a shape test at read time would be longer than a refetch. */
   stills: Record<string, StillsEntry>;
-  /** key = `tv:${tmdbId}/${season}`; the season's own credit list, trimmed to what the band shows. */
+  /** key = `c2:tv:${tmdbId}/${season}`; the season's own credit list, trimmed to what the band shows. The `2`
+   *  marks the list trimmed by the single writer predicate: entries from before it carry the whole Writing
+   *  department, and the job that decided it is not stored, so they cannot be re-filtered. */
   cast: Record<string, CastEntry>;
   /** key = `${kind}:${tmdbId}`; TMDB `/similar`, capped list of poster-only rows. */
   similar: Record<string, { value: TmdbSimilar[]; fetchedAt: number }>;
@@ -84,35 +86,30 @@ const num = (v: unknown): number | undefined => {
 
 const hasHan = (s: string): boolean => /[一-鿿]/.test(s);
 
-/** Jobs in the Writing department we count as authorship; production-side jobs (`Script Consultant`,
- *  `Script Supervisor`) are dropped because they do not name whoever wrote the story. */
-const WRITER_JOBS = new Set([
-  'Writer',
-  'Screenplay',
-  'Novel',
-  'Characters',
-  'Comic Book',
-  'Original Film Writer',
-  'Original Story',
-  'Story',
-  'Series Composition',
-  'Scenario Writer',
-  'Script',
+/* The Writing-department jobs that name whoever ran the script desk, not whoever wrote the story. Measured
+   over 22 seasons here: the department answers nine job shapes — `Original Story` x8, `Comic Book` x7,
+   `Screenplay` x3, `Series Composition` x2, `Executive Story Editor` x2, `Writer`, `Story Editor`,
+   `Staff Writer`, `Other` — and not one of them is a desk job. An allowlist of the authorship names cost 4
+   of those 26 rows, which is every writer one show's three seasons are credited with, so the test runs the
+   other way: believe the department, drop these. */
+const NOT_WRITERS = new Set([
+  'Script Supervisor',
+  'Script Consultant',
+  'Script Coordinator',
+  'Script Continuity',
 ]);
 
-const pickWriters = (crew: any[]): string[] => {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const c of crew) {
-    if (c?.department !== 'Writing' || !WRITER_JOBS.has(c?.job)) continue;
-    const name = String(c?.name || '').trim();
-    if (!name || seen.has(name)) continue;
-    seen.add(name);
-    out.push(name);
-    if (out.length >= 3) break;
-  }
-  return out;
-};
+/* Both writer surfaces answer to this one predicate. They used to disagree — the work-level list kept only
+   the jobs it recognised, the season band took the whole department — so one title could be billed two sets
+   of 编剧 depending on which path filled its band. */
+const isWriter = (r: any): boolean => r?.department === 'Writing' && !NOT_WRITERS.has(String(r?.job || ''));
+
+const pickWriters = (crew: any[]): string[] =>
+  creditRows(
+    (Array.isArray(crew) ? crew : []).filter(isWriter),
+    '',
+    3,
+  ).map((r) => r.name);
 
 /** TMDB's season table, trimmed to what a season page can show: its own date, art, size and synopsis.
  *  Rows are capped because one library here files a season per 季 of a long-running show, and a kept
@@ -207,7 +204,7 @@ const creditPack = (c: any): TmdbCredits => {
   return {
     act: creditRows(c?.cast, (r) => String(r?.character || ''), CREDIT_ACT_CAP),
     dir: creditRows(crew.filter((r) => r?.department === 'Directing'), '导演', CREDIT_CREW_CAP),
-    write: creditRows(crew.filter((r) => r?.department === 'Writing'), '编剧', CREDIT_CREW_CAP),
+    write: creditRows(crew.filter(isWriter), '编剧', CREDIT_CREW_CAP),
   };
 };
 
@@ -388,7 +385,7 @@ export async function tmdbSeasonCast(tmdbId: string, season: number): Promise<Tm
   if (!/^\d{1,8}$/.test(tmdbId) || !Number.isInteger(season) || season < 0 || season > 500) return null;
   const token = tmdbToken();
   if (!token) return null;
-  const key = `tv:${tmdbId}/${season}`;
+  const key = `c2:tv:${tmdbId}/${season}`;
   const s = load();
   const hit = s.cast[key];
   if (hit && Date.now() - hit.fetchedAt < ('missing' in hit ? MISS_TTL : CAST_TTL)) {
