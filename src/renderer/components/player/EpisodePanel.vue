@@ -2,7 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import { usePlayerStore } from '../../stores/player';
 import { useAppStore } from '../../stores/app';
-import { episodePosition, fmtRuntime, isPositionOnlyName } from '../../lib/format';
+import { episodePosition, fmtRuntime, isPositionOnlyName, seasonTitle } from '../../lib/format';
 import { embyCached } from '../../lib/embycache';
 import { vReveal } from '../../lib/reveal';
 import type { LibraryItem } from '../../../shared/types';
@@ -98,7 +98,7 @@ const titleOf = (ep: LibraryItem): string => (isPositionOnlyName(ep.name) ? '' :
   <template v-else>
     <div v-if="seasons.length > 1" class="pl-chips">
       <button v-for="s in seasons" :key="s.id" class="pl-chip" :class="{ on: active === s.id }" @click="loadEpisodes(s.id)">
-        {{ s.indexNumber != null ? `第 ${s.indexNumber} 季` : s.name }}
+        {{ seasonTitle(s.indexNumber, s.name) }}
       </button>
     </div>
 
