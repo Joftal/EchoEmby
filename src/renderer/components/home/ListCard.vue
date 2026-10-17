@@ -132,21 +132,15 @@ function open(): void {
   transition: transform var(--hov) var(--ease-out), box-shadow var(--hov) var(--ease),
     border-color var(--hov) var(--ease);
 }
-/* The rise used to be a transition gated on `.in`, but BrowseView writes `in` into the grid's class
+/* The entrance used to be a transition gated on `.in`, but BrowseView writes `in` into the grid's class
    at first render, so the element's very first computed style already *was* its end state and no
    transition could ever run — measured: opacity 1 at the insertion frame. What survived was the
-   stagger, hanging off `transform`, which delayed every hover on the list by up to 286ms. An
-   animation does run on insertion, so the entrance now actually plays and the hover path keeps
-   nothing but --hov. `backwards` holds the hidden frame through the delay and then lets go, so the
-   resting style is the card's own and a hover transform is no longer outranked by a filled keyframe. */
-@keyframes rise {
-  from {
-    opacity: 0;
-    transform: translate3d(0, 18px, 0);
-  }
-}
+   stagger, hanging off `transform`, which delayed every hover on the list by up to 286ms.
+   It is the row's own rise now, and `backwards` rather than `both` on purpose: the resting style stays the
+   row's own, so a hover transform is not outranked by a filled keyframe. No scale on a row — it is 1100px
+   wide, and 1.5% of that is 16px of horizontal squash that jiggles as it lands. */
 .in .lcard {
-  animation: rise 0.56s var(--ease-out) backwards;
+  animation: row-in var(--arrive-dur) var(--ease-out) backwards;
   animation-delay: calc(var(--i) * 26ms);
 }
 .lcard:hover {
@@ -201,7 +195,7 @@ function open(): void {
   position: absolute;
   inset: 0;
   background: var(--shimmer);
-  background-size: 220% 100%;
+  background-size: var(--sk-tile) 100%;
   animation: sh 1.3s linear infinite;
 }
 

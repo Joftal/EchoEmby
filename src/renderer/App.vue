@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import AppSideNav from './components/AppSideNav.vue';
 import AppTitleBar from './components/AppTitleBar.vue';
-import FlyArt from './components/FlyArt.vue';
 import { pageDir } from './router';
 import { useAppStore } from './stores/app';
 
@@ -13,6 +12,19 @@ const overlay = computed(() => route.meta.overlay === true);
 const collapsed = ref(localStorage.getItem('echoemby.nav') === 'min');
 
 const showNav = computed(() => !overlay.value && route.name !== 'login' && !!store.account);
+
+/** The rail's width is what every page insets itself by, and it is unknown until the session read lands.
+ *  Left alone, that read drags the whole page 223px sideways on every start and every login, because each
+ *  inset tweens its own margin over --rail-dur (measured: content at x 3, rail already at 226, both
+ *  crawling for 440ms). The tween belongs to the collapse button, not to a restore, so the gutter is held
+ *  still until the rail has actually been on screen for a frame. */
+const booted = ref(false);
+watch(showNav, async (on) => {
+  if (!on) { booted.value = false; return; }
+  if (booted.value) return;
+  await nextTick();
+  requestAnimationFrame(() => requestAnimationFrame(() => { booted.value = true; }));
+}, { immediate: true });
 
 function toggle(): void {
   collapsed.value = !collapsed.value;
@@ -29,7 +41,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="shell" :class="{ nav: showNav, min: collapsed }">
+  <div class="shell" :class="{ nav: showNav, min: collapsed, booted }">
     <AppTitleBar v-if="!overlay" />
     <Transition name="rail">
       <AppSideNav v-if="showNav" :collapsed="collapsed" @toggle="toggle" />
@@ -37,12 +49,13 @@ onMounted(() => {
     <main class="content">
       <router-view v-slot="{ Component }">
         <!-- type="animation" because the move is keyframes, not a transition (see base.css). No mode:
-             the arrival starts while the departure is still running, which is what puts a new page on
-             screen immediately instead of 400ms of body wash. keep-alive covers the lobby only — it is
-             the one page a reader returns to often and the one whose rebuild was measurable (scroll
-             position, carousel slide and 157 card entrances all replayed). No :key on the component:
-             DetailView reuses its instance across a sibling switch and that reuse is what lets the
-             second title dissolve into the first instead of tearing the page down. -->
+             both pages are on screen for the length of the push, which is the whole effect — one page
+             carries the other off. `pageDir` (router.ts) picks the direction, and 'flat' has no rules,
+             so a navigation with nowhere to go stays the hard cut it was. keep-alive covers the lobby
+             only: it is the one page a reader returns to often, and the one whose rebuild was
+             measurable (scroll position, carousel slide and 157 card entrances all replayed). No :key
+             on the component: DetailView reuses its instance across a sibling switch and that reuse is
+             what lets the second title fade over the first instead of tearing the page down. -->
         <transition :name="overlay ? 'fade' : pageDir" type="animation">
           <keep-alive include="HomeView">
             <component :is="Component" />
@@ -50,9 +63,6 @@ onMounted(() => {
         </transition>
       </router-view>
     </main>
-    <!-- Sits over the pages and under any modal: the flying art passes the rail and the title bar on its
-         way to the hero, and it is gone long before a dialog can be open. -->
-    <FlyArt />
   </div>
 </template>
 
@@ -79,10 +89,20 @@ onMounted(() => {
 .shell.nav.min {
   --nav-w: 84px;
 }
-/* The content layer spans the whole window so hero art runs under the floating rail. */
+/* Every gutter-driven inset is written as `transition: margin-left/padding var(--rail-dur)`, so zeroing
+   the clock here holds the whole page still while the session read lands. See `booted` above. */
+.shell:not(.booted) {
+  --rail-dur: 0s;
+}
+/* The content layer spans the whole window so hero art runs under the floating rail.
+   It clips the push: a page travelling in from the right is 100% wider than the window for as long as it
+   moves, and without this the overflow region grows and the frame can scroll sideways. The ground the two
+   pages slide past each other on belongs to base.css, where the move is, and is painted only while one is
+   running — so the player window, which never pushes, stays transparent over mpv. */
 .content {
   position: absolute;
   inset: 0;
+  overflow: hidden;
 }
 .rail-enter-active {
   transition: opacity 0.4s var(--ease), transform 0.5s var(--ease-out);

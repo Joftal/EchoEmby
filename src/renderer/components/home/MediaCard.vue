@@ -168,19 +168,14 @@ function open(): void {
      after the pointer; here it only delays the entrance. */
   opacity: 0;
 }
+/* A poster is placed rather than switched on: it rises 14px and gives up 1.5% of its size, on a curve
+   that covers most of that distance in the first third and glides the rest. The stagger is the row's own
+   cascade (RowScroller puts `in` on the row when it scrolls into view), and `backwards` rather than `both`
+   because a filled keyframe would outrank the card's hover transform for as long as the element lives. */
 .in .card {
-  animation: card-in 0.56s var(--ease-out) both;
+  opacity: 1;
+  animation: card-in var(--arrive-dur) var(--ease-out) backwards;
   animation-delay: calc(var(--i) * 34ms);
-}
-@keyframes card-in {
-  from {
-    opacity: 0;
-    transform: translate3d(0, 22px, 0) scale(0.97);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
 }
 
 .frame {
@@ -250,7 +245,7 @@ img.show {
   position: absolute;
   inset: 0;
   background: var(--shimmer);
-  background-size: 220% 100%;
+  background-size: var(--sk-tile) 100%;
   animation: sh 1.3s linear infinite;
 }
 

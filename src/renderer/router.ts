@@ -20,7 +20,7 @@ export const router = createRouter({
   history: createWebHashHistory(),
   routes: [
     { path: '/player', name: 'player', component: PlayerView, meta: { overlay: true } },
-    { path: '/login', name: 'login', component: LoginView, meta: { public: true, rank: -1 } },
+    { path: '/login', name: 'login', component: LoginView, meta: { rank: -1 } },
     { path: '/', name: 'home', component: HomeView, meta: { rank: 0 } },
     { path: '/browse', name: 'browse', component: BrowseView, meta: { rank: 1 } },
     { path: '/servers', name: 'servers', component: ServersView, meta: { rank: 2 } },

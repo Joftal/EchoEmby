@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onBeforeUpdate, onUpdated, ref } from 'vue';
 import type { LibraryItem } from '../../shared/types';
 import { tmdbKind, useScores } from '../lib/scores';
 import logoTomatoFresh from '../assets/logos/rt-tomato-fresh.svg';
@@ -66,13 +66,49 @@ const marks = computed<Mark[]>(() => {
   if (bgm) out.push({ k: 'bgm', logo: logoBangumi, text: bgm.score.toFixed(1), hint: `Bangumi《${bgm.name}》`, url: `https://bgm.tv/subject/${bgm.subjectId}` });
   return out;
 });
+
+/** The row is ordered by source, not by arrival, and the sources answer one at a time — so a Trakt number
+ *  that lands after Bangumi's is inserted in the middle and every mark to its right has a new home. They
+ *  used to teleport 151px sideways for it (measured on the lobby hero). This carries them there instead:
+ *  read where each mark was, let Vue re-pack the row, then run each one from where it was seen to where it
+ *  now belongs. The mark that arrived has no previous box, so it keeps its own fade. */
+const strip = ref<HTMLElement | null>(null);
+let seen = new Map<string, number>();
+
+onBeforeUpdate(() => {
+  const el = strip.value;
+  if (!el) return;
+  const next = new Map<string, number>();
+  for (const c of Array.from(el.children)) {
+    const k = (c as HTMLElement).dataset?.k;
+    if (k) next.set(k, (c as HTMLElement).getBoundingClientRect().left);
+  }
+  seen = next;
+});
+
+onUpdated(() => {
+  const el = strip.value;
+  if (!el) return;
+  for (const c of Array.from(el.children)) {
+    const node = c as HTMLElement;
+    const was = node.dataset?.k ? seen.get(node.dataset.k) : undefined;
+    if (was === undefined) continue;
+    const d = was - node.getBoundingClientRect().left;
+    if (Math.abs(d) < 1) continue;
+    node.animate(
+      [{ transform: `translate3d(${d}px, 0, 0)` }, { transform: 'none' }],
+      { duration: 300, easing: 'cubic-bezier(0.32, 0.72, 0, 1)' },
+    );
+  }
+});
 </script>
 
 <template>
-  <div class="strip">
+  <div ref="strip" class="strip">
     <a
       v-for="s in marks"
       :key="s.k"
+      :data-k="s.k"
       class="b score"
       :class="[s.k, s.url ? 'go' : '']"
       :title="s.hint"
@@ -82,9 +118,9 @@ const marks = computed<Mark[]>(() => {
     >
       <img class="lg" :src="s.logo" alt="" /><i>{{ s.text }}</i>
     </a>
-    <span v-if="!marks.length && item.communityRating" class="b rate">★ {{ item.communityRating.toFixed(1) }}</span>
-    <span v-if="certText" class="b cert">{{ certText }}</span>
-    <span v-if="scores.csm?.minAge" class="b cert">{{ scores.csm.minAge }}+</span>
+    <span v-if="!marks.length && item.communityRating" data-k="rate" class="b rate">★ {{ item.communityRating.toFixed(1) }}</span>
+    <span v-if="certText" data-k="cert" class="b cert">{{ certText }}</span>
+    <span v-if="scores.csm?.minAge" data-k="csm" class="b cert">{{ scores.csm.minAge }}+</span>
   </div>
 </template>
 
