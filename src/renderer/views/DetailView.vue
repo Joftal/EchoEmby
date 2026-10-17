@@ -1470,11 +1470,11 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
 }
 .lb-x:hover { background: rgba(255, 255, 255, 0.24); }
 .lb-stage {
-  /* The centre frame is the foreground and the two beside it are only the promise that there is more, so it
-     takes 76% of the stage and the pitch is exactly one frame box, which leaves each neighbour a 78 px sliver
-     at the shoulder, scaled down to 0.84 and a fixed share of the window at any size. */
-  --frame-w: 76%;
-  --pitch: 100%;
+  /* The centre is the foreground and the two beside it are only the promise that there is more. At 88% of the
+     stage each side has 79 px to work with, so 46 of those go to the neighbour's art at 0.78 scale, the rest
+     is the gap and the fade; the pitch sits inside one frame box so the neighbour hugs the shoulder. */
+  --frame-w: 88%;
+  --pitch: 92%;
   position: relative;
   overflow: hidden;
   touch-action: none;
@@ -1484,13 +1484,13 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
   position: absolute;
   inset: 0;
   --slide: 0.42s;
-  /* Neighbours come in and out at the edges rather than being cut straight across there, which is the same soft
-     edge the filmstrip already has. */
-  mask-image: linear-gradient(90deg, transparent, #000 30px, #000 calc(100% - 30px), transparent);
+  /* Neighbours come in and out at the edges rather than being cut straight across there. Same soft
+     edge the filmstrip already has, and it has to stay narrower than the sliver it softens. */
+  mask-image: linear-gradient(90deg, transparent, #000 16px, #000 calc(100% - 16px), transparent);
 }
 .lb-fr {
-  --sc: 0.84;
-  --dim: 0.24;
+  --sc: 0.78;
+  --dim: 0.22;
   position: absolute;
   top: 0;
   left: calc((100% - var(--frame-w)) / 2);
@@ -1499,7 +1499,7 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
   /* One custom property drives the whole move, so a step inserts nothing: the frames that are already on screen
      keep their layers and the shift is a plain transform on what is already composited. */
   transform: translate3d(calc((var(--k) - var(--cur)) * var(--pitch) + var(--drag)), 0, 0) scale(var(--sc));
-  /* Dimming through opacity rather than a filter: the ground here is (8,8,12), so a side frame carries 76%
+  /* Dimming through opacity rather than a filter: the ground here is (8,8,12), so a side frame carries 78%
      of a near-black wash laid over the art, the depth a brightness() would give at no compositor cost. */
   opacity: var(--dim);
   background-position: center;
@@ -1538,8 +1538,10 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
   transform: translate3d(0, -50%, 0);
   transition: opacity var(--hov) var(--ease), background var(--hov) var(--ease);
 }
-.lb-edge.left { left: 14px; }
-.lb-edge.right { right: 14px; }
+  /* On the centre's own shoulder rather than at the stage edge: the neighbour sliver is the only
+     thing left there, and a 40px button parked on it would be the whole of the hint. */
+.lb-edge.left { left: calc((100% - var(--frame-w)) / 2 + 12px); }
+.lb-edge.right { right: calc((100% - var(--frame-w)) / 2 + 12px); }
 .lb-edge:hover:not(:disabled) { opacity: 1; background: rgba(255, 255, 255, 0.22); }
 .lb-edge:active:not(:disabled) { opacity: 1; background: rgba(255, 255, 255, 0.3); }
 /* Clamped rather than wrapped, so the first and last still have an arrow that goes nowhere. It stays in place
