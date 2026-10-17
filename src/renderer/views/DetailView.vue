@@ -430,7 +430,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
 
     <template v-else-if="item">
       <div class="flow sw" :class="{ on: swap }">
-        <HScroller v-if="episodes.length" class="block">
+        <HScroller v-if="episodes.length" class="block epi-row">
           <template #header>
             <div class="ep-head">
               <FilterSelect
@@ -771,6 +771,11 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
   padding-right: var(--side);
   transition: padding-left var(--rail-dur) var(--rail-ease);
 }
+/* The room BlockPh's `.ph-rail` claims (16 + 34 + 11 + 6 + the 279 card + 20 + 4 = 370) is also the floor
+   of the band it stands in for. A rail of one-line titles measured 358.3, so every block under it slid up
+   11.8px the moment the episodes landed - the census's `0,-12` on about 199 boxes. Floor the real band at
+   the same number and the swap is exact; two-line titles still stand above it, which no floor can predict. */
+.epi-row { min-height: 370px; }
 h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px; color: var(--text); }
 
 .ep-head { display: flex; align-items: baseline; gap: 12px; flex: 1; min-width: 0; }
