@@ -4,6 +4,7 @@ import type { LibraryItem } from '../../../shared/types';
 import { fmtDate, fmtElapsed, ticksToMs } from '../../lib/format';
 import { genreLabels } from '../../lib/genres';
 import { resumeTarget } from '../../lib/resume';
+import { useScores } from '../../lib/scores';
 import HeroPlay from '../HeroPlay.vue';
 import ScoreStrip from '../ScoreStrip.vue';
 import TitleArt from '../TitleArt.vue';
@@ -42,6 +43,14 @@ async function fetchTitle(it: LibraryItem): Promise<void> {
 }
 
 const current = computed(() => props.items[idx.value] ?? null);
+/* The slide's own score strip already asks the six sources for this title; read the same answers here for
+   the synopsis, since a card the server leaves blank has a Chinese record at TMDB. The ask is keyed by
+   item for the whole session, so this registers a reader rather than a second round of requests. */
+const scores = useScores(() => current.value);
+const overview = computed(() => {
+  const t = scores.value.tmdb;
+  return t?.overviewZh || current.value?.overview || t?.overviewOther || '';
+});
 const playable = computed(() => ['Movie', 'Episode', 'Video'].includes(current.value?.type || ''));
 /** The slide's own button reads the lobby's 继续观看 rows as its candidates: a Series card has no progress
  *  of its own, and the episode it stopped on is already in the store. */
@@ -50,7 +59,10 @@ const target = computed(() => resumeTarget(current.value, props.resume || []));
  *  same resolution a row click makes, so both hand over the art the plate is already showing. */
 const detailId = computed(() => (current.value ? (current.value.type === 'Episode' ? current.value.parentId || '' : current.value.id) : ''));
 const plate = ref<HTMLImageElement | null>(null);
-const runtime = computed(() => fmtElapsed(ticksToMs(current.value?.runTimeTicks)));
+/** Only a single playable row has a runtime that is its own. The server's number on a Series row is neither
+ *  the show's nor one episode's (measured: 模范出租车 answers 1小时4分 for a first season that runs 17小时1分),
+ *  so the slide leaves it out the way the detail page's line does. */
+const runtime = computed(() => (playable.value ? fmtElapsed(ticksToMs(current.value?.runTimeTicks)) : ''));
 const genres = computed(() => genreLabels(current.value?.genres).slice(0, 3).join(' '));
 const date = computed(() => fmtDate(current.value?.premiereDate) || String(current.value?.productionYear || ''));
 
@@ -197,7 +209,7 @@ watch(
           <span v-if="date">{{ date }}</span>
           <span v-if="runtime">{{ runtime }}</span>
         </div>
-        <p class="ov">{{ current.overview || '' }}</p>
+        <p class="ov">{{ overview }}</p>
         <ScoreStrip v-if="current" :item="current" />
       </div>
       <div class="cta">
