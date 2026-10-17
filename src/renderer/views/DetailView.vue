@@ -838,8 +838,14 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
 
           <div class="lb-stage" @click.self="viewer = null">
             <img class="lb-lores" :src="current ? backdropUrl(current) : ''" alt="" decoding="async" />
+            <!-- The `key` is what makes a step animate at all. Without it Vue patches `src` on the same
+                element, a Transition only fires on insert and remove, and the four `.lb-nx`/`.lb-pv` class
+                sets — which carry a leave half that can never apply to an element that is never removed — sat
+                unused. Measured on the old build: same node across a step, opacity 1 and transform `none`
+                throughout, getAnimations() empty. Both frames are `position: absolute; inset: 0`, so they
+                overlap by construction and the row keeps its size while the art slides past itself. -->
             <Transition :name="vdir > 0 ? 'lb-nx' : vdir < 0 ? 'lb-pv' : 'lb-fade'">
-              <img v-if="current" class="lb-img" :src="bigUrl(current)" alt="" decoding="async" />
+              <img v-if="current" :key="current" class="lb-img" :src="bigUrl(current)" alt="" decoding="async" />
             </Transition>
             <button v-if="backdrops.length > 1" type="button" class="lb-edge left" aria-label="上一张" @click.stop="stepViewer(-1)">
               <svg viewBox="0 0 24 24" width="19" height="19"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" /></svg>
