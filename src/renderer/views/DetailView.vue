@@ -240,12 +240,14 @@ watch(
 
 const heroBackdrop = ref('');
 const heroPoster = ref('');
-/** What the plate paints. The card art this page was opened from wins for as long as it is the same
- *  picture, because it was already on screen and the plate has nothing to wait for; once it is handed
- *  over, the art follows the season that is picked: TMDB's own poster for that season, then the server's
- *  season art, then the work's poster for a season neither side dresses in its own picture. */
+/** What the plate paints, in the order the season decides it: TMDB's own poster for that season, then the
+ *  server's season art, then the work's poster for a season neither side dresses in its own picture. The
+ *  card art this page was opened from sits behind all three: it paints the first frame so the plate is
+ *  never empty, and the season's own picture takes it over as soon as that picture is known. Measured on
+ *  Ted Lasso, handing the seed the top of this ladder instead left the plate on the series poster through
+ *  chips 1, 2 and 3 while its date, 集数, rating and credit band all moved with the season. */
 const tmdbPlate = computed(() => posterUrl(tmdbSeason.value?.poster));
-const plateSrc = computed(() => seedFor(props.id) || tmdbPlate.value || seasonArt.value || heroPoster.value);
+const plateSrc = computed(() => tmdbPlate.value || seasonArt.value || heroPoster.value || seedFor(props.id));
 /** Ranked title treatments for this item; TitleArt walks them and falls back to the name. */
 const titleUrls = ref<string[]>([]);
 
