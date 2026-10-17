@@ -414,20 +414,39 @@ export class MpvKernel {
    *  three-second window is what keeps the read-out from flickering between a spike and zero. */
   private rateWin: { t: number; b: number }[] = [];
 
+  /** The rate the window last measured, kept across the gaps between bursts. */
+  private rateHold = 0;
+
   private sampleRate(bytes: number | undefined): void {
     const r = this.raw;
-    if (bytes == null) {
+    const now = Date.now();
+    if (bytes != null) {
+      // A counter that went backwards is a new file: the old window would report the last stream's rate.
+      if (this.rateWin.length && bytes < this.rateWin[this.rateWin.length - 1].b) {
+        this.rateWin = [];
+        this.rateHold = 0;
+      }
+      this.rateWin.push({ t: now, b: bytes });
+    }
+    while (this.rateWin.length > 1 && now - this.rateWin[0].t > 3000) this.rateWin.shift();
+    const first = this.rateWin[0];
+    const last = this.rateWin[this.rateWin.length - 1];
+    // Nothing has arrived for longer than the window itself, so the window is describing a stream that
+    // is no longer running: this is the one case where 「0」 is the truth rather than a gap in sampling.
+    if (!last || now - last.t > 3000) {
+      this.rateWin = [];
+      this.rateHold = 0;
       r.netRate = 0;
       return;
     }
-    const now = Date.now();
-    // A counter that went backwards is a new file: the old window would report the last stream's rate.
-    if (this.rateWin.length && bytes < this.rateWin[this.rateWin.length - 1].b) this.rateWin = [];
-    this.rateWin.push({ t: now, b: bytes });
-    while (this.rateWin.length > 2 && now - this.rateWin[0].t > 3000) this.rateWin.shift();
-    const first = this.rateWin[0];
-    const secs = (now - first.t) / 1000;
-    r.netRate = secs > 0.4 ? Math.max(0, (bytes - first.b) / secs) : 0;
+    /* Dividing the window's bytes by the window's own span, not by `now`: a tick between two bursts has
+       one sample in it, and one sample has no slope, so the previous reading used to be written `0` — the
+       corner snapped to 「0 KB/s」 for a quarter to two thirds of a second, several times a row, while the
+       stream never stopped. Holding the last measured slope instead costs nothing when bytes do arrive,
+       because the span always contains at least as much time as the burst did. */
+    const secs = (last.t - first!.t) / 1000;
+    if (secs > 0.4) this.rateHold = Math.max(0, (last.b - first!.b) / secs);
+    r.netRate = this.rateHold;
   }
 
   private state(): PlayerState {

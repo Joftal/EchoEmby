@@ -70,7 +70,11 @@ async function submit() {
       <span>服务器地址</span>
       <input ref="urlEl" v-model="baseUrl" type="text" placeholder="https://media.example.com:8096" spellcheck="false" autocomplete="off" />
     </label>
-    <p v-if="ping.state !== 'idle'" class="ping" :class="ping.state">{{ ping.text }}</p>
+    <!-- Drawn from the start rather than on `ping.state !== 'idle'`: this line is what the address field
+         says back, and with a `v-if` the dialog grew 20px and re-centred itself 700ms after the first
+         keystroke, sliding 用户名, 密码 and 连接 down 10px each. An empty line costs a little air and buys
+         a form that never moves under the person filling it in. -->
+    <p class="ping" :class="ping.state">{{ ping.text }}</p>
 
     <label>
       <span>用户名</span>

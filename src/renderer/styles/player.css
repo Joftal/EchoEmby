@@ -66,9 +66,13 @@
   white-space: nowrap;
 }
 /* The live rate changes unit as it crosses a megabyte, so the capsule is sized for the widest reading it
-   can hold rather than the current one; tabular digits keep a refresh from nudging the number sideways. */
+   can hold rather than the current one; tabular digits keep a refresh from nudging the number sideways.
+   `9ch` was not that size — a `ch` is one digit and a reading carries a space, a slash and two letters,
+   so 9ch measured 67.9px while 「0 KB/s」 is 66.5 and 「1024 KB/s」 is 89.2: the reserve only ever held the
+   shortest string and the capsule still grew 13.7px sideways each time the number crossed 1 MB/s, taking
+   the close button next to it with it. 90px is the widest reading the formatter can emit in one line. */
 .pl-pill.live {
-  min-width: 9ch;
+  min-width: 90px;
   justify-content: center;
   font-variant-numeric: tabular-nums;
 }
