@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import type { LibraryItem, MediaStreamInfo, PlaybackSource, TmdbSimilar, TmdbStills } from '../../shared/types';
+import type { LibraryItem, MediaStreamInfo, PlaybackSource, TmdbSeasonRow, TmdbSimilar, TmdbStills } from '../../shared/types';
 import HScroller from '../components/detail/HScroller.vue';
 import BlockPh from '../components/detail/BlockPh.vue';
-import FilterSelect from '../components/browse/FilterSelect.vue';
 import ScoreStrip from '../components/ScoreStrip.vue';
 import HeroPlay from '../components/HeroPlay.vue';
 import TitleArt from '../components/TitleArt.vue';
@@ -12,7 +11,7 @@ import HeroSkeleton from '../components/HeroSkeleton.vue';
 import { tmdbKind as kindOf, useScores } from '../lib/scores';
 import { usePlayerStore } from '../stores/player';
 import { useAppStore } from '../stores/app';
-import { episodePosition, fmtDate, fmtDateTime, fmtRuntime, isPositionOnlyName, seenLabel } from '../lib/format';
+import { episodePosition, fmtDate, fmtDateTime, fmtRuntime, isPositionOnlyName, seenLabel, seasonTitle } from '../lib/format';
 import { resumeTarget } from '../lib/resume';
 import { genreLabels } from '../lib/genres';
 import { embyCached } from '../lib/embycache';
@@ -28,6 +27,14 @@ const item = ref<LibraryItem | null>(null);
 const seasons = ref<LibraryItem[]>([]);
 const episodes = ref<LibraryItem[]>([]);
 const seasonId = ref('');
+/** Which season the rows now in `episodes` were read for. The list keeps its height across a switch, so
+ *  without this the hero would print the season being left's length under the new one's date. */
+const episodeSeason = ref('');
+/** The series above a Season item. The server files the favourite, the external ids and every
+ *  work-level question there, so a page opened on one season still needs its parent. */
+const seriesItem = ref<LibraryItem | null>(null);
+/** The picked season's own art from the server, the one season field that costs a round trip. */
+const seasonArt = ref('');
 const error = ref('');
 const playErr = ref('');
 const favBusy = ref(false);
@@ -36,8 +43,6 @@ const favBusy = ref(false);
  *  2242px of height with scrollTop clamped 700 -> 0 on every switch. */
 const swap = ref(false);
 
-/** The six score sources, asked once per title and shared with the hero's strip. */
-const scores = useScores(() => item.value);
 const similar = ref<TmdbSimilar[]>([]);
 const stills = ref<TmdbStills>({});
 const backdrops = ref<string[]>([]);
@@ -51,6 +56,14 @@ function onScroll(): void {
 
 const isSeries = computed(() => item.value?.type === 'Series');
 const isSeason = computed(() => item.value?.type === 'Season');
+
+/** The work this page belongs to. A Season row carries neither the external ids the sources key on nor
+ *  the favourite the server filed, so every question that has no season-level answer goes to its series. */
+const work = computed(() => (isSeason.value ? seriesItem.value || item.value : item.value));
+
+/** The six score sources, asked once per title; TMDB's answer also carries the season table the hero
+ *  reads its date, art and synopsis off. */
+const scores = useScores(() => work.value);
 
 const people = computed(() => item.value?.people || []);
 const ROLE_LABEL: Record<string, string> = { Director: '导演', Writer: '编剧', Producer: '制片' };
@@ -72,7 +85,13 @@ const crew = computed<CrewRow[]>(() => {
   }
   return out.slice(0, 30);
 });
-const overviewText = computed(() => item.value?.overview || scores.value.tmdb?.overviewZh || '');
+/** The work's own synopsis, in the order the page falls back once a season has nothing to say: TMDB in
+ *  Chinese, then whatever the server carries, then TMDB in whatever language it happens to have. The
+ *  middle step exists because TMDB records no synopsis at all for much of this library's non-Asian
+ *  titles, while the server usually has one. */
+const workOverview = computed(
+  () => scores.value.tmdb?.overviewZh || item.value?.overview || scores.value.tmdb?.overviewOther || '',
+);
 
 const source = computed<PlaybackSource | undefined>(() => item.value?.sources?.[0]);
 const vstream = computed(() => source.value?.video);
@@ -179,10 +198,12 @@ watch(
 
 const heroBackdrop = ref('');
 const heroPoster = ref('');
-/** What the plate paints: the card art this page was opened from, or the item's own once the server has
- *  it. The card's copy wins for as long as it is the same picture, because it was already on screen and
- *  the plate has nothing to wait for; it is only handed over when the two shapes differ. */
-const plateSrc = computed(() => seedFor(props.id) || heroPoster.value);
+/** What the plate paints. The card art this page was opened from wins for as long as it is the same
+ *  picture, because it was already on screen and the plate has nothing to wait for; once it is handed
+ *  over, the art follows the season that is picked: TMDB's own poster for that season, then the server's
+ *  season art, then the work's poster for a season neither side dresses in its own picture. */
+const tmdbPlate = computed(() => posterUrl(tmdbSeason.value?.poster));
+const plateSrc = computed(() => seedFor(props.id) || tmdbPlate.value || seasonArt.value || heroPoster.value);
 /** Ranked title treatments for this item; TitleArt walks them and falls back to the name. */
 const titleUrls = ref<string[]>([]);
 
@@ -219,54 +240,133 @@ const epTitle = (e: LibraryItem): string => {
 const epSeen = (e: LibraryItem): string => seenLabel(e.userData?.playedPercentage, e.runTimeTicks);
 const epPlayed = (e: LibraryItem): number => Math.min(100, e.userData?.playedPercentage || 0);
 
-const genres = computed(() => genreLabels(item.value?.genres));
+const genres = computed(() => genreLabels(work.value?.genres));
 const premiered = computed(() => fmtDate(item.value?.premiereDate) || String(item.value?.productionYear || ''));
+
+/** The season this page is answering for: the open tab on a Series, the item itself on a Season page. */
+const seasonRow = computed<LibraryItem | null>(
+  () => seasons.value.find(x => x.id === seasonId.value) || (isSeason.value ? item.value : null),
+);
+const seasonNumber = computed(() => seasonRow.value?.indexNumber ?? item.value?.indexNumber ?? null);
+
+/* TMDB and this server do not always count the same season. Measured over 9 awkward shows and a 73-season
+   sweep: the sides agree on the episode count everywhere but one pairing, and where the numbering itself
+   diverges — 物语 files seasons 11-25 where TMDB stops at 5, 咒术回战 has a 季 3 TMDB never heard of — there
+   is simply no row to match, so that fallback costs no threshold. What a number still has to decide is the
+   split-cour case: 咒术回战's 47 against TMDB's 59 (0.80) and 【推しの子】's 24 against 35 (0.69) are one season
+   counted two ways and keep TMDB's date and art, while 800 Meters' 1 against 3 (0.33) is a different cut.
+   0.67 separates them: 41 pairings believed, 1 refused. Believed or not, the 集数 printed here is always the
+   server's own, because that is the number the episode row underneath has to match. */
+const SEASON_TRUST = 0.67;
+/** TMDB's row for one season number, believed only while both sides agree about how big that season is. */
+const trustRow = (n?: number | null, count?: number): TmdbSeasonRow | null => {
+  if (n == null) return null;
+  const t = scores.value.tmdb?.seasons?.find(x => x.n === n);
+  if (!t) return null;
+  const a = count || 0;
+  const b = t.epCount || 0;
+  if (a && b && Math.min(a, b) / Math.max(a, b) < SEASON_TRUST) return null;
+  return t;
+};
+const tmdbSeason = computed(() => trustRow(seasonNumber.value, seasonRow.value?.childCount));
+
+/** What the hero prints for the season on screen. Derived rather than stored: a switch that writes one
+ *  ref per field is one forgotten clear away to showing last season's synopsis under this season's name. */
+const pack = computed(() => {
+  const row = seasonRow.value;
+  const t = tmdbSeason.value;
+  if (!row && !t) return null;
+  return {
+    label: seasonTitle(seasonNumber.value, row?.name, t?.name),
+    date: fmtDate(t?.airDate) || fmtDate(row?.premiereDate) || premiered.value,
+    eps: row?.childCount ?? t?.epCount ?? 0,
+    /* The season's length summed from the rows in hand, and only when those rows are this season's. The
+       server's Series-level RunTimeTicks is neither this season's nor any episode's (measured: 64 分钟 for a
+       season that runs 17 小时 18 分), so there is no cheaper number to put here while the fetch is out. */
+    runtime: episodeSeason.value === seasonId.value ? fmtRuntime(episodes.value.reduce((a, e) => a + (e.runTimeTicks || 0), 0)) : '',
+    overview: t?.ovZh || row?.overview || t?.ovOther || '',
+  };
+});
+const overviewText = computed(() => pack.value?.overview || workOverview.value);
+
+/** 「2021-04-09 · 16 集 · 17小时18分」 for the season on screen. A work with no seasons keeps its own
+ *  line, and a collection counts 部 rather than 季. */
 const metaLine = computed(() => {
-  const parts = [premiered.value];
-  if (item.value?.childCount) parts.push(`${item.value.childCount} 集`);
-  const rt = fmtRuntime(item.value?.runTimeTicks);
-  if (rt) parts.push(rt);
+  const p = pack.value;
+  const parts = p
+    ? [p.date, p.eps ? `${p.eps} 集` : '', p.runtime]
+    : [
+        premiered.value,
+        item.value?.childCount ? `${item.value.childCount} ${item.value.type === 'BoxSet' ? '部' : '季'}` : '',
+        fmtRuntime(item.value?.runTimeTicks),
+      ];
   return parts.filter(Boolean).join(' · ');
 });
 
-const fav = computed(() => !!item.value?.userData?.isFavorite);
+/** The one work-level number a season view still owes the reader: how big the whole show is. */
+const seriesTotal = computed(() => {
+  const n = seasons.value.length;
+  if (n < 2) return '';
+  const eps = seasons.value.reduce((a, s) => a + (s.childCount || 0), 0);
+  return `全 ${n} 季${eps ? ` · ${eps} 集` : ''}`;
+});
+
+const fav = computed(() => !!work.value?.userData?.isFavorite);
 
 async function loadEpisodes(sid: string, seriesId = props.id) {
   seasonId.value = sid;
-  // The old season's stills would otherwise hang on the new season's episode numbers for the few
-  // hundred ms TMDB takes; the episode row itself keeps its height so the page does not jump.
+  // Whatever belonged to the season being left goes before anything new is asked for: an old season's
+  // stills would otherwise hang on the new season's episode numbers for the few hundred ms TMDB takes,
+  // and its art would dress the new one. The episode row keeps its height, so the page does not jump.
   stills.value = {};
+  seasonArt.value = '';
   if (!sid) return;
+  const row = seasonRow.value;
+  if (row?.primaryImageTag) {
+    void app.imageUrl({ id: row.id, primaryImageTag: row.primaryImageTag }, 300).then(u => {
+      if (seasonId.value === sid) seasonArt.value = u;
+    });
+  }
   const r = await embyCached('episodes', { seriesId, seasonId: sid }, () => window.echoemby.emby.episodes({ seriesId, seasonId: sid }));
-  if (r.ok) episodes.value = r.data || [];
-  const seasonNumber = seasons.value.find(x => x.id === sid)?.indexNumber ?? item.value?.indexNumber;
-  const tmdbId = item.value?.providers?.tmdb || (isSeason.value ? await fetchParentTmdbId(seriesId) : '');
-  if (tmdbId && Number.isInteger(seasonNumber)) {
-    void window.echoemby.meta.tmdbStills({ tmdbId, season: seasonNumber as number }).then(x => {
+  if (r.ok && seasonId.value === sid) {
+    episodes.value = r.data || [];
+    episodeSeason.value = sid;
+  }
+  const number = row?.indexNumber ?? item.value?.indexNumber;
+  const parent = isSeason.value ? await loadSeries(seriesId) : null;
+  const tmdbId = item.value?.providers?.tmdb || parent?.providers?.tmdb || '';
+  if (tmdbId && Number.isInteger(number)) {
+    void window.echoemby.meta.tmdbStills({ tmdbId, season: number as number }).then(x => {
       if (x.ok && x.data && seasonId.value === sid) stills.value = x.data.value;
     });
   }
 }
 
-/** The Season page needs its series' TMDB id, which only the series' own item carries. The answer is
- *  read through the Emby cache, so a page that already fetched this series costs nothing here. */
-async function fetchParentTmdbId(seriesId: string): Promise<string> {
-  if (!seriesId) return '';
+/** The series above a Season item. A season row carries no external id, so TMDB, the score sources and
+ *  the favourite the server filed can only be reached through this. Read through the Emby cache, so a
+ *  page that already asked for the series costs nothing here. */
+async function loadSeries(seriesId: string): Promise<LibraryItem | null> {
+  if (!seriesId) return null;
+  if (seriesItem.value?.id === seriesId) return seriesItem.value;
+  const page = props.id;
   const r = await embyCached('item', seriesId, () => window.echoemby.emby.item(seriesId));
-  return r.ok ? r.data?.providers?.tmdb || '' : '';
+  const it = r.ok ? r.data || null : null;
+  // A switch to another title while this is out must not dress the new page in the previous work.
+  if (it && props.id === page) {
+    seriesItem.value = it;
+    /* A season row often carries no art at all (measured: 模范出租车's seasons 1 and 2 have neither a
+       Primary nor a Backdrop tag), which left the hero a flat gradient. TMDB has no season-wide shot
+       either, so the work's own backdrop is the stand-in the ladder calls for. */
+    if (!item.value?.backdropImageTag && !item.value?.primaryImageTag && it.backdropImageTag)
+      void app.backdropUrl({ id: it.id, backdropImageTag: it.backdropImageTag }, 1600).then(u => (props.id === page ? (heroBackdrop.value = u) : u));
+  }
+  return it;
 }
 
-/** The picker reads 「第1季」 from the season's index, falling back to its server name. */
-const seasonLabel = (s: LibraryItem): string => (s.indexNumber != null ? `第 ${s.indexNumber} 季` : s.name);
-const seasonOptions = computed(() => seasons.value.map(s => ({ value: s.id, label: seasonLabel(s) })));
-const activeSeasonLabel = computed(() => {
-  const s = seasons.value.find(x => x.id === seasonId.value);
-  return s ? seasonLabel(s) : item.value?.name || '本季';
-});
-function onSeason(v: string | string[]): void {
-  // A season always has one, so re-picking the current one (which answers with '') changes nothing.
-  if (typeof v === 'string' && v) void loadEpisodes(v);
-}
+/** A chip reads the season's own subtitle when it has one (「第 1 季 · 立志篇」, 「第 4 季 · 最终季」) and
+ *  nothing but the number when its name only repeats the position (「季 3」, 「Season 1」). TMDB's name for
+ *  the same season is the second candidate, for the rows this server left plainly numbered. */
+const chipLabel = (s: LibraryItem): string => seasonTitle(s.indexNumber, s.name, trustRow(s.indexNumber, s.childCount)?.name);
 
 /** Which title the once-per-title asks (logo band, TMDB's similar titles and its stills) have been made
  *  for. The row and the server's copy of it are the same work, so the second paint refines the item
@@ -295,14 +395,22 @@ function paint(it: LibraryItem): void {
 
   if (painted === id) return;
   painted = id;
-  // The six score sources come through useScores, which keys them by item id and answers once.
-  const kind = kindOf(it);
-  const tmdbId = it.providers?.tmdb;
-  void app.logoCandidates(it).then(u => (props.id === id ? (titleUrls.value = u) : undefined));
-  if (kind && tmdbId) {
-    void window.echoemby.meta.tmdbSimilar({ kind, tmdbId }).then(x => (props.id === id ? (similar.value = x.ok ? x.data || [] : []) : undefined));
-    void window.echoemby.meta.tmdbImages({ kind, tmdbId }).then(x => (props.id === id ? (backdrops.value = x.ok ? x.data || [] : []) : undefined));
-  }
+  // A Season row carries no external id and no Logo, so every ask below would be made against nothing.
+  // On those pages they come with the series, from loadChildren.
+  if (it.type === 'Season') return;
+  askWork(it);
+}
+
+/** The title's own three asks: its ranked treatments, TMDB's similar titles, its backdrop strip. None of
+ *  them has a season-level answer, so a Season page runs them for the series above it. */
+function askWork(series: LibraryItem): void {
+  const page = props.id;
+  void app.logoCandidates(series).then(u => (props.id === page ? (titleUrls.value = u) : undefined));
+  const kind = kindOf(series);
+  const tmdbId = String(series.providers?.tmdb || '');
+  if (!kind || !/^\d{1,8}$/.test(tmdbId)) return;
+  void window.echoemby.meta.tmdbSimilar({ kind, tmdbId }).then(x => (props.id === page ? (similar.value = x.ok ? x.data || [] : []) : undefined));
+  void window.echoemby.meta.tmdbImages({ kind, tmdbId }).then(x => (props.id === page ? (backdrops.value = x.ok ? x.data || [] : []) : undefined));
 }
 
 /** The season rail, started from whichever half of the pair painted the page — which is what takes the
@@ -317,6 +425,15 @@ async function loadChildren(it: LibraryItem): Promise<void> {
     const first = seasons.value.find(x => x.childCount) || seasons.value[0];
     if (first) await loadEpisodes(first.id, it.id);
   } else if (it.type === 'Season') {
+    /* A page opened on one season is still a page about a series: its scores, its logo and its season
+       tabs all belong one level up, and the switcher cannot be drawn from a list nobody asked for. */
+    const series = await loadSeries(it.parentId || '');
+    if (props.id !== it.id) return;
+    if (series) {
+      askWork(series);
+      const s = await embyCached('seasons', series.id, () => window.echoemby.emby.seasons(series.id));
+      if (props.id === it.id) seasons.value = s.ok ? s.data || [] : [];
+    }
     await loadEpisodes(it.id, it.parentId || '');
   }
 }
@@ -329,6 +446,10 @@ watch(
     backdrops.value = [];
     viewer.value = null;
     titleUrls.value = [];
+    seasonArt.value = '';
+    // The series above a Season page belongs to the title being left; keeping it would let the new
+    // season borrow the old work's date, art and synopsis.
+    if (seriesItem.value && seriesItem.value.id !== id) seriesItem.value = null;
     // Nothing is cleared on a switch: the old title stays on screen, dimmed, until the new one is in
     // hand, so the page never collapses to a skeleton and rebuilds its height under the reader.
     swap.value = item.value !== null;
@@ -374,7 +495,9 @@ async function play(id = playableId.value) {
 }
 
 async function toggleFav() {
-  const it = item.value;
+  // The server files the heart on the series, so a page opened on one season reads and writes that,
+  // rather than starring a season and leaving the show it belongs to unmarked.
+  const it = work.value;
   if (!it || favBusy.value) return;
   favBusy.value = true;
   await app.setFavorite(it.id, !fav.value);
@@ -401,6 +524,24 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
           </Transition>
         </div>
         <div class="wash"></div>
+        <!-- The season the copy below describes. It answers for the hero, so it hangs on the hero's own
+             top band rather than sitting in the copy column: in flow the row landed at y=47, and the back
+             disc owns 21..57 at this corner, so the first chip's left edge went under it (measured at both
+             the default and the minimum window). Out of flow, the copy keeps exactly the geometry it had
+             before any switcher existed. It rides the same fade as the copy because it is read with it. -->
+        <div v-if="seasons.length > 1" class="seasons" :style="{ opacity: Math.max(0, 1 - scroll / 260) }">
+          <button
+            v-for="s in seasons"
+            :key="s.id"
+            type="button"
+            class="sbtn"
+            :class="{ on: s.id === seasonId }"
+            @click="loadEpisodes(s.id, work?.id)"
+          >
+            {{ chipLabel(s) }}
+          </button>
+          <span v-if="seriesTotal" class="stotal">{{ seriesTotal }}</span>
+        </div>
         <div
           class="hero-in"
           :style="{ opacity: Math.max(0, 1 - scroll / 260), transform: `translate3d(0, ${Math.round(scroll * 0.4)}px, 0)` }"
@@ -413,7 +554,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
               <TitleArt :urls="titleUrls" :name="item.name" />
               <p v-if="item.tagline" class="tagline">{{ item.tagline }}</p>
               <div class="line">{{ metaLine }}</div>
-              <ScoreStrip :item="item" class="badges" />
+              <ScoreStrip v-if="work" :item="work" class="badges" />
               <p class="overview">{{ overviewText || '暂无简介。' }}</p>
             </div>
             <div class="actions">
@@ -443,17 +584,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
         <HScroller v-if="episodes.length" class="block epi-row">
           <template #header>
             <div class="ep-head">
-              <FilterSelect
-                v-if="seasons.length > 1"
-                bare
-                neutral
-                label="季"
-                :cell="76"
-                :options="seasonOptions"
-                :model-value="seasonId"
-                @update:model-value="onSeason"
-              />
-              <h2 v-else>{{ activeSeasonLabel }}</h2>
+              <h2>{{ pack?.label || item.name }}</h2>
               <span class="count">{{ episodes.length }} 集</span>
             </div>
           </template>
@@ -710,6 +841,61 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
   align-items: flex-end;
   gap: 20px;
 }
+/* The season tabs, over the hero's own content. Same flat glass as the hero's round controls, and one row
+   that never wraps: past what fits it scrolls sideways rather than growing a second line. Hung from the
+   hero's right so the back disc keeps its corner, shrink-to-fit so a two-season show's tabs sit next to
+   the 全 N 季 counter rather than floating away from it. Picking one changes only what the tabs say, never
+   where anything sits. */
+.seasons {
+  position: absolute;
+  z-index: 2;
+  top: 23px;
+  right: var(--side);
+  max-width: calc(100% - 62px - var(--side));
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.seasons::-webkit-scrollbar {
+  display: none;
+}
+.sbtn {
+  flex: none;
+  padding: 6px 14px;
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.82);
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  backdrop-filter: blur(10px);
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1.35;
+  white-space: nowrap;
+  transition: color var(--hov) var(--ease), background var(--hov) var(--ease), transform var(--hov) var(--ease-out);
+}
+.sbtn:hover {
+  background: rgba(255, 255, 255, 0.24);
+  color: #fff;
+  transform: translateY(-1px);
+}
+/* Selected is a fill swap only: a bolder or roomier active chip would reflow every tab beside it. */
+.sbtn.on {
+  background: #fff;
+  color: var(--ink);
+  border-color: #fff;
+}
+.stotal {
+  flex: none;
+  padding-left: 14px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: rgba(255, 255, 255, 0.8);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 /* The plate is sized by height rather than width, so it keeps the same box whatever the art is and does not
    move when the text beside it changes height — the property that used to have to hold still while a clone
    was aimed at it. */
@@ -729,7 +915,22 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
   max-width: 640px;
 }
 .tagline { margin: 0 0 8px; font-size: 14px; font-style: italic; color: rgba(255, 255, 255, 0.82); }
-.line { font-size: 13.5px; font-weight: 500; color: rgba(255, 255, 255, 0.86); margin-bottom: 12px; font-variant-numeric: tabular-nums; }
+/* Two lines claimed before the season's facts land. Switching 第一季 for 第二季 turns a short
+   「2021」 into 「2021-04-09 · 16 集 · 17小时18分」, and a row that grows mid-swap reflows the whole
+   bottom-pinned copy column underneath it. */
+.line {
+  font-size: 13.5px;
+  line-height: 1.35;
+  min-height: calc(13.5px * 1.35 * 2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.86);
+  margin-bottom: 12px;
+  font-variant-numeric: tabular-nums;
+}
 /* Only the gap around the strip is this page's business; the marks themselves are ScoreStrip's. */
 .badges { margin-bottom: 14px; }
 .overview {
