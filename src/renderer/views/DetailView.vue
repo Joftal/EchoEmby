@@ -347,6 +347,37 @@ watch(castKey, key => {
   });
 });
 
+/* The stills ride the same gate as the art, the date, the synopsis and the credits, and for the same
+   reason: asked off the server's raw season number, a pairing `trustRow` refuses (800 Meters' 1 against
+   TMDB's 3) would still dress this season's episode cards with another season's pictures. Keyed the same
+   way and held the same way, because `loadEpisodes` clears the map on every switch and a switch back has
+   to repaint from what is in hand rather than wait out a second ask. */
+const stillsAsked = new Set<string>();
+const stillsByKey = new Map<string, TmdbStills>();
+const stillsKey = (): string => {
+  const id = String(work.value?.providers?.tmdb || '');
+  return tmdbSeason.value && seasonNumber.value != null && /^\d{1,8}$/.test(id)
+    ? `${seasonId.value}|${seasonNumber.value}|${id}`
+    : '';
+};
+watch(stillsKey, key => {
+  if (!key) return;
+  const hit = stillsByKey.get(key);
+  if (hit) {
+    stills.value = hit;
+    return;
+  }
+  if (stillsAsked.has(key)) return;
+  stillsAsked.add(key);
+  const [, n, id] = key.split('|');
+  const sid = seasonId.value;
+  void window.echoemby.meta.tmdbStills({ tmdbId: id, season: Number(n) }).then(x => {
+    if (!x.ok || !x.data) return;
+    stillsByKey.set(key, x.data.value);
+    if (seasonId.value === sid) stills.value = x.data.value;
+  });
+});
+
 /** What the hero prints for the season on screen. Derived rather than stored: a switch that writes one
  *  ref per field is one forgotten clear away to showing last season's synopsis under this season's name. */
 const pack = computed(() => {
@@ -404,11 +435,11 @@ async function loadEpisodes(sid: string, seriesId = props.id) {
   // Whatever belonged to the season being left goes before anything new is asked for: an old season's
   // stills would otherwise hang on the new season's episode numbers for the few hundred ms TMDB takes,
   // and its art would dress the new one. The episode row keeps its height, so the page does not jump.
-  stills.value = {};
+  // The stills and the credits are repainted from the key this season is asked under rather than blanked:
+  // clicking the season already on screen re-enters here, and the watches do not fire for a key they have
+  // already seen, so a blind clear would drop this season's pictures for the rest of the visit.
+  stills.value = stillsByKey.get(stillsKey()) || {};
   seasonArt.value = '';
-  // Repainted from what is already in hand rather than blanked: clicking the season already on screen
-  // re-enters here, and the watch does not fire for a key it has already seen, so a blind clear would
-  // drop this season's credits for the rest of the visit.
   seasonCast.value = castByKey.get(castKey()) || null;
   if (!sid) return;
   const row = seasonRow.value;
@@ -422,14 +453,7 @@ async function loadEpisodes(sid: string, seriesId = props.id) {
     episodes.value = r.data || [];
     episodeSeason.value = sid;
   }
-  const number = row?.indexNumber ?? item.value?.indexNumber;
-  const parent = isSeason.value ? await loadSeries(seriesId) : null;
-  const tmdbId = item.value?.providers?.tmdb || parent?.providers?.tmdb || '';
-  if (tmdbId && Number.isInteger(number)) {
-    void window.echoemby.meta.tmdbStills({ tmdbId, season: number as number }).then(x => {
-      if (x.ok && x.data && seasonId.value === sid) stills.value = x.data.value;
-    });
-  }
+  if (isSeason.value) await loadSeries(seriesId);
 }
 
 /** The series above a Season item. A season row carries no external id, so TMDB, the score sources and
