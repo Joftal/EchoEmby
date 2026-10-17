@@ -470,6 +470,17 @@ function paint(it: LibraryItem): void {
 
   if (painted === id) return;
   painted = id;
+  /* The season state goes the moment a different title takes the page over — not earlier, because the
+     outgoing hero is still on screen and reading it, and not never, because `seasonRow` looks its id up
+     in the previous show's season list: measured, walking 咒术回战 → 007 left 「2023-07-06 · 59 集 ·
+     24小时6分」 printed under a movie that has neither episodes nor seasons. */
+  seasons.value = [];
+  seasonId.value = '';
+  episodes.value = [];
+  episodeSeason.value = '';
+  stills.value = {};
+  seasonArt.value = '';
+  seasonCast.value = null;
   // A Season row carries no external id and no Logo, so every ask below would be made against nothing.
   // On those pages they come with the series, from loadChildren.
   if (it.type === 'Season') return;
