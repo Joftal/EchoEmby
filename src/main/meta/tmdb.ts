@@ -227,7 +227,10 @@ export async function tmdbMeta(kind: Kind, tmdbId: string): Promise<TmdbMeta | n
   const key = `${kind}:${tmdbId}`;
   const hit = metaHit(key);
   if (hit.state === 'miss') return null;
-  if (hit.state === 'fresh') return hit.value;
+  /* A `0` written before the pickers below refused it would otherwise hold a badge open for the rest of
+     the TTL, so the read path refuses it too. */
+  if (hit.state === 'fresh')
+    return hit.value.cert === '0' ? { ...hit.value, cert: '' } : hit.value;
 
   const base = `https://api.themoviedb.org/3/${kind}/${tmdbId}`;
   /* `credits` comes along for both kinds because the writers the credit band falls back to are inside it.
@@ -269,20 +272,24 @@ export async function tmdbMeta(kind: Kind, tmdbId: string): Promise<TmdbMeta | n
   return out;
 }
 
+/* Germany files what any child may watch under the number 0, and a badge that reads 「0」 looks like a
+   broken rating rather than like no restriction, so neither picker below lets it through — and the read
+   path refuses one already sitting on disk from an older build. */
+
 /** Prefers the US certification; the earliest-named country with any cert is the fallback. */
 const pickMovieCert = (results: any[] | undefined): string | undefined => {
   if (!Array.isArray(results)) return undefined;
   const us = results.find(r => r?.iso_3166 === 'US');
   const from = (list: any[] | undefined): string | undefined =>
-    (list || []).map(x => String(x?.certification || '').trim()).find(Boolean);
+    (list || []).map(x => String(x?.certification || '').trim()).find(x => x && x !== '0');
   return (us && from(us.release_dates)) || results.map(r => from(r?.release_dates)).find(Boolean);
 };
 
 const pickTvCert = (results: any[] | undefined): string | undefined => {
   if (!Array.isArray(results)) return undefined;
   const us = results.find(r => r?.iso_3166 === 'US');
-  if (us?.rating) return String(us.rating);
-  const first = results.find(r => r?.rating);
+  if (us?.rating && us.rating !== '0') return String(us.rating);
+  const first = results.find(r => r?.rating && r.rating !== '0');
   return first ? String(first.rating) : undefined;
 };
 
