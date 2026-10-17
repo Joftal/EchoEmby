@@ -168,33 +168,140 @@ const backdropUrl = (p: string): string => `https://image.tmdb.org/t/p/w780${p}`
  *  tier above that, and the largest one TMDB documents for a profile crop. */
 const faceUrl = (p: string): string => `https://image.tmdb.org/t/p/w185${p}`;
 
-/** One index into backdrops drives the whole viewer. Which way the last move went decides how the two
- *  frames slide; 0 means the viewer just opened, so the first frame only fades up. */
+/** One index into backdrops drives the whole viewer, and the rail keeps the five frames around it mounted, so
+ *  a step moves one custom property: nothing is inserted, no decode starts on the click frame, and the
+ *  compositor never has to bring a fresh layer in. That insert stall — plus the instant low-res swap that sat
+ *  underneath it, blending the old frame into the new one — was the flicker. */
 const viewer = ref<number | null>(null);
-const vdir = ref(0);
 const strip = ref<HTMLElement | null>(null);
+const stage = ref<HTMLElement | null>(null);
+const rail = ref<HTMLElement | null>(null);
+/** A jump further than the mounted window has no frames to slide through, so it has to cut. */
+const cut = ref(false);
 
-/** w1920 is the largest TMDB still serves and it is exactly what the window holds at DPR 1.25; the
- *  row's own w780 stays underneath as the soft stand-in while the big frame arrives. */
+/** w1920 is the largest TMDB still serves and it is exactly what the window holds at DPR 1.25. The row's own
+ *  w780 rides along as each frame's background — the same URL the strip already fetched, so it is on screen for
+ *  free and keeps a cold frame from going blank while the big one lands. */
 const bigUrl = (p: string): string => `https://image.tmdb.org/t/p/w1920${p}`;
-const current = computed(() => (viewer.value == null ? '' : backdrops.value[viewer.value] || ''));
+
+/** `k` is the index into backdrops, and placing a frame by (k - cur) is what lets it keep its element across a
+ *  step. Clamped at both ends rather than wrapped: a wrap would drag the whole strip past the window instead of
+ *  moving one frame. */
+const frames = computed(() => {
+  const i = viewer.value;
+  const out: { k: number; p: string }[] = [];
+  if (i == null) return out;
+  for (let k = i - 2; k <= i + 2; k++) {
+    const p = backdrops.value[k];
+    if (p) out.push({ k, p });
+  }
+  return out;
+});
+
+/* Dragging the photo itself: the rail tracks the pointer one-for-one with transitions off, up to one frame's
+   pitch, and the release either finishes the travel or springs back. The gap between two mounted neighbours is
+   exactly one pitch at any moment — they share the slide, the drag and the easing — so it is measured here
+   rather than by writing the CSS geometry out twice. */
+const drag = ref(false);
+const dragPx = ref(0);
+let dragId = -1;
+let dragFrom = 0;
+let dragLastX = 0;
+let dragLastT = 0;
+let dragVel = 0;
+let dragPitch = 1;
+let dragTap: HTMLElement | null = null;
+
+const railStyle = computed(() => ({
+  '--cur': String(viewer.value ?? 0),
+  '--drag': `${dragPx.value}px`,
+  ...(drag.value ? { '--slide': '0s' } : null),
+}));
 
 function openViewer(i: number): void {
-  vdir.value = 0;
+  stopStrip();
   viewer.value = i;
+}
+function closeViewer(): void {
+  viewer.value = null;
+  drag.value = false;
+  dragPx.value = 0;
+  dragId = -1;
+  stopStrip();
+}
+/** A false `slide` only comes from a thumb click, and even then a step or two is worth sliding, because those
+ *  frames are mounted and decoded already; past them the window has a hole where the slide would run. */
+function place(i: number, slide: boolean): void {
+  const at = viewer.value;
+  if (at == null || i < 0 || i >= backdrops.value.length || i === at) return;
+  stopStrip();
+  if (slide || Math.abs(i - at) <= 2) {
+    viewer.value = i;
+    return;
+  }
+  cut.value = true;
+  viewer.value = i;
+  void nextTick(() => {
+    void rail.value?.offsetWidth; // resolve the new offsets while the transitions are still off
+    cut.value = false;
+  });
 }
 function stepViewer(dir: number): void {
   const i = viewer.value;
-  const n = backdrops.value.length;
-  if (i == null || n < 2) return;
-  vdir.value = dir;
-  viewer.value = (i + dir + n) % n;
+  if (i != null) place(i + dir, true);
 }
-function jumpViewer(i: number): void {
-  const at = viewer.value;
-  if (at == null || i === at) return;
-  vdir.value = i > at ? 1 : -1;
-  viewer.value = i;
+function tapViewer(): void {
+  const fr = dragTap?.closest<HTMLElement>('.lb-fr');
+  const k = fr ? Number(fr.dataset.k) : NaN;
+  // The art is still the close surface it was; a neighbour is the one thing a tap sends you to.
+  if (!Number.isInteger(k) || k === viewer.value) closeViewer();
+  else place(k, true);
+}
+function onStageDown(e: PointerEvent): void {
+  const el = rail.value;
+  if (e.button !== 0 || !el || backdrops.value.length < 2 || (e.target as HTMLElement).closest('button')) return;
+  const kids = el.children;
+  const a = kids[0] as HTMLElement | undefined;
+  const b = kids[1] as HTMLElement | undefined;
+  dragPitch = (a && b ? Math.abs(b.getBoundingClientRect().left - a.getBoundingClientRect().left) : a?.getBoundingClientRect().width) || 1;
+  dragId = e.pointerId;
+  dragFrom = e.clientX;
+  dragLastX = e.clientX;
+  dragLastT = e.timeStamp;
+  dragVel = 0;
+  dragTap = e.target as HTMLElement;
+  drag.value = true;
+  stage.value?.setPointerCapture(e.pointerId);
+}
+function onStageMove(e: PointerEvent): void {
+  if (!drag.value || e.pointerId !== dragId) return;
+  const dt = e.timeStamp - dragLastT;
+  if (dt > 0) {
+    dragVel = (e.clientX - dragLastX) / dt;
+    dragLastX = e.clientX;
+    dragLastT = e.timeStamp;
+  }
+  const raw = e.clientX - dragFrom;
+  dragPx.value = Math.max(-dragPitch, Math.min(dragPitch, raw));
+}
+function onStageUp(e: PointerEvent): void {
+  if (!drag.value || e.pointerId !== dragId) return;
+  const dx = dragPx.value;
+  drag.value = false;
+  dragPx.value = 0;
+  dragId = -1;
+  if (stage.value?.hasPointerCapture(e.pointerId)) stage.value.releasePointerCapture(e.pointerId);
+  if (Math.abs(dx) < 6) {
+    tapViewer();
+    return;
+  }
+  // Past a third of a frame, or a real flick in the direction already travelled, the drag owns the step.
+  if (Math.abs(dx) > dragPitch * 0.34 || (Math.abs(dragVel) > 0.35 && Math.sign(dragVel) === Math.sign(dx))) stepViewer(dx > 0 ? -1 : 1);
+}
+function onStageCancel(): void {
+  drag.value = false;
+  dragPx.value = 0;
+  dragId = -1;
 }
 /* The strip is a horizontal rail, so a normal wheel over it should push it sideways rather than scroll nothing.
    It used to merge the deltas and hand each frame a fresh `scrollBy({ behavior: 'smooth' })`, which restarts its
@@ -263,17 +370,17 @@ function centerStrip(i: number): void {
 function onViewerKey(e: KeyboardEvent): void {
   if (viewer.value == null) return;
   if (e.key === 'Escape' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') e.stopPropagation();
-  if (e.key === 'Escape') viewer.value = null;
+  if (e.key === 'Escape') closeViewer();
   else if (e.key === 'ArrowLeft') stepViewer(-1);
   else if (e.key === 'ArrowRight') stepViewer(1);
 }
 
 watch(viewer, i => {
   if (i == null) return;
-  // The arrows ask for one of the two neighbours next, so pull them in while this frame is on screen.
-  const n = backdrops.value.length;
-  for (const d of [-1, 1]) {
-    const p = backdrops.value[(i + d + n) % n];
+  // The rail slides two frames in from each side before anyone looks at them, so pull them in while this frame
+  // is up; a step that has to start a decode is the stall the old insert used to dress up as a flicker.
+  for (const d of [-2, -1, 1, 2]) {
+    const p = backdrops.value[i + d];
     if (p) new Image().src = bigUrl(p);
   }
   void nextTick(() => centerStrip(i));
@@ -894,33 +1001,28 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
 
     <Teleport to="body">
       <Transition name="lightbox">
-        <div v-if="viewer !== null" class="lightbox" role="dialog" aria-modal="true" aria-label="剧照大图" @click.self="viewer = null" @wheel.prevent>
-          <button type="button" class="lb-x" aria-label="关闭" @click="viewer = null">
+        <div v-if="viewer !== null" class="lightbox" role="dialog" aria-modal="true" aria-label="剧照大图" @click.self="closeViewer" @wheel.prevent>
+          <button type="button" class="lb-x" aria-label="关闭" @click="closeViewer">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6.5 6.5 17.5 17.5M17.5 6.5 6.5 17.5" /></svg>
           </button>
 
-          <div class="lb-stage" @click.self="viewer = null">
-            <img class="lb-lores" :src="current ? backdropUrl(current) : ''" alt="" decoding="async" />
-            <!-- The `key` is what makes a step animate at all. Without it Vue patches `src` on the same
-                element, a Transition only fires on insert and remove, and the four `.lb-nx`/`.lb-pv` class
-                sets — which carry a leave half that can never apply to an element that is never removed — sat
-                unused. Measured on the old build: same node across a step, opacity 1 and transform `none`
-                throughout, getAnimations() empty. Both frames are `position: absolute; inset: 0`, so they
-                overlap by construction and the row keeps its size while the art slides past itself. -->
-            <Transition :name="vdir > 0 ? 'lb-nx' : vdir < 0 ? 'lb-pv' : 'lb-fade'">
-              <img v-if="current" :key="current" class="lb-img" :src="bigUrl(current)" alt="" decoding="async" />
-            </Transition>
-            <button v-if="backdrops.length > 1" type="button" class="lb-edge left" aria-label="上一张" @click.stop="stepViewer(-1)">
+          <div ref="stage" class="lb-stage" :class="{ grab: drag }" @pointerdown="onStageDown" @pointermove="onStageMove" @pointerup="onStageUp" @pointercancel="onStageCancel">
+            <div ref="rail" class="lb-rail" :class="{ cut }" :style="railStyle">
+              <div v-for="f in frames" :key="f.k" class="lb-fr" :class="{ on: f.k === viewer }" :data-k="f.k" :style="{ '--k': f.k, backgroundImage: `url('${backdropUrl(f.p)}')` }">
+                <img :src="bigUrl(f.p)" alt="" draggable="false" decoding="async" />
+              </div>
+            </div>
+            <button v-if="backdrops.length > 1" type="button" class="lb-edge left" aria-label="上一张" :disabled="viewer === 0" @click.stop="stepViewer(-1)">
               <svg viewBox="0 0 24 24" width="19" height="19"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" /></svg>
             </button>
-            <button v-if="backdrops.length > 1" type="button" class="lb-edge right" aria-label="下一张" @click.stop="stepViewer(1)">
+            <button v-if="backdrops.length > 1" type="button" class="lb-edge right" aria-label="下一张" :disabled="viewer === backdrops.length - 1" @click.stop="stepViewer(1)">
               <svg viewBox="0 0 24 24" width="19" height="19"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" /></svg>
             </button>
           </div>
 
           <footer class="lb-foot">
             <div ref="strip" class="lb-strip" @wheel.prevent.stop="onStripWheel">
-              <button v-for="(b, i) in backdrops" :key="i" type="button" class="lb-th" :class="{ on: i === viewer }" @click="jumpViewer(i)">
+              <button v-for="(b, i) in backdrops" :key="i" type="button" class="lb-th" :class="{ on: i === viewer }" @click="place(i, false)">
                 <img v-reveal :src="backdropUrl(b)" alt="" draggable="false" loading="lazy" decoding="async" />
               </button>
             </div>
@@ -1367,11 +1469,52 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
   transition: background var(--hov) var(--ease);
 }
 .lb-x:hover { background: rgba(255, 255, 255, 0.24); }
-.lb-stage { position: relative; overflow: hidden; }
-.lb-lores,
-.lb-img {
+.lb-stage {
+  /* The centre frame is the thing you look at; the two beside it only have to say there is more. 68% keeps a
+     slice of each neighbour inside the stage once they are scaled down, and the pitch is a frame's own box plus
+     a 2% gap, so the peek stays a fixed share of the window at any size. */
+  --frame-w: 68%;
+  --pitch: 102%;
+  position: relative;
+  overflow: hidden;
+  touch-action: none;
+}
+.lb-stage.grab { cursor: grabbing; }
+.lb-rail {
   position: absolute;
   inset: 0;
+  --slide: 0.42s;
+  /* Neighbours come in and out at the edges rather than being cut straight across there, which is the same soft
+     edge the filmstrip already has. */
+  mask-image: linear-gradient(90deg, transparent, #000 30px, #000 calc(100% - 30px), transparent);
+}
+.lb-fr {
+  --sc: 0.9;
+  --dim: 0.42;
+  position: absolute;
+  top: 0;
+  left: calc((100% - var(--frame-w)) / 2);
+  width: var(--frame-w);
+  height: 100%;
+  /* One custom property drives the whole move, so a step inserts nothing: the frames that are already on screen
+     keep their layers and the shift is a plain transform on what is already composited. */
+  transform: translate3d(calc((var(--k) - var(--cur)) * var(--pitch) + var(--drag)), 0, 0) scale(var(--sc));
+  /* Dimming through opacity rather than a filter: the ground here is (8,8,12), so blending 58% of it into the
+     art lands within a hair of brightness(0.42) and costs the compositor nothing. */
+  opacity: var(--dim);
+  background-position: center;
+  background-size: contain;
+  background-repeat: no-repeat;
+  cursor: pointer;
+  user-select: none;
+  transition: transform var(--slide) var(--ease-out), opacity var(--slide) var(--ease);
+}
+.lb-fr.on { --sc: 1; --dim: 1; cursor: zoom-out; }
+/* The cut class goes away after a forced reflow, so the frames land on their new offsets while the transition
+   is still switched off and there is nothing left to interpolate. */
+.lb-rail.cut .lb-fr { transition: none; }
+.lb-fr img {
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: contain;
@@ -1397,8 +1540,11 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
 }
 .lb-edge.left { left: 14px; }
 .lb-edge.right { right: 14px; }
-.lb-edge:hover { opacity: 1; background: rgba(255, 255, 255, 0.22); }
-.lb-edge:active { opacity: 1; background: rgba(255, 255, 255, 0.3); }
+.lb-edge:hover:not(:disabled) { opacity: 1; background: rgba(255, 255, 255, 0.22); }
+.lb-edge:active:not(:disabled) { opacity: 1; background: rgba(255, 255, 255, 0.3); }
+/* Clamped rather than wrapped, so the first and last still have an arrow that goes nowhere. It stays in place
+   and only dims: an arrow that appeared and disappeared would shove the peek underneath it. */
+.lb-edge:disabled { opacity: 0.12; cursor: default; }
 .lb-foot { display: flex; flex-direction: column; align-items: center; gap: 10px; cursor: default; }
 .lb-strip {
   display: flex;
@@ -1440,19 +1586,6 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
 .lightbox-leave-active { transition: opacity 0.22s var(--ease); }
 .lightbox-enter-from,
 .lightbox-leave-to { opacity: 0; }
-/* Both frames of a step are on screen at once, so the row keeps its size and the art slides past itself. */
-.lb-fade-enter-active,
-.lb-nx-enter-active,
-.lb-pv-enter-active,
-.lb-fade-leave-active,
-.lb-nx-leave-active,
-.lb-pv-leave-active { transition: opacity var(--hov) var(--ease), transform 0.36s var(--ease-out); }
-.lb-fade-enter-from,
-.lb-fade-leave-to { opacity: 0; transform: scale(0.985); }
-.lb-nx-enter-from { opacity: 0; transform: translate3d(52px, 0, 0); }
-.lb-nx-leave-to { opacity: 0; transform: translate3d(-52px, 0, 0); }
-.lb-pv-enter-from { opacity: 0; transform: translate3d(-52px, 0, 0); }
-.lb-pv-leave-to { opacity: 0; transform: translate3d(52px, 0, 0); }
 /* The dim a sibling switch puts on the text while the new title loads. The hero art is not part of
    it: the art cross-fades old frame to new frame instead, which is the continuity the switch needs. */
 .sw {
