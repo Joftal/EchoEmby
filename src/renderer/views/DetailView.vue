@@ -186,8 +186,18 @@ const plateSrc = computed(() => seedFor(props.id) || heroPoster.value);
 /** Ranked title treatments for this item; TitleArt walks them and falls back to the name. */
 const titleUrls = ref<string[]>([]);
 
-/** The row this hero is about, as the shared button reads it: null when nothing has been started. */
-const resume = computed(() => resumeTarget(item.value, isSeries.value || isSeason.value ? episodes.value : []));
+/** The 在看 rows the lobby pulled, still in hand on this page. `resume` reads them before it reads the
+ *  season, so nothing here waits for a request to know where the viewer stopped. */
+const resumeRow = computed(() => app.rows.find(r => r.key === 'resume')?.items || []);
+/** The row this hero is about, as the shared button reads it: null when nothing has been started.
+ *  The rows above go in first because they cost no request: a Series used to paint a bare 「播放」 while the
+ *  season query was in flight and only then grow its caption, and that step measured 156 -> 290px taken off
+ *  the top of the synopsis - the paragraph re-wrapped one beat after the hero had already arrived. Joining
+ *  the same row as the lobby also keeps the two buttons honest: same title, same stopped episode, no matter
+ *  which one was clicked. */
+const resume = computed(() =>
+  resumeTarget(item.value, isSeries.value || isSeason.value ? [...resumeRow.value, ...episodes.value] : []),
+);
 /** The one item the play button is about: the episode still in progress, else the first of the season.
  *  Everything the button says and plays comes from here, so the two cannot disagree. */
 const playTarget = computed<LibraryItem | null>(
