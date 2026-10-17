@@ -82,7 +82,7 @@ const sub = computed(() => {
   const i = props.item;
   if (i.latestEpisode) return episodePosition(i.latestEpisode.season ?? 1, i.latestEpisode.episode);
   if (i.indexNumber != null) return episodePosition(i.parentIndexNumber, i.indexNumber);
-  if (i.childCount) return `${i.childCount} 季`;
+  if (i.childCount) return `${i.childCount} ${i.type === 'BoxSet' ? '部' : '季'}`;
   return '';
 });
 /** How far in you got, not how far is left — the same read-out every other surface now uses. */
