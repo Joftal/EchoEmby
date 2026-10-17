@@ -179,9 +179,9 @@ watch(
 
 const heroBackdrop = ref('');
 const heroPoster = ref('');
-/** What the plate shows. The card art this page was opened from is already in hand at the first frame, so
- *  the flight has a landing rectangle and hands over the same decoded pixels; the item's own poster is only
- *  asked for when there is no such art, because swapping the url mid-flight would blank the plate. */
+/** What the plate paints: the card art this page was opened from, or the item's own once the server has
+ *  it. The card's copy wins for as long as it is the same picture, because it was already on screen and
+ *  the plate has nothing to wait for; it is only handed over when the two shapes differ. */
 const plateSrc = computed(() => seedFor(props.id) || heroPoster.value);
 /** Ranked title treatments for this item; TitleArt walks them and falls back to the name. */
 const titleUrls = ref<string[]>([]);
@@ -397,7 +397,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
         >
           <div class="copy sw" :class="{ on: swap }">
             <div v-if="plateSrc" class="art">
-              <img :src="plateSrc" alt="" decoding="async" />
+              <img v-if="plateSrc" :src="plateSrc" alt="" decoding="async" />
             </div>
             <div class="text">
               <TitleArt :urls="titleUrls" :name="item.name" />
@@ -655,7 +655,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
   /* Where the wide backdrop sits when it is taller than the band. */
   --hero-pos: center 22%;
   /* The hero's own dim, in one place: the real band paints it over its photo, and the first-arrival
-     skeleton paints it over nothing, so the shape the wipe uncovers is the shape that stays. */
+     skeleton paints it over nothing, so the shape the page arrives with is the shape that stays. */
   --hero-ramp:
     linear-gradient(to top, rgba(6, 8, 14, 0.86) 0, rgba(6, 8, 14, 0.82) 120px, rgba(6, 8, 14, 0.5) max(240px, 42%), rgba(6, 8, 14, 0.12) max(400px, 72%), transparent 100%),
     linear-gradient(90deg, rgba(6, 8, 14, 0.5) 0%, rgba(6, 8, 14, 0.12) 46%, transparent 72%);
@@ -700,11 +700,11 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
   align-items: flex-end;
   gap: 20px;
 }
-/* The poster plate: the same 2:3 shape and rounding the lobby hero uses, so the art a card was drawn
-   with grows into it as the same picture. Bottom-aligned with the copy, so its rectangle does not move
-   when the text above it changes height — which is what makes it safe to fly onto. */
+/* The plate is sized by height rather than width, so it keeps the same box whatever the art is and does not
+   move when the text beside it changes height — the property that used to have to hold still while a clone
+   was aimed at it. */
 .art {
-  width: clamp(120px, 14vw, 196px);
+  height: clamp(348px, 46vh, 430px);
   flex: none;
   aspect-ratio: 2 / 3;
   border-radius: var(--radius);
@@ -732,6 +732,11 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
   -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  /* The four lines this paragraph is allowed to reach, claimed before the text arrives. The copy column is
+     pinned at its bottom and this is its last row, so a one-line synopsis pulled the meta line and the score
+     row up by 69px and left the placeholder's bars floating where a full paragraph lands. Reserving the
+     clamp fixes the hero's shape, and the swap becomes a dissolve instead of a slide. */
+  min-height: 92.4px;
 }
 /* Same split as the lobby hero: the actions answer for the right edge, flush against it even when
    the copy column shrinks at the minimum window. */
@@ -1046,18 +1051,27 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
   opacity: 0;
   transform: translate3d(0, 6px, 0);
 }
+/* Two frames of one band, crossing: the old photo lifts past the lens and fades while the new one comes up
+   to meet it. Both are `position: absolute; inset: 0` in `.stage`, so they overlap by construction — and
+   this is the one place a crossfade is the right answer rather than doubled text, because the two frames
+   are the same shape in the same place. It is what a sibling switch shows you: the page stays, only the
+   title changes. */
 .heroart-enter-active,
 .heroart-leave-active {
-  transition: opacity 0.34s var(--ease);
+  transition: opacity var(--arrive-dur) var(--ease), transform var(--arrive-dur) var(--ease);
 }
-.heroart-enter-from,
+.heroart-enter-from {
+  opacity: 0;
+  transform: scale(0.97);
+}
 .heroart-leave-to {
   opacity: 0;
+  transform: scale(1.03);
 }
-/* Blocks cascade in as they arrive instead of popping in one frame apart. They mount once per title,
-   so a sibling switch that only swaps their data does not replay the rise. */
+/* Blocks are placed as the page settles, one after another. They mount once per title, so a sibling
+   switch that only swaps their data replays nothing. */
 .flow > .block {
-  animation: block-in 0.34s var(--ease) both;
+  animation: block-in var(--arrive-dur) var(--ease-out) backwards;
 }
 .flow > .block:nth-child(2) {
   animation-delay: 0.06s;
@@ -1068,35 +1082,37 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
 .flow > .block:nth-child(4) {
   animation-delay: 0.18s;
 }
-@keyframes block-in {
-  from {
-    opacity: 0;
-    transform: translate3d(0, 10px, 0);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
+/* The two rows that follow the first one are generic — a cast band, a stills rail, a poster rail, in no
+   order the placeholder can know about — so they take the shape all three share: the HScroller's own
+   chrome (16 above the header, its 28px line box, 11 to the track, 6 above the cards, 20 and 4 below)
+   around a 150px poster with the 49.5px its two label lines will need. That adds up to 359.5px, which is
+   what the real 相似作品 row measures, so the row below this one does not move when it lands. */
+.skb {
+  padding-top: 16px;
+  padding-bottom: 4px;
 }
 .skb .skhd {
   width: 190px;
-  height: 20px;
-  margin-bottom: 14px;
+  height: 28px;
+  margin-bottom: 11px;
   border-radius: 6px;
   background: var(--shimmer);
-  background-size: 220% 100%;
+  background-size: var(--sk-tile) 100%;
   animation: sh 1.3s linear infinite;
 }
 .skb .skrow {
   display: flex;
   gap: 14px;
+  padding: 6px var(--side) 20px 0;
+  overflow: hidden;
 }
 .skb .skcd {
   width: 150px;
   aspect-ratio: 2 / 3;
+  margin-bottom: 49.5px;
   border-radius: var(--radius);
   background: var(--shimmer);
-  background-size: 220% 100%;
+  background-size: var(--sk-tile) 100%;
   animation: sh 1.3s linear infinite;
 }
 </style>

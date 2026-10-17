@@ -160,8 +160,8 @@ h1 {
   gap: 14px;
   align-items: start;
 }
-/* The cards come out of the config read, so they land after the page carrying them has already been wiped
-   in. Each one fades as it mounts instead of the grid filling in a single frame. */
+/* The cards come out of the config read, so they land after the page carrying them has already arrived.
+   Each one fades as it mounts instead of the grid filling in a single frame. */
 .list > * {
   animation: fade-in 0.3s var(--ease) both;
 }

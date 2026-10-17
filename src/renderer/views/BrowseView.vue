@@ -584,7 +584,7 @@ h1 {
   border-radius: var(--r-badge);
   margin: 6.5px 0 17.4px;
   background: var(--shimmer);
-  background-size: 220% 100%;
+  background-size: var(--sk-tile) 100%;
   animation: sh 1.3s linear infinite;
 }
 .rsk .cards {
@@ -601,7 +601,7 @@ h1 {
   margin-bottom: 49.3px;
   border-radius: var(--radius);
   background: var(--shimmer);
-  background-size: 220% 100%;
+  background-size: var(--sk-tile) 100%;
   animation: sh 1.3s linear infinite;
 }
 .rsk .cd:nth-child(n + 7) {
@@ -642,7 +642,7 @@ h1 {
   width: 100%;
   height: 100%;
   background: var(--shimmer);
-  background-size: 220% 100%;
+  background-size: var(--sk-tile) 100%;
   animation: sh 1.3s linear infinite;
 }
 .sk .cell:nth-child(n + 13) {

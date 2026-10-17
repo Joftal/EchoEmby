@@ -89,24 +89,21 @@ async function onPlay(item: LibraryItem): Promise<void> {
    cached tree sits detached, so the lobby has to notice it came back to nothing. */
 let savedScroll = 0;
 
-/** Re-attaching the kept tree still restarts the CSS animations inside it: measured on 返回, all nine
- *  rows and their cards played their entrance again on top of the page wipe (row 1 at opacity 0.12 while
- *  the wipe was still 98% closed). Those belong to the first arrival, so they are snapped to their end
- *  state in this hook, which runs before the frame is painted. The page's own move and the loops that
- *  never end — the carousel, the shimmers — are not entrances and are left running. */
-const ENTRANCE = /^(fade-in|card-in|block-in)/;
-let firstShow = true;
+/** Re-attaching the kept tree restarts every CSS animation inside it: measured on 返回, 50 posters played
+ *  `card-in` from opacity 0 again, under the page that was pushing in. An entrance is a one-shot, so an element is
+ *  pinned the moment its own has finished — which leaves the resting style exactly where the fill had it,
+ *  since every one of these keyframes starts at opacity 0 and none holds a value the element lacks. Rows
+ *  further down that have not been revealed yet are untouched and still animate when they scroll in, and
+ *  the loops that never end — the carousel, the shimmers — are not entrances and are not matched here.
+ *  Snapping them from `onActivated` was the first version and does not work: the hook runs ~80ms before the
+ *  re-inserted tree gets its animations, so it finished 14 of them and missed all 50. */
+const ENTRANCE = /^(fade-in|card-in|row-in)$/;
 
-function settleReplays(root: HTMLElement | null): void {
-  if (!root) return;
-  for (const a of root.getAnimations({ subtree: true })) {
-    if (ENTRANCE.test((a as CSSAnimation).animationName || '')) a.finish();
-  }
+function pinEntrance(e: AnimationEvent): void {
+  if (ENTRANCE.test(e.animationName)) (e.target as HTMLElement).style.animationName = 'none';
 }
 
 onActivated(async () => {
-  if (firstShow) firstShow = false;
-  else settleReplays(scroller.value);
   const el = scroller.value;
   if (el) {
     el.scrollTop = savedScroll;
@@ -131,10 +128,10 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="scroller" class="page" @scroll.passive="onScroll">
+  <div ref="scroller" class="page" @scroll.passive="onScroll" @animationend="pinEntrance">
     <Transition name="hero-swap">
       <HeroBanner v-if="features.length" :items="features" :scroll="scroll" :resume="resume" @play="onPlay" @open="open" />
-      <HeroSkeleton v-else />
+      <HeroSkeleton v-else layout="lobby" />
     </Transition>
 
     <p v-if="store.error && !store.rows.length" class="err">
@@ -206,7 +203,8 @@ onBeforeUnmount(() => {
 }
 /* A cold lobby answers every shelf in the same frame (measured: all nine rows and the hero inserted at
    4570ms), so the rows take the detail page's cascade instead of arriving as one block. Opacity only —
-   the cards inside each row already rise 22px, and a transform here would stack on top of that. */
+   the cards inside each row already rise 14px on their own stagger, and a transform here would stack on
+   top of that. */
 .flow > .row {
   animation: fade-in 0.34s var(--ease) both;
 }
@@ -266,7 +264,7 @@ onBeforeUnmount(() => {
   border-radius: var(--r-badge);
   margin: 6.5px 0 17.4px;
   background: var(--shimmer);
-  background-size: 220% 100%;
+  background-size: var(--sk-tile) 100%;
   animation: sh 1.3s linear infinite;
 }
 .cards {
@@ -283,7 +281,7 @@ onBeforeUnmount(() => {
   margin-bottom: 49.3px;
   border-radius: var(--radius);
   background: var(--shimmer);
-  background-size: 220% 100%;
+  background-size: var(--sk-tile) 100%;
   animation: sh 1.3s linear infinite;
 }
 .cd:nth-child(n + 7) {

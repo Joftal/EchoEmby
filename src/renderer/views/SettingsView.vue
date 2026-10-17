@@ -149,8 +149,9 @@ async function runProbe(): Promise<void> {
   <div class="page">
     <div v-if="!settings || !player || !dm" class="col">
       <header class="head"><i class="sk skh"></i></header>
+      <i class="sk sks"></i>
       <div class="rows">
-        <div v-for="n in 5" :key="n" class="row">
+        <div v-for="n in 8" :key="n" class="row">
           <i class="sk skk"></i>
           <i class="sk skg"></i>
         </div>
@@ -370,13 +371,13 @@ async function runProbe(): Promise<void> {
   padding: calc(var(--titlebar-h) + 22px) var(--side) 46px var(--gutter);
   transition: padding var(--rail-dur) var(--rail-ease);
 }
-/* The page is only drawn once all three blocks have come back from the config read, and a wipe that
+/* The page is only drawn once all three blocks have come back from the config read, and a page turn that
    uncovers a bare column reads as a page that failed rather than one that is thinking. These are the real
    cards with their contents pressed in, at the height the rows have. */
 .sk {
   display: block;
   background: var(--shimmer);
-  background-size: 220% 100%;
+  background-size: var(--sk-tile) 100%;
   animation: sh 1.3s linear infinite;
 }
 .skh {
@@ -389,9 +390,19 @@ async function runProbe(): Promise<void> {
   height: 15px;
 }
 .skg {
+  /* Measured against the real control: the segmented picker draws 40.2 and the row is that plus its own
+     15+15 of padding and a hairline, so this pill is what sets the row's 71.8 and the bar beside it cannot
+     be allowed to. */
   width: 132px;
-  height: 30px;
+  height: 40.2px;
   border-radius: 999px;
+}
+.sks {
+  /* The section line above the first block of rows: 20 tall with the real 12 under it. */
+  width: 132px;
+  height: 20px;
+  margin-bottom: 12px;
+  border-radius: var(--r-badge);
 }
 .col {
   max-width: 720px;
@@ -399,6 +410,11 @@ async function runProbe(): Promise<void> {
 }
 .head {
   margin-bottom: 20px;
+  /* The header box the h1 makes, so the section line and every row under it start on the line they will
+     land on; the bar rides the same middle band the title's ink does. */
+  min-height: 46.5px;
+  display: flex;
+  align-items: center;
 }
 h1 {
   margin: 0;

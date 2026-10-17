@@ -70,7 +70,7 @@ function need(it: LibraryItem | null): void {
 }
 
 function openDetail(): void {
-  // The plate is the hero art itself, so the flight starts from pixels that are already on screen.
+  // The banner's plate is the poster itself, so the page it opens can start from pixels already on screen.
   if (detailId.value) begin(plate.value, detailId.value, current.value);
   const it = current.value;
   if (it) emit('open', it);
@@ -382,6 +382,16 @@ watch(
   line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  /* Claimed up front for the same reason the detail page reserves its four: the strip below this is the
+     row the bottom of the column pins to, so a short synopsis does not just sit shorter, it drags the
+     title and the meta line down by the difference, slide by slide, as the carousel turns. */
+  min-height: calc(2 * 13.5px * 1.62);
+}
+/* Same reason as the strip's height below: this row is the last one in the column, so its box is what
+   everything above it is measured from. The marks reach 26 when a platform logo has answered and 0 when
+   none has, and the row cannot be allowed to move the title. */
+.strip {
+  min-height: 26px;
 }
 /* Below a ~754px window the 460px floor binds, so the copy block is then ~2/3 of the hero.
    Dropping the synopsis to one line pulls the title's top line down into the ramp's plateau. */
@@ -389,6 +399,7 @@ watch(
   .ov {
     -webkit-line-clamp: 1;
     line-clamp: 1;
+    min-height: calc(1 * 13.5px * 1.62);
   }
 }
 /* The actions answer for the hero's right edge: the copy column keeps its reading width, and the
