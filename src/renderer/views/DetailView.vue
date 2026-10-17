@@ -1470,11 +1470,11 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
 }
 .lb-x:hover { background: rgba(255, 255, 255, 0.24); }
 .lb-stage {
-  /* The centre frame is the thing you look at; the two beside it only have to say there is more. 68% keeps a
-     slice of each neighbour inside the stage once they are scaled down, and the pitch is a frame's own box plus
-     a 2% gap, so the peek stays a fixed share of the window at any size. */
-  --frame-w: 68%;
-  --pitch: 102%;
+  /* The centre frame is the foreground and the two beside it are only the promise that there is more, so it
+     takes 76% of the stage and the pitch is exactly one frame box, which leaves each neighbour a 78 px sliver
+     at the shoulder, scaled down to 0.84 and a fixed share of the window at any size. */
+  --frame-w: 76%;
+  --pitch: 100%;
   position: relative;
   overflow: hidden;
   touch-action: none;
@@ -1489,8 +1489,8 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
   mask-image: linear-gradient(90deg, transparent, #000 30px, #000 calc(100% - 30px), transparent);
 }
 .lb-fr {
-  --sc: 0.9;
-  --dim: 0.42;
+  --sc: 0.84;
+  --dim: 0.24;
   position: absolute;
   top: 0;
   left: calc((100% - var(--frame-w)) / 2);
@@ -1499,8 +1499,8 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
   /* One custom property drives the whole move, so a step inserts nothing: the frames that are already on screen
      keep their layers and the shift is a plain transform on what is already composited. */
   transform: translate3d(calc((var(--k) - var(--cur)) * var(--pitch) + var(--drag)), 0, 0) scale(var(--sc));
-  /* Dimming through opacity rather than a filter: the ground here is (8,8,12), so blending 58% of it into the
-     art lands within a hair of brightness(0.42) and costs the compositor nothing. */
+  /* Dimming through opacity rather than a filter: the ground here is (8,8,12), so a side frame carries 76%
+     of a near-black wash laid over the art, the depth a brightness() would give at no compositor cost. */
   opacity: var(--dim);
   background-position: center;
   background-size: contain;
