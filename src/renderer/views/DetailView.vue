@@ -196,9 +196,22 @@ function jumpViewer(i: number): void {
   vdir.value = i > at ? 1 : -1;
   viewer.value = i;
 }
-/** The strip is a horizontal rail, so a normal wheel over it should push it sideways rather than scroll nothing. */
+/* The strip is a horizontal rail, so a normal wheel over it should push it sideways rather than scroll nothing.
+   The deltas are merged into one move per frame because a trackpad fires an event every ~16 ms and a smooth
+   scroll restarted that often never gets going. It used to be `scrollLeft += delta`, which teleported: one
+   notch put the rail 300 px away in a single frame, while a click on a thumb eased the same rail over ~700 ms.
+   Two hands on one rail, and only one of them was smooth. */
+let stripDelta = 0;
+let stripFrame = 0;
 function onStripWheel(e: WheelEvent): void {
-  if (strip.value) strip.value.scrollLeft += e.deltaY || e.deltaX;
+  stripDelta += e.deltaY || e.deltaX;
+  if (stripFrame) return;
+  stripFrame = requestAnimationFrame(() => {
+    stripFrame = 0;
+    const d = stripDelta;
+    stripDelta = 0;
+    strip.value?.scrollBy({ left: d, behavior: 'smooth' });
+  });
 }
 function onViewerKey(e: KeyboardEvent): void {
   if (viewer.value == null) return;
@@ -222,7 +235,12 @@ watch(viewer, i => {
 /* Capture phase, because the titlebar owns Esc as 「go home」 on the same window and registers before this
    view mounts; listening in the bubble phase would close the still and bounce out of the page with it. */
 onMounted(() => window.addEventListener('keydown', onViewerKey, true));
-onBeforeUnmount(() => window.removeEventListener('keydown', onViewerKey, true));
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onViewerKey, true);
+  if (stripFrame) cancelAnimationFrame(stripFrame);
+  stripFrame = 0;
+  stripDelta = 0;
+});
 
 const faces = ref<Record<string, string>>({});
 watch(
@@ -1345,6 +1363,10 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
   overflow-x: auto;
   padding: 4px 2px;
   scrollbar-width: none;
+  /* The selected thumb is the only thing here worth snapping to: a wheel that stops with the frame you are
+     looking at clipped in half under the edge fade reads as lost, and that is where a click already centers
+     it. Proximity, so wheeling away to browse is never pulled back. */
+  scroll-snap-type: x proximity;
   /* Same edge fade as the rail's list: a thumb clipped straight in half reads as broken, not as scrollable. */
   mask-image: linear-gradient(90deg, transparent, #000 22px, #000 calc(100% - 22px), transparent);
 }
@@ -1363,7 +1385,7 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
   transition: opacity var(--hov) var(--ease), transform var(--hov) var(--ease-out), border-color var(--hov) var(--ease);
 }
 .lb-th:hover { opacity: 0.8; transform: translateY(-2px); }
-.lb-th.on { opacity: 1; border-color: rgba(255, 255, 255, 0.9); transform: none; }
+.lb-th.on { opacity: 1; border-color: rgba(255, 255, 255, 0.9); transform: none; scroll-snap-align: center; }
 .lb-th img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .lb-count { margin: 0; font-size: 13px; font-weight: 600; color: rgba(255, 255, 255, 0.72); font-variant-numeric: tabular-nums; letter-spacing: 0.03em; }
 
