@@ -464,7 +464,6 @@ export interface DanmakuQuery {
   itemId: string;
   title: string;
   seriesName?: string;
-  season?: number;
   episode?: number;
 }
 

@@ -78,7 +78,7 @@ const authHeader = (id: Identity, token?: string): string =>
   `MediaBrowser Client="${id.clientName}", Device="${id.deviceName}", DeviceId="${id.deviceId}", Version="${id.clientVersion}"${token ? `, Token="${token}"` : ''}`;
 
 const FIELDS =
-  'BasicSyncInfo,CanDelete,CanDownload,PrimaryImageAspectRatio,ProductionYear,Status,EndDate,CommunityRating,OfficialRating,Overview,MediaStreams,Container,Bitrate,VideoRange,Width,Height,SeriesName,SeriesId,ParentId,ChildCount,Genres,PremiereDate,Studio,Studios,ProviderIds,OriginalTitle,DateCreated';
+  'BasicSyncInfo,CanDelete,CanDownload,PrimaryImageAspectRatio,ProductionYear,Status,CommunityRating,OfficialRating,Overview,MediaStreams,Container,Bitrate,VideoRange,Width,Height,SeriesName,SeriesId,ParentId,ChildCount,Genres,PremiereDate,Studio,Studios,ProviderIds,OriginalTitle,DateCreated';
 
 /** People and Taglines are detail-only: on the list endpoints People would multiply every row by the
  *  cast size. DateCreated does come back on a list row when it is asked for, and the search page's

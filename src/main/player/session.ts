@@ -204,7 +204,6 @@ export class PlayerController {
       itemId: item.id,
       title: item.name,
       seriesName: item.type === 'Episode' ? item.seriesName || item.name : item.name,
-      season: item.parentIndexNumber,
       episode: item.indexNumber,
     };
   }
