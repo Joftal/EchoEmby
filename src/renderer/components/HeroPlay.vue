@@ -13,8 +13,8 @@ const emit = defineEmits<{ (e: 'play'): void }>();
       <path d="M8 5v14l11-7z" fill="currentColor" stroke="currentColor" stroke-width="3" stroke-linejoin="round" />
     </svg>
     <span class="txt">
-      <b>{{ busy ? '准备中…' : target ? '继续播放' : '播放' }}</b>
-      <i v-if="target">{{ target.caption }}</i>
+      <b>{{ busy ? '准备中…' : target?.resumed ? '继续播放' : '播放' }}</b>
+      <i v-if="target?.caption">{{ target.caption }}</i>
     </span>
   </button>
 </template>

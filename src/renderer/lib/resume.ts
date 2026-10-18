@@ -1,38 +1,75 @@
 import type { LibraryItem } from '../../shared/types';
 import { episodePosition, seenLabel, stoppedAtMs } from './format';
 
-/** What a hero's play button stands for: the item it will hand the player, and the sentence under the
- *  label. Null means nothing is in progress, and the button goes back to saying 「播放」. */
+/** What a hero's play button stands for: the row it hands the player, and the sentence under the label.
+ *  Null means this page holds no row to play — the button then opens the title's own page and lets that
+ *  page resolve its first episode, so a slide stops being clickable only when nothing can play it. */
 export interface ResumeTarget {
   /** Not always the hero's own card: a Series resumes into the episode that stopped. */
   item: LibraryItem;
+  /** Whether the server said *how far* the viewer got. 「继续播放」 is only honest with a position behind
+   *  it, and a gateway can name the stopped episode while leaving the offset at 0 — measured on nyamedia,
+   *  9 of its 11 在看 rows are that kind of row. Those buttons say 「播放」 over the episode they will
+   *  really open. */
+  resumed: boolean;
+  /** 「第 1 季 · 第 2 集 · 看到 27:06」, and only the halves this server answered. The same `seenLabel` the
+   *  episode card's own chip prints, so one episode cannot wear two of them. */
   caption: string;
 }
 
-const PLAYABLE = ['Movie', 'Episode', 'Video'];
+/** The shapes the player can be handed a file for. A `Series` is not one of them — it names no media
+ *  source — and neither is a `Season`, which is why the lobby reaches an episode through its page.
+ *  One list on purpose: this gate read twice made a slide lose its button on one host and not the other. */
+export const PLAYABLE = ['Movie', 'Episode', 'Video'];
 
-/** How far in, in the words the hero has room for: 「第 1 季 · 第 2 集 · 看到 27:06」. The same
- *  `seenLabel` the episode card's own chip prints, so one episode cannot wear two of them. */
-function target(it: LibraryItem): ResumeTarget {
-  const where = it.type === 'Episode' ? episodePosition(it.parentIndexNumber, it.indexNumber) : '';
-  const seen = seenLabel(it.userData, it.runTimeTicks);
-  return { item: it, caption: where ? `${where} · ${seen}` : seen };
+/** The page types whose hero can hold a play button: the three above, plus the two that name an episode
+ *  through their season list. A 合集/播放列表/资源库 page names no file at all, so its hero has no button
+ *  rather than one that answers 「服务器出错了（HTTP 500）」. */
+export const PLAYABLE_PAGE = [...PLAYABLE, 'Series', 'Season'];
+
+const stopped = (it: LibraryItem): number => stoppedAtMs(it.userData, it.runTimeTicks);
+
+function target(it: LibraryItem, seasonNamed = false): ResumeTarget {
+  // A Season page already prints its own season above the button, so restating it there buys nothing.
+  const where = it.type === 'Episode' ? episodePosition(seasonNamed ? null : it.parentIndexNumber, it.indexNumber) : '';
+  return {
+    item: it,
+    resumed: stopped(it) > 0,
+    caption: [where, seenLabel(it.userData, it.runTimeTicks)].filter(Boolean).join(' · '),
+  };
 }
 
-/** The row a hero's button should resume, or null when nothing has been started.
+/** Rows the *same* server answers twice — the 在看 row and a Latest row are two objects over one item —
+ *  so membership is read by id, not by identity. */
+const inSet = (list: LibraryItem[], it: LibraryItem): boolean => list.some(x => x.id === it.id);
+
+/** The row a hero's button should play, or null when nothing on this page says which file to open.
  *  `candidates` are the rows the page already holds for this title — the lobby's 继续观看 row, the
  *  detail page's season — because a Series or Season card carries no position of its own (measured: its
- *  UserData answers UnplayedItemCount and 8 rows, nothing about where the viewer stopped). */
-export function resumeTarget(item: LibraryItem | null, candidates: LibraryItem[] = []): ResumeTarget | null {
+ *  UserData answers UnplayedItemCount and 8 rows, nothing about where the viewer stopped).
+ *  `flagged` is the half of those the server itself returned as in progress, and it is what lets a row
+ *  count without an offset. A season's episode list must not be read that way: every one of its rows
+ *  matches the same query, so 第 1 集 — never opened — would land under a button labelled 播放.
+ *  `seasonNamed` drops the 「第 N 季」 half of the caption for the pages that already say it. */
+export function resumeTarget(
+  item: LibraryItem | null,
+  candidates: LibraryItem[] = [],
+  flagged: LibraryItem[] = candidates,
+  seasonNamed = false,
+): ResumeTarget | null {
   if (!item) return null;
-  if (PLAYABLE.includes(item.type)) return stoppedAtMs(item.userData, item.runTimeTicks) > 0 ? target(item) : null;
-  // Three ways an episode hangs off the card above it: its series, the season it sits in, or the name
-  // the gateway spells the same in both places when the ids do not come back.
+  if (PLAYABLE.includes(item.type)) return stopped(item) > 0 || inSet(flagged, item) ? target(item) : null;
+  // Two ways an episode hangs off the card above it by id, and a third by name that only speaks when the
+  // row carries neither id: measured here, 500 Series rows hold 20 duplicated names, and 「凡人修仙传」 is
+  // two separate folders (219367, 217153) — so a page keyed by name borrowed the other folder's stopped
+  // episode and both pages printed the same 「继续播放 第 1 季 · 第 195 集」 over it.
   const hit = candidates.find(
     c =>
       c.type === 'Episode' &&
-      stoppedAtMs(c.userData, c.runTimeTicks) > 0 &&
-      (c.seriesId === item.id || c.seasonId === item.id || (!!c.seriesName && c.seriesName === item.name)),
+      (stopped(c) > 0 || inSet(flagged, c)) &&
+      (c.seriesId === item.id ||
+        c.seasonId === item.id ||
+        (!c.seriesId && !c.seasonId && !!c.seriesName && c.seriesName === item.name)),
   );
-  return hit ? target(hit) : null;
+  return hit ? target(hit, seasonNamed) : null;
 }
