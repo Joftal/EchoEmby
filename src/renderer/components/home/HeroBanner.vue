@@ -66,6 +66,12 @@ const runtime = computed(() => (playable.value ? fmtElapsed(ticksToMs(current.va
 const genres = computed(() => genreLabels(current.value?.genres).slice(0, 3).join(' '));
 const date = computed(() => fmtDate(current.value?.premiereDate) || String(current.value?.productionYear || ''));
 
+/** The slot beside the genres answers 「what is this」, so it carries the shape the server named. A Series
+ *  used to read 「精选推荐」 there — a sentence about the carousel, not the title — and on a host whose
+ *  shelves are all shows that is every slide the hero has. */
+const KIND_WORD: Record<string, string> = { Movie: '电影', Episode: '剧集', Series: '剧集', Season: '剧集', Video: '视频' };
+const kind = computed(() => KIND_WORD[current.value?.type || ''] || '精选推荐');
+
 async function fetchArt(it: LibraryItem, wide: boolean): Promise<void> {
   const url = wide ? await store.backdropUrl(it, 1600) : await store.imageUrl(it, 1200);
   if (!url) return;
@@ -204,7 +210,7 @@ watch(
       <div class="text">
         <TitleArt :urls="titleArt[current.id] || []" :name="current.seriesName || current.name" />
         <div class="meta">
-          <span class="kind">{{ current.type === 'Episode' ? '剧集' : current.type === 'Movie' ? '电影' : '精选推荐' }}</span>
+          <span class="kind">{{ kind }}</span>
           <span v-if="genres">{{ genres }}</span>
           <span v-if="date">{{ date }}</span>
           <span v-if="runtime">{{ runtime }}</span>
