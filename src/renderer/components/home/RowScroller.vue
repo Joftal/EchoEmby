@@ -23,7 +23,10 @@ let gliding = false;
 
 function measure(): void {
   const el = track.value;
-  if (!el) return;
+  // A box that has not been laid out has nothing to say. An observer's first notification arrives while a
+  // `content-visibility: auto` row below the fold is still skipped, and reading it there finds clientWidth 0,
+  // which satisfies "at end" and switched the right arrow off on five lobby rows at mount (measured).
+  if (!el || !el.clientWidth) return;
   atStart.value = el.scrollLeft <= 2;
   atEnd.value = el.scrollLeft + el.clientWidth >= el.scrollWidth - 2;
 }
@@ -71,6 +74,12 @@ function alignEdges(e: Event): void {
   wrap.style.setProperty('--band-cy', `${(f.top + f.bottom) / 2 - wrap.getBoundingClientRect().top}px`);
 }
 
+/** Same two watches as the detail bands: the track's own box (the rail's sweep, a window resize, and the moment
+ *  `content-visibility: auto` stops skipping this row's layout — a row that was below the fold when it mounted has
+ *  no laid-out cards to measure, so its mount-time read said "nothing to scroll"), and its child list. */
+let ro: ResizeObserver | null = null;
+let mo: MutationObserver | null = null;
+
 onMounted(() => {
   measure();
   const el = root.value;
@@ -86,12 +95,19 @@ onMounted(() => {
     );
     observer.observe(el);
   }
-  window.addEventListener('resize', measure);
+  const tr = track.value;
+  if (tr) {
+    ro = new ResizeObserver(measure);
+    ro.observe(tr);
+    mo = new MutationObserver(measure);
+    mo.observe(tr, { childList: true });
+  }
 });
 
 onBeforeUnmount(() => {
   observer?.disconnect();
-  window.removeEventListener('resize', measure);
+  ro?.disconnect();
+  mo?.disconnect();
 });
 </script>
 

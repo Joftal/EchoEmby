@@ -18,7 +18,9 @@ let gliding = false;
 
 function measure(): void {
   const el = track.value;
-  if (!el) return;
+  // Skip a track with no laid-out box: both reads are 0 and `0 + 0 >= 0 - 2` satisfies "at end", which parks the
+  // arrows off with nothing measured. The lobby proved the case — the same guard took 5 stuck rows at mount to 0.
+  if (!el || !el.clientWidth) return;
   atStart.value = el.scrollLeft <= 2;
   atEnd.value = el.scrollLeft + el.clientWidth >= el.scrollWidth - 2;
 }
@@ -53,11 +55,26 @@ function nudge(dir: number): void {
   el.scrollTo({ left: want, behavior: 'smooth' });
 }
 
+/** Two things move the truth about where the band sits, and neither of them is a scroll: a late TMDB payload
+ *  replaces the heads or the stills while the track keeps its own width (数到三 s 剧照 row was caught holding
+ *  11568px of overflow behind a right arrow that was still `off`, because the one measure at mount had seen
+ *  one card), and the rail's sweep changes the width while the cards stay put. So watch both boxes. */
+let ro: ResizeObserver | null = null;
+let mo: MutationObserver | null = null;
+
 onMounted(() => {
   measure();
-  window.addEventListener('resize', measure);
+  const el = track.value;
+  if (!el) return;
+  ro = new ResizeObserver(measure);
+  ro.observe(el);
+  mo = new MutationObserver(measure);
+  mo.observe(el, { childList: true });
 });
-onBeforeUnmount(() => window.removeEventListener('resize', measure));
+onBeforeUnmount(() => {
+  ro?.disconnect();
+  mo?.disconnect();
+});
 </script>
 
 <template>
