@@ -464,6 +464,29 @@ const playTarget = computed<LibraryItem | null>(
  *  gating it on `playTarget` would let it pop in when a show's season list lands and slide 收藏 along. */
 const pagePlays = computed(() => PLAYABLE_PAGE.includes(pageType.value));
 const playableId = computed(() => playTarget.value?.id || '');
+const epiBand = ref<InstanceType<typeof HScroller> | null>(null);
+/** The card the episode row should open on: the episode still in progress, when the season on screen holds
+ *  it. -1 for a movie, for a finished show and for a season the viewer never started. */
+const resumeIndex = computed(() => {
+  const id = resume.value?.item.id;
+  return id ? episodes.value.findIndex(e => e.id === id) : -1;
+});
+/* One glide per season, keyed instead of unconditional: the cards re-paint again when TMDB's stills land a
+   beat after the row, and a watcher that ran on every recompute would pull the reader back onto the stopped
+   episode while they were already looking for the one past it. Index 0 is where the row opens anyway.
+   The band is a source because the switch unmounts it for the beat where `episodes` is empty: a key spent on
+   a band that is not there is the last glide that season gets. And the key is dropped in `paint`, because
+   vue-router hands the SAME instance to the next `/detail/*` — measured, 凡人修仙传's series page and its
+   第 1 季 page are one object over one stopped card, so the season page mounted to find the key already
+   spent and held scrollLeft 0 while the card sat 56206px away. */
+let focusedOn = '';
+watch([episodeSeason, resumeIndex, () => epiBand.value], async () => {
+  const i = resumeIndex.value;
+  const key = `${episodeSeason.value}:${i}`;
+  if (i < 1 || !episodeSeason.value || !epiBand.value || focusedOn === key) return;
+  await nextTick();
+  if (epiBand.value?.focusCard(i)) focusedOn = key;
+});
 /** The row's headline is the episode's own number and then whatever it is actually called. The 「第 1 季」
  *  half is gone: the picker above the row already names the season, so restating it on every card spent
  *  the line's whole width on nothing. The names come off `stillRow`, the same season reply the art and
@@ -704,6 +727,7 @@ function paint(it: LibraryItem): void {
   seasonId.value = '';
   episodes.value = [];
   episodeSeason.value = '';
+  focusedOn = '';
   stills.value = {};
   seasonArt.value = '';
   seasonCast.value = null;
@@ -734,7 +758,17 @@ async function loadChildren(it: LibraryItem): Promise<void> {
     const s = await embyCached('seasons', it.id, () => window.echoemby.emby.seasons(it.id));
     if (props.id !== it.id) return;
     seasons.value = s.ok ? s.data || [] : [];
-    const first = seasons.value.find(x => x.childCount) || seasons.value[0];
+    /* Open on the season the viewer stopped in, not on whichever row the server listed first: 爱情公寓 was left
+       at 第 2 季 第 3 集 while the page showed 第 1 季's cards, so the episode they meant to press sat behind a
+       tab. Read off the 在看 rows the lobby already pulled — measured: 200/200 of the resumable episode rows
+       that query answers carry their ParentId, so this costs no request. A show nobody has started falls back
+       to the first season with episodes, exactly as before. */
+    const stop = resumeTarget(it, resumeRow.value)?.item;
+    const home =
+      (stop && seasons.value.find(x => x.id === stop.seasonId)) ||
+      (stop && stop.parentIndexNumber != null && seasons.value.find(x => x.indexNumber === stop.parentIndexNumber)) ||
+      undefined;
+    const first = home?.childCount ? home : seasons.value.find(x => x.childCount) || seasons.value[0];
     if (first) await loadEpisodes(first.id, it.id);
   } else if (it.type === 'Season') {
     /* A page opened on one season is still a page about a series: its scores, its logo and its season
@@ -894,7 +928,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
 
     <template v-else-if="item">
       <div class="flow sw" :class="{ on: swap }">
-        <HScroller v-if="episodes.length" class="block epi-row">
+        <HScroller v-if="episodes.length" ref="epiBand" class="block epi-row">
           <template #header>
             <div class="ep-head">
               <FilterSelect

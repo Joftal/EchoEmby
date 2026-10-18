@@ -55,6 +55,33 @@ function nudge(dir: number): void {
   el.scrollTo({ left: want, behavior: 'smooth' });
 }
 
+/** Pull one card into view, and leave the band alone when the card can already be read. The caller decides
+ *  which card is worth the travel — the episode band opens on the one the viewer stopped in — so this only
+ *  answers "is it where a reader looks". The window is the track's own box minus its padding, because the
+ *  left padding is the tuck the art slides under the floating rail in: a card parked in it is not found.
+ *  The destination is the same `want` a press builds on and the same ease, so a glide nobody asked for cannot
+ *  eat the next arrow click.
+ *  Answers whether the band is left in a state where that card can be read: false means there was no box to
+ *  measure yet, which is the caller's cue to ask again once the band exists. */
+function focusCard(i: number): boolean {
+  const el = track.value;
+  const card = el?.children[i] as HTMLElement | undefined;
+  if (!el || !el.clientWidth || !card) return false;
+  const b = el.getBoundingClientRect();
+  const r = card.getBoundingClientRect();
+  const cs = getComputedStyle(el);
+  const viewL = b.left + (parseFloat(cs.paddingLeft) || 0);
+  const viewR = b.right - (parseFloat(cs.paddingRight) || 0);
+  if (r.left >= viewL + 2 && r.right <= viewR - 2) return true;
+  const to = el.scrollLeft + (r.left + r.width / 2 - (viewL + viewR) / 2);
+  want = Math.max(0, Math.min(el.scrollWidth - el.clientWidth, Math.round(to)));
+  gliding = true;
+  el.scrollTo({ left: want, behavior: 'smooth' });
+  return true;
+}
+
+defineExpose({ focusCard });
+
 /** Two things move the truth about where the band sits, and neither of them is a scroll: a late TMDB payload
  *  replaces the heads or the stills while the track keeps its own width (数到三 s 剧照 row was caught holding
  *  11568px of overflow behind a right arrow that was still `off`, because the one measure at mount had seen
