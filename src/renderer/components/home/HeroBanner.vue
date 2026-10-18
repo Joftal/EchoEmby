@@ -3,7 +3,7 @@ import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, 
 import type { LibraryItem } from '../../../shared/types';
 import { fmtDate, fmtElapsed, ticksToMs } from '../../lib/format';
 import { genreLabels } from '../../lib/genres';
-import { resumeTarget } from '../../lib/resume';
+import { PLAYABLE, resumeTarget } from '../../lib/resume';
 import { useScores } from '../../lib/scores';
 import HeroPlay from '../HeroPlay.vue';
 import ScoreStrip from '../ScoreStrip.vue';
@@ -13,7 +13,7 @@ import { usePlayerStore } from '../../stores/player';
 import { begin } from '../../lib/handoff';
 
 const props = defineProps<{ items: LibraryItem[]; scroll: number; resume?: LibraryItem[] }>();
-const emit = defineEmits<{ (e: 'play', item: LibraryItem): void; (e: 'open', item: LibraryItem): void }>();
+const emit = defineEmits<{ (e: 'play', item: LibraryItem, fromStart?: boolean): void; (e: 'open', item: LibraryItem): void }>();
 
 const store = useAppStore();
 const player = usePlayerStore();
@@ -51,9 +51,10 @@ const overview = computed(() => {
   const t = scores.value.tmdb;
   return t?.overviewZh || current.value?.overview || t?.overviewOther || '';
 });
-const playable = computed(() => ['Movie', 'Episode', 'Video'].includes(current.value?.type || ''));
+const playable = computed(() => PLAYABLE.includes(current.value?.type || ''));
 /** The slide's own button reads the lobby's 继续观看 rows as its candidates: a Series card has no progress
- *  of its own, and the episode it stopped on is already in the store. */
+ *  of its own, and the episode it stopped on is already in the store. Null is not "no button" — it is "no
+ *  row in hand", and the click then goes through the title's page to reach its first episode. */
 const target = computed(() => resumeTarget(current.value, props.resume || []));
 /** The id the page this button opens will seed its poster from — an episode slide opens its series, the
  *  same resolution a row click makes, so both hand over the art the plate is already showing. */
@@ -65,7 +66,6 @@ const plate = ref<HTMLImageElement | null>(null);
 const runtime = computed(() => (playable.value ? fmtElapsed(ticksToMs(current.value?.runTimeTicks)) : ''));
 const genres = computed(() => genreLabels(current.value?.genres).slice(0, 3).join(' '));
 const date = computed(() => fmtDate(current.value?.premiereDate) || String(current.value?.productionYear || ''));
-
 /** The slot beside the genres answers 「what is this」, so it carries the shape the server named. A Series
  *  used to read 「精选推荐」 there — a sentence about the carousel, not the title — and on a host whose
  *  shelves are all shows that is every slide the hero has. */
@@ -87,11 +87,33 @@ function need(it: LibraryItem | null): void {
   if (!(it.id in titleArt.value)) void fetchTitle(it);
 }
 
-function openDetail(): void {
+/** Hand the page this slide opens the art and the row already on screen, so it paints before it asks. */
+function seedPlate(): void {
   // The banner's plate is the poster itself, so the page it opens can start from pixels already on screen.
   if (detailId.value) begin(plate.value, detailId.value, current.value);
+}
+
+function openDetail(): void {
+  seedPlate();
   const it = current.value;
   if (it) emit('open', it);
+}
+
+/** The slide's own 播放. With a row in hand it names an episode and the lobby plays it; without one the
+ *  slide is a Series the lobby cannot open a file for, so the click travels to its page — which is the
+ *  only place that knows the first episode — and asks that page to start it.
+ *  `fromStart` is the word on the button kept as a promise: 「播放」 opens the file at 0, 「继续播放」 takes
+ *  the server's offset, so a label cannot over-promise a first watch and then drop the viewer mid-item. */
+function playSlide(): void {
+  const it = current.value;
+  if (!it) return;
+  const start = !target.value?.resumed;
+  if (target.value) {
+    emit('play', target.value.item, start);
+    return;
+  }
+  seedPlate();
+  emit('play', it, start);
 }
 
 function srcFor(it: LibraryItem): string {
@@ -219,7 +241,12 @@ watch(
         <ScoreStrip v-if="current" :item="current" />
       </div>
       <div class="cta">
-        <HeroPlay v-if="playable || target" :target="target" :busy="player.busy" @play="emit('play', target ? target.item : current)" />
+        <!-- Ungated, like the detail page's copy of this button. The old `v-if="playable || target"` asked
+             the slide whether it *was* a file, so every Series slide lost it — which on a host whose
+             shelves are all shows (measured: nyamedia, 5 of 5 slides) read as "this server cannot be
+             played" while its own detail page offered 播放 one click later. A slide that holds no row in
+             hand still has something to play; the page it opens resolves which episode. -->
+        <HeroPlay :target="target" :busy="player.busy" @play="playSlide" />
         <button class="ghost" @click="openDetail">
           <svg viewBox="0 0 24 24" width="15" height="15"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8" /><path d="M12 11v6M12 7.6v.9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" /></svg>
           {{ playable ? '详情' : '查看' }}

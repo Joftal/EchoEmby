@@ -59,3 +59,21 @@ export function seedItemFor(id: string): LibraryItem | null {
 export function seedTypeFor(id: string): string {
   return seedTypeId === id ? seedType : '';
 }
+
+/* 播放 is a separate note from the art because it is an intent, not data, and only one page can carry it
+   out: a `Series` names no media source, so the click that means "start this" has to travel through the
+   page that knows which episode to open. */
+let playId = '';
+
+/** Mark the page this id opens as the one the viewer meant to start watching. */
+export function beginPlay(id: string): void {
+  playId = id;
+}
+
+/** True once, for the page this click opened, and only while its id is still on the way. Read at mount, so
+ *  returning from the player never starts a second show. */
+export function takeAutoplay(id: string): boolean {
+  if (playId !== id) return false;
+  playId = '';
+  return true;
+}

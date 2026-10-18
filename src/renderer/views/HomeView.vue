@@ -5,6 +5,8 @@ import type { LibraryItem } from '../../shared/types';
 import HeroBanner from '../components/home/HeroBanner.vue';
 import HeroSkeleton from '../components/HeroSkeleton.vue';
 import RowScroller from '../components/home/RowScroller.vue';
+import { beginPlay } from '../lib/handoff';
+import { PLAYABLE, PLAYABLE_PAGE } from '../lib/resume';
 import { useAppStore } from '../stores/app';
 import { usePlayerStore } from '../stores/player';
 
@@ -23,7 +25,9 @@ const features = computed<LibraryItem[]>(() => {
   for (const row of store.rows) {
     if (row.key === 'resume') continue;
     for (const it of row.items) {
-      if (seen.has(it.id) || it.type === 'CollectionFolder' || it.type === 'BoxSet') continue;
+      // A slide the hero cannot play is worse than no slide: the same one table the detail page's hero
+      // uses, so 合集/播放列表/资源库 rows never reach a button that would answer 「服务器出错了」.
+      if (seen.has(it.id) || !PLAYABLE_PAGE.includes(it.type)) continue;
       seen.add(it.id);
       pool.push(it);
     }
@@ -57,9 +61,11 @@ function toTop(): void {
   scroller.value?.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-function open(item: LibraryItem): void {
-  const target = item.type === 'Episode' ? item.parentId : item.id;
-  if (target) router.push(`/detail/${target}`);
+function open(item: LibraryItem, autoplay = false): void {
+  const page = item.type === 'Episode' ? item.parentId : item.id;
+  if (!page) return;
+  if (autoplay) beginPlay(page);
+  router.push(`/detail/${page}`);
 }
 
 const toast = ref('');
@@ -71,13 +77,16 @@ function say(msg: string): void {
   toastTimer = window.setTimeout(() => (toast.value = ''), 3600);
 }
 
-async function onPlay(item: LibraryItem): Promise<void> {
-  if (item.type === 'Series' || item.type === 'CollectionFolder' || item.type === 'BoxSet') {
-    open(item);
+async function onPlay(item: LibraryItem, fromStart = false): Promise<void> {
+  if (PLAYABLE.includes(item.type)) {
+    const ok = await player.play(item.id, fromStart);
+    if (!ok) say(player.error || '无法开始播放');
     return;
   }
-  const ok = await player.play(item.id);
-  if (!ok) say(player.error || '无法开始播放');
+  /* A Series names no file, so this click cannot be honoured here: it opens the page that resolves which
+     episode to start and asks that page to start it. A collection has nothing to resolve — a BoxSet has no
+     first episode any more than a library does — so those pages still open without the note. */
+  open(item, item.type === 'Series' || item.type === 'Season');
 }
 
 /* The lobby is kept alive, so its work happens on activate rather than mount: onActivated fires on the
