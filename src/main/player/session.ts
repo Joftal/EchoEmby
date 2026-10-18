@@ -147,8 +147,10 @@ export class PlayerController {
   }
 
   /** Load one item into a player that may or may not exist yet. Everything the user can start — a card,
-   *  下一集, the 选集 panel — comes through here, so a switch is a reload and never a restart. */
-  async play(itemId: string): Promise<void> {
+   *  下一集, the 选集 panel — comes through here, so a switch is a reload and never a restart.
+   *  `fromStart` drops the server's offset: the heroes pass it whenever their own button reads 「播放」,
+   *  so a label can never promise a first view the player then starts halfway through. */
+  async play(itemId: string, fromStart = false): Promise<void> {
     this.tearing = false;
     const c = this.client();
     const prefs = config.get().settings.player;
@@ -188,7 +190,7 @@ export class PlayerController {
     this.raise();
 
     try {
-      await this.kernel!.load(url, { startMs: resume.startMs });
+      await this.kernel!.load(url, { startMs: fromStart ? 0 : resume.startMs });
     } catch (e) {
       this.fail(e);
       throw e;

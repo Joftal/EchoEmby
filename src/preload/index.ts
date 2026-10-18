@@ -52,7 +52,7 @@ const api: EchoEmbyApi = {
     setKeys: patch => invoke('meta:setKeys', patch),
   },
   player: {
-    play: itemId => invoke('player:play', itemId),
+    play: (itemId, fromStart) => invoke('player:play', itemId, fromStart),
     command: cmd => invoke('player:command', cmd),
     close: () => invoke('player:close'),
     state: () => invoke('player:state'),
