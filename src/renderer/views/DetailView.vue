@@ -13,10 +13,10 @@ import { tmdbKind as kindOf, trustSeason, useScores } from '../lib/scores';
 import { usePlayerStore } from '../stores/player';
 import { useAppStore } from '../stores/app';
 import { episodeHead, fmtDate, fmtDateTime, fmtRuntime, seenLabel, seasonTitle } from '../lib/format';
-import { resumeTarget } from '../lib/resume';
+import { PLAYABLE, PLAYABLE_PAGE, resumeTarget } from '../lib/resume';
 import { genreLabels } from '../lib/genres';
 import { embyCached } from '../lib/embycache';
-import { seedFor, seedItemFor, seedTypeFor } from '../lib/handoff';
+import { seedFor, seedItemFor, seedTypeFor, takeAutoplay } from '../lib/handoff';
 import { vReveal } from '../lib/reveal';
 
 const props = defineProps<{ id: string }>();
@@ -443,13 +443,26 @@ const resumeRow = computed(() => app.rows.find(r => r.key === 'resume')?.items |
  *  the same row as the lobby also keeps the two buttons honest: same title, same stopped episode, no matter
  *  which one was clicked. */
 const resume = computed(() =>
-  resumeTarget(item.value, isSeries.value || isSeason.value ? [...resumeRow.value, ...episodes.value] : []),
+  resumeTarget(
+    item.value,
+    isSeries.value || isSeason.value ? [...resumeRow.value, ...episodes.value] : [],
+    resumeRow.value,
+    isSeason.value,
+  ),
 );
 /** The one item the play button is about: the episode still in progress, else the first of the season.
- *  Everything the button says and plays comes from here, so the two cannot disagree. */
+ *  Everything the button says and plays comes from here, so the two cannot disagree. A type that names no
+ *  media source is not handed to the player at all — measured, 合集/播放列表/资源库 pages answering
+ *  「播放」 died on 「服务器出错了（HTTP 500）」 because PlaybackInfo has no file to negotiate. */
 const playTarget = computed<LibraryItem | null>(
-  () => resume.value?.item || ((isSeries.value || isSeason.value) ? episodes.value[0] || null : item.value),
+  () =>
+    resume.value?.item ||
+    ((isSeries.value || isSeason.value) ? episodes.value[0] || null : PLAYABLE.includes(item.value?.type || '') ? item.value : null),
 );
+/** Whether this page's type can hold a play button at all. Read off `pageType`, which is known from the
+ *  seed row before the item arrives, so the button is either there or not from the first painted frame —
+ *  gating it on `playTarget` would let it pop in when a show's season list lands and slide 收藏 along. */
+const pagePlays = computed(() => PLAYABLE_PAGE.includes(pageType.value));
 const playableId = computed(() => playTarget.value?.id || '');
 /** The row's headline is the episode's own number and then whatever it is actually called. The 「第 1 季」
  *  half is gone: the picker above the row already names the season, so restating it on every card spent
@@ -656,6 +669,10 @@ function pickSeason(v: string | string[]): void {
  *  for. The row and the server's copy of it are the same work, so the second paint refines the item
  *  without paying for them again. */
 let painted = '';
+/** Set when the lobby's 播放 pressed on a slide it could not play itself — a Series names no file — and the
+ *  page it opened is the only place that knows which episode to start. Held as an id so a switch to another
+ *  title drops it: an arrival is a request about one work, not a mode the page stays in. */
+let autoplayFor = '';
 /** The same rule for the season list and its episodes: re-loading the rail when the server's copy lands
  *  would step on a season the reader may already have picked. */
 let loaded = '';
@@ -736,6 +753,7 @@ async function loadChildren(it: LibraryItem): Promise<void> {
 watch(
   () => props.id,
   async id => {
+    autoplayFor = takeAutoplay(id) ? id : '';
     error.value = '';
     similar.value = [];
     backdrops.value = [];
@@ -779,15 +797,33 @@ watch(
   { immediate: true },
 );
 
-async function play(id = playableId.value) {
+/** The hero's own label is the promise: 「播放」 opens the file at 0, 「继续播放」 takes the server's
+ *  offset. Measured on both hosts, every row the button calls unwatched really has no offset (12/12 在看
+ *  rows answered the same position on the item endpoint), so honouring the label costs no real progress —
+ *  and it stops a page that has not yet been handed the row from starting halfway through a first watch.
+ *  The 选集 band passes false on purpose: those cards print their own 「看到」 and bar, so they resume. */
+async function play(id = playableId.value, fromStart = !resume.value?.resumed) {
   if (!id) {
     playErr.value = '这一项还不能直接播放';
     return;
   }
   playErr.value = '';
-  const ok = await player.play(id);
+  const ok = await player.play(id, fromStart);
   if (!ok) playErr.value = player.error;
 }
+
+/* The lobby's note fires the moment this page knows what to open, which for a show is after its season
+   arrives — and only against the title this page actually painted: on a page-to-page switch the outgoing
+   hero stays on screen a beat, and its episode is not the one that was asked for. */
+watch(
+  playableId,
+  id => {
+    if (!id || autoplayFor !== props.id || painted !== props.id) return;
+    autoplayFor = '';
+    void play(id);
+  },
+  { immediate: true },
+);
 
 async function toggleFav() {
   // The server files the heart on the series, so a page opened on one season reads and writes that,
@@ -835,7 +871,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
               <p class="overview">{{ overviewText || '暂无简介。' }}</p>
             </div>
             <div class="actions">
-              <HeroPlay :target="resume" :busy="player.busy" @play="play()" />
+              <HeroPlay v-if="pagePlays" :target="resume" :busy="player.busy" @play="play()" />
               <button class="iconb" :class="{ on: fav }" :disabled="favBusy" :title="fav ? '已收藏' : '收藏'" @click="toggleFav">
                 <svg viewBox="0 0 24 24" width="20" height="20"><path :d="fav ? 'M12 21l-1.5-1.3C5.4 15 2 11.9 2 8.2 2 5.4 4.2 3.2 7 3.2c1.6 0 3.1.7 4 1.9.9-1.2 2.4-1.9 4-1.9 2.8 0 5 2.2 5 5 0 3.7-3.4 6.8-8.5 11.5L12 21z' : 'M12 21l-1.5-1.3C5.4 15 2 11.9 2 8.2 2 5.4 4.2 3.2 7 3.2c1.6 0 3.1.7 4 1.9.9-1.2 2.4-1.9 4-1.9 2.8 0 5 2.2 5 5 0 3.7-3.4 6.8-8.5 11.5L12 21zM7 5.2c-1.7 0-3 1.3-3 3 0 3 3 5.9 8 10.2 5-4.3 8-7.2 8-10.2 0-1.7-1.3-3-3-3-1.3 0-2.5.8-3 2h-4c-.5-1.2-1.7-2-3-2z'" fill="currentColor" /></svg>
               </button>
@@ -874,7 +910,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
               <h2 v-else>{{ pack?.label || item.name }}</h2>
             </div>
           </template>
-          <button v-for="e in episodes" :key="e.id" class="epi" @click="play(e.id)">
+          <button v-for="e in episodes" :key="e.id" class="epi" @click="play(e.id, false)">
             <div class="ethumb">
               <img v-reveal v-if="epArt[e.id] || stillUrl(e.indexNumber)" :src="epArt[e.id] || stillUrl(e.indexNumber)" alt="" loading="lazy" decoding="async" />
               <span v-else class="ph">{{ (e.name || '?').slice(0, 1) }}</span>
