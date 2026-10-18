@@ -1206,7 +1206,10 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
   z-index: 1;
   margin-left: var(--rail-x);
   overflow-x: clip;
-  max-width: 1320px;
+  /* No reading cap, because the lobby has none either: its bands end at the window edge, so the last card is
+     cut by the screen and the row reads as running off it. A cap here stopped the art 28px short of that edge
+     (measured at innerWidth 1360: lobby track right 1360, this flow's right 1332), and a cut that lands in the
+     middle of nothing reads as a clipped box rather than a rail. */
 }
 /* The season button sits in the low half of a short window, and a menu that runs off the bottom edge is
    not a choice, so the picker turns upward instead (FilterSelect's place()). Above that row is the hero, and
