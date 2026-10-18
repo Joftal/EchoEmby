@@ -25,8 +25,12 @@ const props = withDefaults(
     /** Columns the matrix asks for. It never exceeds the number of options, so a two-option list is two
      *  cells wide rather than a row of cells and a row of slack. */
     cols?: number;
+    /** One option to a row. For a list whose entries share nothing but their shape - a season list, where
+     *  「第 1 季」 sits next to 「第 4 季 · 最终季」 - a matrix would need a cell wide enough for the longest
+     *  and a cloud wraps into uneven columns. */
+    rows?: boolean;
   }>(),
-  { multi: false, searchable: false, bare: false, neutral: false, cell: 0, cols: 4 },
+  { multi: false, searchable: false, bare: false, neutral: false, cell: 0, cols: 4, rows: false },
 );
 const emit = defineEmits<{ (e: 'update:modelValue', v: string | string[]): void }>();
 
@@ -84,12 +88,31 @@ function measure(): void {
   if (el) more.value = el.scrollHeight - el.clientHeight - el.scrollTop > 4;
 }
 
+/** How far the panel may grow, and off which edge of the pill. A control parked near the bottom of the window
+ *  would otherwise pour a 322px menu straight out of the screen, so the panel takes the room that is actually
+ *  there and turns to the side that has more of it. */
+const room = ref(322);
+const up = ref(false);
+function place(): void {
+  const el = root.value;
+  if (!el) return;
+  const r = el.getBoundingClientRect();
+  const below = innerHeight - r.bottom - 14;
+  const above = r.top - 14;
+  up.value = below < 200 && above > below;
+  room.value = Math.max(0, Math.round(up.value ? above : below));
+}
+
 watch(open, async v => {
   if (!v) {
     term.value = '';
     return;
   }
-  if (props.searchable) await nextTick();
+  place();
+  // This watcher runs before the patch, so the panel is not in the document yet: measuring here always
+  // answered "nothing to scroll" and a list that opened already overflowing - a season column does - showed
+  // its last row cut in half with no fade over it. Only the search field needed the wait; the fade does too.
+  await nextTick();
   searchEl.value?.focus();
   measure();
 });
@@ -136,8 +159,8 @@ onBeforeUnmount(() => {
       </svg>
     </button>
 
-    <Transition name="pop">
-      <div v-if="open" class="panel" :class="{ more, grid }" :style="vars">
+    <Transition name="bubble">
+      <div v-if="open" class="panel" :class="{ more, grid, up }" :style="[vars, { '--room': `${room}px` }]">
         <label v-if="searchable" class="find">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
             <path d="M11 4.6a6.4 6.4 0 1 0 0 12.8 6.4 6.4 0 0 0 0-12.8Z" />
@@ -146,7 +169,7 @@ onBeforeUnmount(() => {
           <input ref="searchEl" v-model="term" type="text" placeholder="搜索" spellcheck="false" />
         </label>
 
-        <div ref="listEl" class="list" :class="{ grid }" @scroll="measure">
+        <div ref="listEl" class="list" :class="{ grid, rows }" @scroll="measure">
           <button
             v-for="o in chipList"
             :key="o.value || '*'"
@@ -188,16 +211,16 @@ onBeforeUnmount(() => {
   border: 1px solid var(--line);
   box-shadow: var(--shadow-sm);
   transition: color var(--hov) var(--ease), background var(--hov) var(--ease), border-color var(--hov) var(--ease), border-radius var(--hov) var(--ease),
-    box-shadow var(--hov) var(--ease), transform var(--hov) var(--ease-out);
+    box-shadow var(--hov) var(--ease);
 }
 .pill:hover {
   border-color: var(--line-strong);
   color: var(--text);
 }
-.pill:active {
-  transform: scale(0.96);
-  transition-duration: 0.1s;
-}
+/* No press scale on the trigger, unlike every other button in the app: the panel is welded to this box's
+   bottom edge (it is positioned off `.sel`, which is never transformed), so a 0.96 squish lifts the edge the
+   card hangs on by 0.7px and slides its face 3.3px sideways for ~140ms - which is exactly the moment the card
+   is coming out of it or going back in. The pop is the press feedback here. */
 .has .pill {
   background: var(--chip);
   border-color: transparent;
@@ -252,10 +275,19 @@ onBeforeUnmount(() => {
   width: max-content;
   min-width: 100%;
   max-width: 340px;
-  margin-top: -1px;
+  /* Four pixels up onto the pill, not one: opening drops the pill's own bottom border and bottom corners
+     (`.on .pill`), so the card has to physically cover that edge or a hairline of it stays visible at the seam.
+     The slide only ever reduces this overlap - 12px at the first frame, 4px on arrival - and nothing crosses
+     the resting line any more, so 4px is the floor for the whole flight. */
+  margin-top: -4px;
   display: flex;
   flex-direction: column;
-  max-height: 322px;
+  transform-origin: top left;
+  /* The pop's whole vocabulary: 8px out of the pill, 6px back into it. Both are stated in pixels so a
+     panel's content cannot change them, and both hang on the hinge below. */
+  --pop: -8px;
+  --back: -6px;
+  max-height: min(322px, var(--room, 322px));
   padding: 6px;
   border-radius: 0 0 var(--radius) var(--radius);
   background: var(--bg-elev);
@@ -277,6 +309,31 @@ onBeforeUnmount(() => {
 }
 .panel.more::after {
   opacity: 1;
+}
+/* Turned to the other edge: the same card, hinged off the pill's top instead of its bottom, so the seam moves
+   with the hinge. The fade below does not. */
+.panel.up {
+  top: auto;
+  bottom: 100%;
+  margin: 0 0 -4px;
+  transform-origin: bottom left;
+  --pop: 8px;
+  --back: 6px;
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+/* What the fade marks is the edge the list runs out at, and a list always starts at its first option - so on
+   an upward panel the cut is still at the bottom, against the pill. Moving the fade to the top edge, which is
+   what the hinge suggests, ghosted the season already picked and left the fourteen below it looking whole. */
+.panel.up::after {
+  border-radius: 0;
+}
+.on.up .pill {
+  border-bottom-color: var(--line-strong);
+  border-bottom-left-radius: var(--radius);
+  border-bottom-right-radius: var(--radius);
+  border-top-color: transparent;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
 }
 /* A matrix panel is exactly as wide as the cells it asked for plus their gaps and padding — nothing
    is left for the columns to drift into. */
@@ -328,6 +385,34 @@ onBeforeUnmount(() => {
   grid-template-columns: repeat(var(--cols), var(--cell));
   gap: 7px 6px;
   padding: 3px 1px 1px;
+}
+/* Stacked: the list stops wrapping and every option takes the row, so the labels share one left edge and
+   one right edge instead of ending wherever their text did. A column flex item stretches across the list by
+   default, so the rows need no width of their own - the panel stays as wide as its longest season. */
+.list.rows {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 3px;
+  padding: 2px 1px 1px;
+}
+/* The row keeps the chip's height, colour and picked answer, and takes the search field's corner instead of
+   the stadium: 8px is the only other radius used inside a panel, and a stack of 30px capsules welded edge to
+   edge reads as pills in a box rather than one menu.
+   `flex: none` is what keeps that height: a column flex item shrinks by default, so a seventeen-season list
+   squeezed every row to its text height (measured 20.15px against the 30px a three-season list renders) and
+   the one control showed two geometries depending on the title. Overflowing is the intended answer - the list
+   scrolls and the fade says there is more below. */
+.rows .chip {
+  flex: none;
+  border-radius: 8px;
+}
+.rows .chip .name {
+  max-width: none;
+}
+/* No press scale on a row: 6% is 15px of horizontal travel on a long label and 2px on 「第 1 季」, which is
+   the same content-dependence the panel's own pop was corrected for. The background is the press here. */
+.rows .chip:active {
+  transform: none;
 }
 /* One vocabulary for every picker: the answer is the dark chip, so a season list and a genre list are
    the same object. Nothing about a chip changes when it is picked — the tick that used to grow into it
@@ -388,22 +473,54 @@ onBeforeUnmount(() => {
   grid-column: 1 / -1;
 }
 
-/* The panel is masked from the seam downward rather than scaled: a scaleY menu squashes the very
-   labels you are about to read, and it stretches the rounded corners into ovals mid-flight. The
-   negative insets on the other three sides leave room for the drop shadow so it does not pop in at
-   the end of the reveal. */
-.pop-enter-active {
-  transition: clip-path 0.28s var(--ease-out);
+/* The panel comes out of the edge it hangs on and stops there: 8px of travel, stated in pixels on the hinge
+   (`--pop` flips sign for `.up`), in one direction only, with a fade that is done 90ms in. Measured frame by
+   frame: -8, -5.4, -3.22, -2.03, -1.23, -0.66, -0.42, -0.2, -0.11, -0.03, -0.01, home at 197ms.
+
+   One direction is the whole point. The card is fully opaque at 90ms, and the curve before this kept going:
+   it carried the panel 1.30px past its resting line and then 0.79px back - 2.09px of CSS travel, 2.6 device px
+   at this window's 1.25 ratio, so a line of text crossed a whole device pixel going up and another coming
+   back - after the card had already looked arrived. Nothing had re-flowed (every row's position inside the
+   panel is byte-identical on every frame of the flight), which is why it reads as the content itself shivering
+   rather than as motion: the rows tick one pixel and settle again.
+
+   A monotone curve has the opposite failure, and this file used to document it: parked. 8.8px of a 10px round
+   trip went by t=70ms, the card then sat at +1.98px for 15ms and crept 1.2px across the following 78ms - a
+   panel that stalls, then slides the last pixel. What the two failures leave is a tail that is both monotone
+   and sub-pixel: from t=90ms this one has 0.55px CSS (0.69 device) of travel left and no reversal in it.
+
+   No scale anywhere, on the panel or on the pill it hangs from, because a scale is a different animation on
+   every title: the scale version tried on the way here grew the 3-season panel 57px wide while the 17-season
+   one grew 82px wide and 82px tall, so one control had two energies and the difference was content the user
+   never chose. The panels measured now - an 82x112.6px column, a 186.5x322px column, and 132px, 222.8px and
+   340px browse panels - all trace the same series to within 0.02px.
+
+   The name matters as much as the curve: `push`, `pop` and `flat` are the router's page-slide names, and
+   base.css styles `.content .<name>-enter-active` as a whole window, so a panel named `pop` was pulled to
+   `inset: 0` and shoved across the viewport for one page duration before snapping back under its button.
+
+   `will-change` is scoped to the two moving states rather than left on the panel: the layer is only worth
+   promoting while something is actually moving on it. */
+.bubble-enter-active {
+  transition:
+    transform 0.2s linear(0, 0.55 14%, 0.8 28%, 0.92 42%, 0.975 58%, 0.996 74%, 1 90%),
+    opacity 0.09s ease-out;
+  will-change: transform;
 }
-.pop-leave-active {
-  transition: clip-path 0.18s var(--ease);
+.bubble-enter-from {
+  opacity: 0;
+  transform: translate3d(0, var(--pop), 0);
 }
-.pop-enter-from,
-.pop-leave-to {
-  clip-path: inset(-60px -60px 100% -60px);
+/* Both directions are transitions rather than one animation and one transition: a transition starts from the
+   value the element actually holds, so pressing the pill mid-pop reverses from wherever the card is instead of
+   dropping to its resting line first. That drop was measured as a 3.9px step at t=64ms when the enter was an
+   animation, whose fill held a value no transition could see. */
+.bubble-leave-active {
+  transition: transform 0.11s var(--ease), opacity 0.11s var(--ease);
+  will-change: transform;
 }
-.pop-enter-to,
-.pop-leave-from {
-  clip-path: inset(-60px);
+.bubble-leave-to {
+  opacity: 0;
+  transform: translate3d(0, var(--back), 0);
 }
 </style>
