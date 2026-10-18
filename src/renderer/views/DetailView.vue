@@ -12,7 +12,7 @@ import HeroSkeleton from '../components/HeroSkeleton.vue';
 import { tmdbKind as kindOf, trustSeason, useScores } from '../lib/scores';
 import { usePlayerStore } from '../stores/player';
 import { useAppStore } from '../stores/app';
-import { episodePosition, fmtDate, fmtDateTime, fmtRuntime, isPositionOnlyName, seenLabel, seasonTitle } from '../lib/format';
+import { episodeHead, fmtDate, fmtDateTime, fmtRuntime, seenLabel, seasonTitle } from '../lib/format';
 import { resumeTarget } from '../lib/resume';
 import { genreLabels } from '../lib/genres';
 import { embyCached } from '../lib/embycache';
@@ -451,19 +451,18 @@ const playTarget = computed<LibraryItem | null>(
   () => resume.value?.item || ((isSeries.value || isSeason.value) ? episodes.value[0] || null : item.value),
 );
 const playableId = computed(() => playTarget.value?.id || '');
-/** The season the row is asking about: an episode carries its own number when the gateway feels like
- *  answering, otherwise the season tab that is open - or this page itself, when it is a Season item. */
-const seasonOf = (e: LibraryItem): number | null =>
-  e.parentIndexNumber ?? seasons.value.find(x => x.id === seasonId.value)?.indexNumber ?? item.value?.indexNumber ?? null;
-const epPos = (e: LibraryItem): string => episodePosition(seasonOf(e), e.indexNumber) || (e.name || '').trim();
-/** The row's headline is the position, not the server's episode name: the name is what duplicates the
- *  「第 2 集」 the position already spells out, and it only earns its place when it says more. */
+/** The row's headline is the episode's own number and then whatever it is actually called. The 「第 1 季」
+ *  half is gone: the picker above the row already names the season, so restating it on every card spent
+ *  the line's whole width on nothing. The names come off `stillRow`, the same season reply the art and
+ *  the paragraph are already asked for, so a title costs 24 bytes and no round trip — in the order every
+ *  other text surface here uses: TMDB in Chinese, then the server's row, then TMDB in whatever else it
+ *  filed. `episodeHead` drops a name that only repeats the position: 198 of the 210 rows cached now say
+ *  more than their number, and the 12 that stay bare are bare because TMDB itself files them 「第 1 集」. */
 const epTitle = (e: LibraryItem): string => {
-  const name = (e.name || '').trim();
-  const pos = epPos(e);
-  return !name || name === pos || isPositionOnlyName(name) ? pos : `${pos} · ${name}`;
+  const r = stillRow(e.indexNumber);
+  return episodeHead(e.indexNumber, r?.nZh, e.name, r?.nOther);
 };
-const epSeen = (e: LibraryItem): string => seenLabel(e.userData?.playedPercentage, e.runTimeTicks);
+const epSeen = (e: LibraryItem): string => seenLabel(e.userData, e.runTimeTicks);
 const epPlayed = (e: LibraryItem): number => Math.min(100, e.userData?.playedPercentage || 0);
 
 const genres = computed(() => genreLabels(work.value?.genres));
@@ -1302,7 +1301,9 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
 .ethumb .eprog i { display: block; height: 100%; background: #fff; box-shadow: 0 0 0 1px rgba(18, 18, 26, 0.08); }
 .einfo { min-width: 0; margin-top: 11px; }
 .emeta { margin: 6px 0 0; display: flex; gap: 8px; flex-wrap: wrap; font-size: 13px; font-weight: 500; color: var(--text-dim); font-variant-numeric: tabular-nums; }
-.etitle { margin: 0; font-size: 14px; font-weight: 650; color: var(--text); }
+/* One line, cut where it runs out: a real episode title now lands here, and a card whose headline wrapped to
+   two lines would slide its date, its runtime and its paragraph down past every neighbour in the row. */
+.etitle { margin: 0; font-size: 14px; font-weight: 650; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .eov {
   margin: 4px 0 0;
   font-size: 13px;

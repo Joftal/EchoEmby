@@ -94,7 +94,7 @@ const sub = computed(() => {
   return '';
 });
 /** How far in you got, not how far is left — the same read-out every other surface now uses. */
-const watchedLabel = computed(() => seenLabel(played.value, props.item.runTimeTicks));
+const watchedLabel = computed(() => seenLabel(props.item.userData, props.item.runTimeTicks));
 /** A folded card is the show, so the show's name carries the line; the episode it points at drops to
  *  the tail, where a long 集名 can be cut without hiding what the card is. */
 const titleLine = computed(() => (props.variant === 'still' && props.item.seriesName ? props.item.seriesName : props.item.name));

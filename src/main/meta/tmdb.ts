@@ -39,8 +39,9 @@ type CastEntry = { value: TmdbCredits; fetchedAt: number } | { missing: true; fe
 interface Store {
   /** key = `${kind}:${tmdbId}` */
   meta: Record<string, MetaEntry>;
-  /** key = `tv2:${tmdbId}/${season}`; the `2` is the episode rows' own shape — an entry from before it holds
-   *  a bare path per episode and no synopsis, and a shape test at read time would be longer than a refetch. */
+  /** key = `tv3:${tmdbId}/${season}`; the `3` is the episode rows' own shape — before `2` a row was a bare
+   *  picture path with no synopsis, and before `3` it carried no episode title. A shape test at read time
+   *  would be longer than a refetch. */
   stills: Record<string, StillsEntry>;
   /** key = `c2:tv:${tmdbId}/${season}`; the season's own credit list, trimmed to what the band shows. The `2`
    *  marks the list trimmed by the single writer predicate: entries from before it carry the whole Writing
@@ -322,18 +323,18 @@ const sameSeason = (a: TmdbStills, b: TmdbStills): boolean => {
   return ka.every((k) => {
     const x = a[+k];
     const y = b[+k];
-    return !!y && x.p === y.p && x.ovZh === y.ovZh && x.ovOther === y.ovOther;
+    return !!y && x.p === y.p && x.ovZh === y.ovZh && x.ovOther === y.ovOther && x.nZh === y.nZh && x.nOther === y.nOther;
   });
 };
 
-/** Returns what TMDB bills for one season's episodes — each episode's still and its own line; an empty map
- *  (still `answered`) is a normal reply, and null means this season was not asked, is not on TMDB, or is
- *  waiting out a recorded miss. */
+/** Returns what TMDB bills for one season's episodes — each episode's still, its own title and its own
+ *  line; an empty map (still `answered`) is a normal reply, and null means this season was not asked, is
+ *  not on TMDB, or is waiting out a recorded miss. */
 export async function tmdbSeasonStills(tmdbId: string, season: number): Promise<TmdbStills | null> {
   if (!/^\d{1,8}$/.test(tmdbId) || !Number.isInteger(season) || season < 0 || season > 500) return null;
   const token = tmdbToken();
   if (!token) return null;
-  const key = `tv2:${tmdbId}/${season}`;
+  const key = `tv3:${tmdbId}/${season}`;
   const s = load();
   const hit = s.stills[key];
   if (hit && Date.now() - hit.fetchedAt < ('missing' in hit ? MISS_TTL : STILLS_TTL)) {
@@ -355,16 +356,28 @@ export async function tmdbSeasonStills(tmdbId: string, season: number): Promise<
     const n = num(ep?.episode_number);
     if (n === undefined) continue;
     const p = typeof ep?.still_path === 'string' ? ep.still_path : '';
-    /* The episode's own paragraph rides the same reply as its still and used to be thrown away. Held in the
-       two halves the rest of the ladder uses, because `language=zh-CN` answers in Chinese only where TMDB
-       has a Chinese record — the rest comes back in the work's own language, which still beats a blank line.
-       Measured cost on the two seasons this library now holds (223 episodes): 140 bytes an episode stored,
-       against 40 for the picture path alone — so ~2.6 KB for a 26-episode season, ~27 KB for a 195-episode one. */
+    /* The episode's own paragraph rides the same reply as its still and used to be thrown away, and the
+       title below rides it for the same reason. Both are held in the two halves the rest of the ladder
+       uses, because `language=zh-CN` answers in Chinese only where TMDB has a Chinese record — the rest
+       comes back in the work's own language, which still beats a blank line or a bare number. Measured on
+       UTF-8 bytes over the 210 episode rows this library has refetched since the shape changed: 546 a row,
+       of which the synopsis takes 479, the title 24 and the picture path 33 — ~14 KB for a 26-episode
+       season, ~106 KB for a 195-episode one. */
     const ov = typeof ep?.overview === 'string' ? ep.overview.trim() : '';
+    /* This is the one field the page had nowhere else to get a real name from: the server's row calls 235
+       of its 1437 episodes 「第 2 集」, and TMDB's own answer is the only place a title exists. It is
+       the cheap half of the reply — 24 of the 546 bytes a row costs. No positional filter here: a name
+       that only repeats the number is dropped by `episodeHead`, the one rule every name source passes
+       through, so a stored row says what TMDB billed rather than what this build concluded. 209 of the
+       210 rows cached now came back in Chinese; the one that did not is 「Big Boss」, so the other half has
+       already spoken once, for a title this library would otherwise have printed as a bare number. */
+    const nm = typeof ep?.name === 'string' ? ep.name.trim() : '';
     const row: TmdbEpisodeRow = { p };
     if (ov && hasHan(ov)) row.ovZh = ov;
     else if (ov) row.ovOther = ov;
-    if (p || ov) next[n] = row;
+    if (nm && hasHan(nm)) row.nZh = nm;
+    else if (nm) row.nOther = nm;
+    if (p || ov || nm) next[n] = row;
   }
   const prev: TmdbStills | undefined = hit && !('missing' in hit) ? hit.value : undefined;
   // Do not rewrite the file if nothing changed — the file is shared with the meta map.

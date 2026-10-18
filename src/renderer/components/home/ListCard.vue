@@ -104,7 +104,7 @@ const meta = computed(() =>
     .join('  ·  '),
 );
 const runtime = computed(() => fmtRuntime(props.item.runTimeTicks));
-const seen = computed(() => seenLabel(props.item.userData?.playedPercentage, props.item.runTimeTicks));
+const seen = computed(() => seenLabel(props.item.userData, props.item.runTimeTicks));
 
 function open(): void {
   if (!target.value) return;

@@ -53,7 +53,7 @@ export function clearEmbyCache(): void {
 /** Apply a change the server has already accepted to every copy of that item this cache holds.
  *
  *  A cached answer is a snapshot of a thing that keeps moving: the player writes a new position to the
- *  server every few seconds, and the copy taken before the film started would go on saying 已播 29 分钟
+ *  server every few seconds, and the copy taken before the film started would go on saying 看到 27:06
  *  for the rest of the TTL. Mutating in place is enough — the store hands the same object to every page
  *  that asks, and Vue's proxy reads through to it — so the fix is to write the number, not to re-ask. */
 export function patchItem(id: string, edit: (item: LibraryItem) => void): void {

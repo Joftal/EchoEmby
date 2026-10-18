@@ -273,9 +273,10 @@ export interface TmdbMeta {
   fetchedAt: number;
 }
 
-/** One episode as TMDB billed it: its still, and the paragraph written for that episode alone. Both arrive
- *  inside the season reply the pictures were asked for, so keeping the text costs bytes and no round trip —
- *  measured at about 100 bytes an episode on top of the 40 its path already takes. */
+/** One episode as TMDB billed it: its still, its own title and the paragraph written for that
+ *  episode alone. All three arrive inside the season reply the pictures were asked for, so keeping
+ *  the text costs bytes and no round trip — measured in UTF-8 over the 210 rows this library has
+ *  refetched: 479 bytes a synopsis, 24 a title, 33 the picture path it was always paying. */
 export interface TmdbEpisodeRow {
   /** image.tmdb.org path, empty when TMDB has no still for this episode. */
   p: string;
@@ -283,6 +284,12 @@ export interface TmdbEpisodeRow {
   ovZh?: string;
   /** The same line when it came back in anything else, kept for the last rung of the ladder. */
   ovOther?: string;
+  /** The episode's own title when TMDB answered it in Chinese, either script. Asked above the server's, on
+   *  the same ladder as the synopsis below. */
+  nZh?: string;
+  /** The same title in whatever language TMDB actually files it in — the work's own for most of this
+   *  library's non-Asian titles — kept for the last rung of the ladder. */
+  nOther?: string;
 }
 
 /** The season's episodes, keyed by TMDB's episode numbers (1-based). An episode with neither art nor text
