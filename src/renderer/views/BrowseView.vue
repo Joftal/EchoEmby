@@ -8,6 +8,7 @@ import RowScroller from '../components/home/RowScroller.vue';
 import FilterBar from '../components/browse/FilterBar.vue';
 import { defaultSort, filterParams, fromQuery, isFiltered, localSort, sortParams, toQuery, type Filters } from '../lib/filters';
 import { embyCached } from '../lib/embycache';
+import { PLAYABLE } from '../lib/resume';
 import { useAppStore } from '../stores/app';
 import { usePlayerStore } from '../stores/player';
 
@@ -386,7 +387,9 @@ function say(msg: string): void {
 }
 
 async function onPlay(item: LibraryItem): Promise<void> {
-  if (item.type === 'Series' || item.type === 'CollectionFolder' || item.type === 'BoxSet' || item.type === 'Playlist') {
+  // One table for the whole app: this branch used to re-list the types by hand and had already lost
+  // `Season`, so a season card would have been handed to the player as if it named a file.
+  if (!PLAYABLE.includes(item.type)) {
     open(item);
     return;
   }
