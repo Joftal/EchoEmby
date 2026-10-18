@@ -62,12 +62,12 @@ defineProps<{ kind: 'rail' | 'tech' }>();
   margin-left: calc(var(--gutter) - var(--tuck) - var(--rail-x));
   padding: 16px 0 4px;
 }
-/* The real header is either a 34px season picker or an h2 that drags its own 14px bottom margin into the
-   flex row and lands at 41.9 — never the 27.9 a plain row header measures. 34 is the modal of the six
-   shows measured here: 16 + 34 + 11 + 6 + the 279 card + 20 + 4 is 370, and the rows come in at
-   358.3 / 369.9 / 377.8 / 399.5. The short and the tall of those are one-line and two-line episode
-   titles, which no placeholder can predict; claiming the middle is what keeps 演职员 and everything
-   under it from moving when the episodes land. */
+/* The header line is the season button's 34px on every title now: a multi-season title shows the button and
+   the heading a one-season show keeps is floored to the same height, so the cards start on one line either
+   way. That puts the band back at 16 + 34 + 11 + 6 + the 279 card + 20 + 4 = 370, which is the floor the real
+   band carries too; the taller bands are two-line episode titles, which no placeholder can predict. The floor
+   is what keeps 演职员 and everything under it from moving when the episodes land, and the card starts at the
+   same 67px here as it does on the real band. */
 .ph-rail .hd {
   height: 34px;
   margin-left: var(--tuck);

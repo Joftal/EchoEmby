@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router';
 import type { LibraryItem, MediaStreamInfo, PlaybackSource, TmdbCreditRow, TmdbCredits, TmdbEpisodeRow, TmdbSeasonRow, TmdbSimilar, TmdbStills } from '../../shared/types';
 import HScroller from '../components/detail/HScroller.vue';
+import FilterSelect from '../components/browse/FilterSelect.vue';
 import BlockPh from '../components/detail/BlockPh.vue';
 import ScoreStrip from '../components/ScoreStrip.vue';
 import HeroPlay from '../components/HeroPlay.vue';
@@ -585,14 +586,6 @@ const metaLine = computed(() => {
   return parts.filter(Boolean).join(' · ');
 });
 
-/** The one work-level number a season view still owes the reader: how big the whole show is. */
-const seriesTotal = computed(() => {
-  const n = seasons.value.length;
-  if (n < 2) return '';
-  const eps = seasons.value.reduce((a, s) => a + (s.childCount || 0), 0);
-  return `全 ${n} 季${eps ? ` · ${eps} 集` : ''}`;
-});
-
 const fav = computed(() => !!work.value?.userData?.isFavorite);
 
 async function loadEpisodes(sid: string, seriesId = props.id) {
@@ -646,6 +639,19 @@ async function loadSeries(seriesId: string): Promise<LibraryItem | null> {
  *  nothing but the number when its name only repeats the position (「季 3」, 「Season 1」). TMDB's name for
  *  the same season is the second candidate, for the rows this server left plainly numbered. */
 const chipLabel = (s: LibraryItem): string => seasonTitle(s.indexNumber, s.name, trustRow(s.indexNumber, s.childCount)?.name);
+
+/* One button that pours the season list out of its bottom edge, on the picker's own vocabulary rather than a
+   second dropdown drawn for this page. Its options stack one to a row: 「第 1 季」 and
+   「第 1 季 · 追想篇」 have no cell wide enough for both, and a cloud of them wrapped into two columns
+   whose right edges lined up with nothing. */
+const seasonOptions = computed(() => seasons.value.map(s => ({ value: s.id, label: chipLabel(s) })));
+/** A Season page can name a season its parent's list did not answer with, and a picker that cannot match its
+ *  value prints that value as the label. An unmatched season hands it the empty one instead. */
+const seasonPick = computed(() => (seasons.value.some(s => s.id === seasonId.value) ? seasonId.value : ''));
+/** Re-picking the season already on screen is the picker's "unset" answer, not a request to load it again. */
+function pickSeason(v: string | string[]): void {
+  if (typeof v === 'string' && v) void loadEpisodes(v, work.value?.id);
+}
 
 /** Which title the once-per-title asks (logo band, TMDB's similar titles and its stills) have been made
  *  for. The row and the server's copy of it are the same work, so the second paint refines the item
@@ -814,24 +820,6 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
           </Transition>
         </div>
         <div class="wash"></div>
-        <!-- The season the copy below describes. It answers for the hero, so it hangs on the hero's own
-             top band rather than sitting in the copy column: in flow the row landed at y=47, and the back
-             disc owns 21..57 at this corner, so the first chip's left edge went under it (measured at both
-             the default and the minimum window). Out of flow, the copy keeps exactly the geometry it had
-             before any switcher existed. It rides the same fade as the copy because it is read with it. -->
-        <div v-if="seasons.length > 1" class="seasons" :style="{ opacity: Math.max(0, 1 - scroll / 260) }">
-          <button
-            v-for="s in seasons"
-            :key="s.id"
-            type="button"
-            class="sbtn"
-            :class="{ on: s.id === seasonId }"
-            @click="loadEpisodes(s.id, work?.id)"
-          >
-            {{ chipLabel(s) }}
-          </button>
-          <span v-if="seriesTotal" class="stotal">{{ seriesTotal }}</span>
-        </div>
         <div
           class="hero-in"
           :style="{ opacity: Math.max(0, 1 - scroll / 260), transform: `translate3d(0, ${Math.round(scroll * 0.4)}px, 0)` }"
@@ -874,8 +862,17 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
         <HScroller v-if="episodes.length" class="block epi-row">
           <template #header>
             <div class="ep-head">
-              <h2>{{ pack?.label || item.name }}</h2>
-              <span class="count">{{ episodes.length }} 集</span>
+              <FilterSelect
+                v-if="seasons.length > 1"
+                bare
+                neutral
+                rows
+                label="季"
+                :options="seasonOptions"
+                :model-value="seasonPick"
+                @update:model-value="pickSeason"
+              />
+              <h2 v-else>{{ pack?.label || item.name }}</h2>
             </div>
           </template>
           <button v-for="e in episodes" :key="e.id" class="epi" @click="play(e.id)">
@@ -1132,61 +1129,6 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
   align-items: flex-end;
   gap: 20px;
 }
-/* The season tabs, over the hero's own content. Same flat glass as the hero's round controls, and one row
-   that never wraps: past what fits it scrolls sideways rather than growing a second line. Hung from the
-   hero's right so the back disc keeps its corner, shrink-to-fit so a two-season show's tabs sit next to
-   the 全 N 季 counter rather than floating away from it. Picking one changes only what the tabs say, never
-   where anything sits. */
-.seasons {
-  position: absolute;
-  z-index: 2;
-  top: 23px;
-  right: var(--side);
-  max-width: calc(100% - 62px - var(--side));
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.seasons::-webkit-scrollbar {
-  display: none;
-}
-.sbtn {
-  flex: none;
-  padding: 6px 14px;
-  border-radius: 999px;
-  color: rgba(255, 255, 255, 0.82);
-  background: rgba(255, 255, 255, 0.14);
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  backdrop-filter: blur(10px);
-  font-size: 13px;
-  font-weight: 550;
-  line-height: 1.35;
-  white-space: nowrap;
-  transition: color var(--hov) var(--ease), background var(--hov) var(--ease), transform var(--hov) var(--ease-out);
-}
-.sbtn:hover {
-  background: rgba(255, 255, 255, 0.24);
-  color: #fff;
-  transform: translateY(-1px);
-}
-/* Selected is a fill swap only: a bolder or roomier active chip would reflow every tab beside it. */
-.sbtn.on {
-  background: #fff;
-  color: var(--ink);
-  border-color: #fff;
-}
-.stotal {
-  flex: none;
-  padding-left: 14px;
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1.35;
-  color: rgba(255, 255, 255, 0.8);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
 /* The plate is sized by height rather than width, so it keeps the same box whatever the art is and does not
    move when the text beside it changes height — the property that used to have to hold still while a clone
    was aimed at it. */
@@ -1267,6 +1209,10 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
   overflow-x: clip;
   max-width: 1320px;
 }
+/* The season button sits in the low half of a short window, and a menu that runs off the bottom edge is
+   not a choice, so the picker turns upward instead (FilterSelect's place()). Above that row is the hero, and
+   its copy paints over the flow - while a panel is open, the flow has to be the thing on top. */
+.flow:has(.sel.on) { z-index: 3; }
 .flow > .block { margin-top: 26px; }
 .block:not(.hrow) {
   padding-left: calc(var(--gutter) - var(--rail-x));
@@ -1280,7 +1226,20 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
 .epi-row { min-height: 370px; }
 h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px; color: var(--text); }
 
-.ep-head { display: flex; align-items: baseline; gap: 12px; flex: 1; min-width: 0; }
+/* The switcher used to hang in the hero's top-right corner, where it faded out with the hero's parallax and
+   had to clear the back disc. It is the title line of the row it decides now, so it rides the page and the
+   sibling-switch dim like everything else under the hero. */
+.ep-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  /* The line is the button's height on every title: a one-season heading stands 28px tall and would start the
+     cards 6px above the line the placeholder promised them. */
+  min-height: 34px;
+}
+.ep-head h2 { margin-bottom: 0; }
 
 .epi {
   flex: none;
