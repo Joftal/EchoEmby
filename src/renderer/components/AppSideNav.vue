@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAppStore } from '../stores/app';
+import { accountName } from '../lib/format';
 import EmbyMark from './EmbyMark.vue';
 import logoUrl from '../assets/echoemby.png';
 
@@ -49,10 +50,7 @@ const activeKey = computed(() => {
 
 const searchOn = computed(() => activeKey.value === 'ksearch');
 const serversOn = computed(() => route.name === 'servers');
-const shown = computed(() => {
-  const a = store.account;
-  return a?.label || a?.serverName || a?.username || '?';
-});
+const shown = computed(() => (store.account ? accountName(store.account) : '?'));
 // The rail is far narrower than the card, so the totals drop the 「部」 counter word — and at 13px the
 // spaces around the separator go too: 「电影 7313 · 电视剧 2487」 measures 138px against a 137.4px
 // column, which the ellipsis turned into 「24…」.

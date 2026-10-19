@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue';
 import type { Account } from '../../shared/types';
+import { accountName } from '../lib/format';
 import EmbyMark from './EmbyMark.vue';
 
 const props = defineProps<{
@@ -14,8 +15,7 @@ const emit = defineEmits<{ (e: 'select'): void; (e: 'edit'): void; (e: 'remove')
 const armed = ref(false);
 let armTimer: number | null = null;
 
-const host = computed(() => props.account.baseUrl.replace(/^https?:\/\//, '').replace(/\/+$/, ''));
-const shown = computed(() => props.account.label || props.account.serverName || host.value);
+const shown = computed(() => accountName(props.account));
 // The totals arrive after the card paints, so an empty line keeps its height instead of nudging the row.
 const libs = computed(() => {
   const c = props.counts;

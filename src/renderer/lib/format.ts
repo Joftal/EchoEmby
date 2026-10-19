@@ -171,3 +171,10 @@ export const fmtDateTime = (iso?: string): string => {
   const mm = String(d.getMinutes()).padStart(2, '0');
   return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${hh}:${mm}`;
 };
+
+/** What one of this machine's servers is called. The name typed here comes first because every gateway
+ *  answers with 「OkEmby」 as its own server name, and two of them have to be told apart; the host is what
+ *  is left when neither was ever filled in. The rail's account row and a card's corner badge both read
+ *  through here, so the same server never carries two spellings. */
+export const accountName = (a: { label?: string; serverName?: string; baseUrl: string }): string =>
+  a.label || a.serverName || a.baseUrl.replace(/^https?:\/\//, '').replace(/\/+$/, '');
