@@ -38,10 +38,64 @@ export const episodePosition = (season?: number | null, episode?: number | null)
 };
 
 /** Half the episodes on this server have no title of their own and come named 「第 2 集」, 「27」 or
- *  「Episode 3」 - which the position in front of them already says. */
-export const isPositionOnlyName = (name: string): boolean => {
+ *  「Episode 3」 - which the position in front of them already says. `episodeTail` is the surface rule;
+ *  this is the one it finishes on. */
+const isPositionOnlyName = (name: string): boolean => {
   const t = name.trim();
   return /^第\s*[\d一二三四五六七八九十百千]+\s*[集话話]\s*$/.test(t) || /^\d+$/.test(t) || /^episode\s*\d+$/i.test(t);
+};
+
+/** Where a name spells its own position: each pattern yields the season (null when it names none) and the
+ *  episode it claims. `(?<!\d)`/`(?!\d)` keep a resolution out of the list — 「1920x1080」 is not 20x108.
+ *  Four digits on the episode because the long-running shows here are past 999: 名侦探柯南 rows come named
+ *  「名侦探柯南 - S01E1277」, and a three-digit cap read no code at all, so the release group's label stayed
+ *  on the card. The resolution pattern keeps its three — a 4-digit tail there is the picture, not an episode. */
+const POSITION_CODES: [RegExp, (m: RegExpMatchArray) => [number | null, number]][] = [
+  [/s(?:eason)?\s*(\d{1,2})[\s._\-–—x]*e(?:p(?:isode)?)?\s*(\d{1,4})(?!\d)/i, m => [+m[1], +m[2]]],
+  [/(?<!\d)(\d{1,2})\s*[x]\s*(\d{1,3})(?!\d)/, m => [+m[1], +m[2]]],
+  [/第\s*(\d{1,2})\s*季\s*第\s*(\d{1,4})\s*[集话話]/, m => [+m[1], +m[2]]],
+  [/\bep\.?\s*(\d{1,4})\b/i, m => [null, +m[1]]],
+  [/#\s*(\d{1,4})(?!\d)/, m => [null, +m[1]]],
+  [/第\s*(\d{1,4})\s*[集话話]/, m => [null, +m[1]]],
+  [/[【[(（]\s*(\d{1,4})\s*[】)\]）](?!\d)/, m => [null, +m[1]]],
+];
+
+/** What an episode's own name adds beyond the position the card already prints. Measured over the 3681
+ *  episode rows both censuses pulled: 647 are 「第 57 集」 (the number alone), 51 more are 「ゆるキャン△ -
+ *  S01E06」 (the number wearing the show's name), and 12 are 「第 3 集 鬼迷心窍」 (the number in front of a
+ *  real title). A code is dropped only where it agrees with the row's own numbers, so a file named for a
+ *  different episode keeps its words, and only what a drop leaves behind can be dropped for being the
+ *  show's own name — 迷雾 第 16 集 and 都市男女爱情法 第 1 集 are episodes genuinely called that. */
+const episodeTail = (name: string, season?: number | null, episode?: number | null, seriesName?: string): string => {
+  let t = (name || '').trim();
+  if (!t) return '';
+  if (episode == null && season == null) return isPositionOnlyName(t) ? '' : t;
+  const show = (seriesName || '').trim();
+  const same = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: 'accent' }) === 0;
+  for (let pass = 0; pass < 4; pass++) {
+    let cut = false;
+    for (const [code, read] of POSITION_CODES) {
+      const m = t.match(code);
+      if (!m || m.index == null) continue;
+      const [cs, ce] = read(m);
+      if (ce !== episode || (cs != null && season != null && cs !== season)) continue;
+      t = (t.slice(0, m.index) + ' ' + t.slice(m.index + m[0].length)).trim();
+      cut = true;
+      break;
+    }
+    // A name no code was taken out of is the episode's own and leaves as it came - the trimming below
+    // would eat the brackets of 「[VCB-Studio] Yuru Camp [CM][Ma10p_1080p]」 for nothing.
+    if (!cut) break;
+    // Only the dangling ends of the cut come off - separators and a bracket the code emptied.
+    t = t
+      .replace(/[（(\[【]\s*[)）\]】]/g, ' ')
+      .replace(/^\s*(?:[-–—·・:：|｜,，、/\\]\s*)+/, '')
+      .replace(/\s*(?:[-–—·・:：|｜,，、/\\]\s*)+$/, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!t || (show && same(t, show))) return '';
+  }
+  return t && !isPositionOnlyName(t) ? t : '';
 };
 
 /** A season's name is worth printing only for what it says beyond its number, and several sources may
@@ -68,12 +122,19 @@ export const seasonTitle = (season?: number | null, ...names: (string | undefine
 /** One episode's headline inside a season the page has already named above it: the number the row is
  *  ordered by, then what the episode is actually called. The 「第 1 季」 half used to sit here too and spent
  *  the line's whole width restating the season that is open, once per card.
- *  The names come in the order every other text surface on this page uses (TMDB in Chinese, then the
- *  server's own row, then TMDB in whatever else it filed), and a name that only repeats the position is
- *  dropped: measured here, 235 of the library's 1437 episodes are titled 「第 2 集」, 「27」 or 「Episode 3」. */
-export const episodeHead = (episode: number | null | undefined, ...names: (string | undefined)[]): string => {
-  const pos = episode == null ? '' : `第 ${episode} 集`;
-  const named = names.map(n => (n || '').trim()).find(n => !!n && !isPositionOnlyName(n) && n !== pos) || '';
+ *  `episodeName` is the ladder this prints after, so a surface that already owns its own position wording
+ *  (the 在看 card, which says the season too) can take the name without the number twice. */
+export const episodeName = (
+  at: { episode?: number | null; season?: number | null; seriesName?: string },
+  ...names: (string | undefined)[]
+): string => names.map(n => episodeTail(n || '', at.season, at.episode, at.seriesName)).find(Boolean) || '';
+
+export const episodeHead = (
+  at: { episode?: number | null; season?: number | null; seriesName?: string },
+  ...names: (string | undefined)[]
+): string => {
+  const pos = at.episode == null ? '' : `第 ${at.episode} 集`;
+  const named = episodeName(at, ...names);
   return pos && named ? `${pos} · ${named}` : pos || named;
 };
 

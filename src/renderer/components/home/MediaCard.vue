@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router';
 import type { LibraryItem } from '../../../shared/types';
 import { useAppStore } from '../../stores/app';
 import { begin } from '../../lib/handoff';
-import { episodePosition, fmtRuntime, isPositionOnlyName, seenLabel } from '../../lib/format';
+import { episodeName, episodePosition, fmtRuntime, seenLabel } from '../../lib/format';
 import { useTmdb } from '../../lib/scores';
 
 const props = withDefaults(
@@ -73,6 +73,25 @@ function onErr(): void {
   tries.value += 1;
 }
 
+/* TMDB's name for this episode, asked on the same `near` gate the art already rides and out of the same
+   per-season reply — a card that took its frame from TMDB pays nothing extra, and one that had its own
+   picture is the only one that asks. It is the synopsis's ladder applied to the title: 中文 > TMDB 的另一种
+   语言 > 服务器, which is what stops a 在看 card wearing 「ゆるキャン△ - S01E06」 when TMDB has 「肉与红叶与谜之湖」. */
+const tmName = ref('');
+let namedFor = '';
+watch(
+  () => [near.value, props.item.id, props.variant] as const,
+  async () => {
+    const i = props.item;
+    if (!near.value || props.variant !== 'still' || i.type !== 'Episode') return;
+    if (i.id !== namedFor) tmName.value = '';
+    namedFor = i.id;
+    const n = await store.episodeTitle(i);
+    if (props.item.id === i.id) tmName.value = n;
+  },
+  { immediate: true },
+);
+
 const target = computed(() => (props.item.type === 'Episode' ? props.item.parentId : props.item.id));
 const played = computed(() => Math.min(100, props.item.userData?.playedPercentage || 0));
 /* The number on this card has to be the number on the page it opens, or one title wears two of them. The
@@ -109,10 +128,15 @@ const metaLine = computed(() => {
     return [sub.value, year].filter(Boolean).join(' · ');
   }
   if (i.seriesName && i.indexNumber != null) {
-    // A title that only repeats the position is not a title; the tail carries a name that adds something.
-    const t = i.name.trim();
+    // The tail carries only what the episode says beyond the position printed in front of it, off the
+    // TMDB-first ladder; 「ゆるキャン△ - S01E06」 is that position restated and says nothing after the cut.
+    const t = episodeName(
+      { episode: i.indexNumber, season: i.parentIndexNumber, seriesName: i.seriesName },
+      tmName.value,
+      i.name,
+    );
     const pos = episodePosition(i.parentIndexNumber, i.indexNumber);
-    return `${pos}${t && !isPositionOnlyName(t) ? ` · ${t}` : ''}`;
+    return `${pos}${t ? ` · ${t}` : ''}`;
   }
   return fmtRuntime(i.runTimeTicks);
 });

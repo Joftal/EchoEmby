@@ -2,7 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import { usePlayerStore } from '../../stores/player';
 import { useAppStore } from '../../stores/app';
-import { episodePosition, fmtRuntime, isPositionOnlyName, seasonTitle } from '../../lib/format';
+import { episodeName, episodePosition, fmtRuntime, seasonTitle } from '../../lib/format';
 import { trustSeason } from '../../lib/scores';
 import { embyCached } from '../../lib/embycache';
 import { vReveal } from '../../lib/reveal';
@@ -20,6 +20,10 @@ const episodes = ref<LibraryItem[]>([]);
 const active = ref('');
 const loading = ref(false);
 const art = ref<Record<string, string>>({});
+/* TMDB's title for each episode, off the same per-season reply the frames come from. The chips above the
+   strip already name the season, so this only ever adds what the episode is called — and it is what puts a
+   Chinese 集名 on a row the server filed as 「ゆるキャン△ - S01E06」. */
+const names = ref<Record<string, string>>({});
 const strip = ref<HTMLElement | null>(null);
 
 /** The panel opens on the season being played, so the list never starts on 第 1 季 while 第 3 季 is on screen. */
@@ -63,8 +67,8 @@ async function loadEpisodes(sid: string): Promise<void> {
   );
   if (r.ok) episodes.value = r.data || [];
   for (const e of episodes.value) {
-    if (art.value[e.id] !== undefined) continue;
-    void app.itemArt(e, 320, true).then(url => (art.value[e.id] = url));
+    if (art.value[e.id] === undefined) void app.itemArt(e, 320, true).then(url => (art.value[e.id] = url));
+    if (names.value[e.id] === undefined) void app.episodeTitle(e).then(n => (names.value[e.id] = n));
   }
   await centerOnPlaying();
 }
@@ -115,7 +119,8 @@ async function choose(id: string): Promise<void> {
   await player.play(id);
 }
 
-const titleOf = (ep: LibraryItem): string => (isPositionOnlyName(ep.name) ? '' : ep.name);
+const titleOf = (ep: LibraryItem): string =>
+  episodeName({ episode: ep.indexNumber, season: ep.parentIndexNumber, seriesName: ep.seriesName }, names.value[ep.id], ep.name);
 </script>
 
 <template>

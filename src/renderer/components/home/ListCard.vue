@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router';
 import type { LibraryItem } from '../../../shared/types';
 import { useAppStore } from '../../stores/app';
 import { begin } from '../../lib/handoff';
-import { fmtRuntime, seenLabel } from '../../lib/format';
+import { episodeName, episodePosition, fmtRuntime, seenLabel } from '../../lib/format';
 import { genreLabels } from '../../lib/genres';
 import { useTmdb } from '../../lib/scores';
 
@@ -69,8 +69,8 @@ function onErr(): void {
 }
 
 const target = computed(() => (props.item.type === 'Episode' ? props.item.parentId : props.item.id));
-/* Synopsis and age rating come from the same ladder the detail page and the lobby hero use — TMDB, then the
-   server, then TMDB's non-Chinese line — and this row was the only surface left out of it. Measured on
+/* Synopsis and age rating come from the same ladder the detail page and the lobby hero use — TMDB in
+   Chinese, then TMDB's other line, then the server — and this row was the only surface left out of it. Measured on
    待看: 26 of 48 rows had no overview at all and 32 carried no rating, while the server has an OfficialRating
    for only 13-18 of 25 sampled titles. The ask rides the `near` gate above rather than the row's own mount,
    so a page only reaches for the titles somebody can actually see, and it asks TMDB alone: IMDb, Trakt and
@@ -78,12 +78,43 @@ const target = computed(() => (props.item.type === 'Episode' ? props.item.parent
 const tmdb = useTmdb(() => (near.value ? props.item : null));
 /* Age guidance is a property of the show, so an episode row takes it from the work above it. Its synopsis
    is not: this page's 24 episode rows are one show, and the series paragraph under each of them would be
-   the same paragraph twenty-four times. TMDB's line for each episode is kept and the detail page prints it,
-   but it rides the season reply these rows never ask for — a 2:3 card takes the server's paragraph or none. */
+   the same paragraph twenty-four times — so a row asks for its own episode's line, off the same season
+   reply the 在看 cards ride (one ask per show-season however many rows of it are here, 30 days on disk). */
 const isWork = computed(() => props.item.type !== 'Episode');
-const overview = computed(() =>
-  isWork.value ? tmdb.value?.overviewZh || props.item.overview || tmdb.value?.overviewOther || '' : props.item.overview || '',
+const tmOv = ref('');
+const tmName = ref('');
+let ovFor = '';
+watch(
+  () => [near.value, props.item.id] as const,
+  async () => {
+    const i = props.item;
+    if (!near.value || i.type !== 'Episode') return;
+    if (i.id !== ovFor) {
+      tmOv.value = '';
+      tmName.value = '';
+    }
+    ovFor = i.id;
+    const [o, n] = await Promise.all([store.episodeOverview(i), store.episodeTitle(i)]);
+    if (props.item.id !== i.id) return;
+    tmOv.value = o;
+    tmName.value = n;
+  },
+  { immediate: true },
 );
+/* The headline is the one place this card can print a release group's label, because it is the server's raw
+   `Name`: 「名侦探柯南 - S01E1277」 under a meta line that already reads 名侦探柯南. Same ladder as the
+   paragraph, same trimmer, and a floor the other two surfaces do not need — a card whose whole line went
+   blank would show nothing at all, so a row nobody can name falls back to its own number. */
+const headline = computed(() => {
+  const i = props.item;
+  if (i.type !== 'Episode') return i.name;
+  const at = { episode: i.indexNumber, season: i.parentIndexNumber, seriesName: i.seriesName || '' };
+  return episodeName(at, tmName.value, i.name) || episodePosition(i.parentIndexNumber, i.indexNumber) || i.name;
+});
+const overview = computed(() => {
+  if (isWork.value) return tmdb.value?.overviewZh || tmdb.value?.overviewOther || props.item.overview || '';
+  return tmOv.value || props.item.overview || '';
+});
 const cert = computed(() => tmdb.value?.cert || props.item.officialRating || '');
 /* One ladder, then the card's own floor. Two numbers for one title is what this used to print: measured on
    70 sampled titles, 12 differ by ≥0.3 and 5 by ≥1.0 — 孤独摇滚! held 8.5 here against the TMDB 8.3 the page
@@ -125,7 +156,7 @@ function open(): void {
 
     <div class="body">
       <div class="head">
-        <h3>{{ item.name }}</h3>
+        <h3>{{ headline }}</h3>
         <span v-if="item.studio" class="studio">{{ item.studio }}</span>
       </div>
       <p v-if="meta" class="meta">{{ meta }}</p>

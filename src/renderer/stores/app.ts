@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
-import type { AppConfig, FacetOption, LibraryItem, LibraryRow, SettingsPatch, TmdbStills, WatchedRecord } from '../../shared/types';
+import type { AppConfig, FacetOption, LibraryItem, LibraryRow, SettingsPatch, TmdbEpisodeRow, TmdbStills, WatchedRecord } from '../../shared/types';
 import { clearEmbyCache, embyCached, patchItem, rescope } from '../lib/embycache';
 import { tmdbKind } from '../lib/scores';
 
@@ -233,13 +233,15 @@ export const useAppStore = defineStore('app', () => {
   const seriesTmdb = new Map<string, Promise<string>>();
   const seasonStills = new Map<string, Promise<TmdbStills>>();
 
-  /** The episode's own frame from TMDB. One ask per (series, season) no matter how many episodes of it a
-   *  page shows: the 在看 window is 48 artless episodes over 6 seasons, and TMDB answers a season at a time. */
-  async function episodeStill(item: LibraryItem): Promise<string> {
+  /** TMDB's row for one episode. One ask per (series, season) no matter how many episodes of it a page
+   *  shows: the 在看 window is 48 artless episodes over 6 seasons, and TMDB answers a season at a time.
+   *  The same reply carries the episode's title, so a card that wanted its frame gets its name for free —
+   *  and a card that had a frame of its own is the only one that pays for the ask. */
+  async function tmdbEpisode(item: LibraryItem): Promise<TmdbEpisodeRow | null> {
     const sid = item.parentId;
     const season = item.parentIndexNumber;
     const ep = item.indexNumber;
-    if (!sid || season == null || ep == null) return '';
+    if (!sid || season == null || ep == null) return null;
     const acct = `${account.value?.accountId}|`;
     let tmdbId = seriesTmdb.get(acct + sid);
     if (!tmdbId) {
@@ -250,7 +252,7 @@ export const useAppStore = defineStore('app', () => {
     }
     const showId = await tmdbId;
     // This gateway writes the string "None" for a provider it does not have, so only digits are an id.
-    if (!/^\d{1,8}$/.test(showId)) return '';
+    if (!/^\d{1,8}$/.test(showId)) return null;
     const key = `${acct}${showId}/${season}`;
     let stills = seasonStills.get(key);
     if (!stills) {
@@ -260,9 +262,28 @@ export const useAppStore = defineStore('app', () => {
         .catch(() => ({} as TmdbStills));
       seasonStills.set(key, stills);
     }
-    const row = (await stills)[ep];
+    return (await stills)[ep] || null;
+  }
+
+  /** What TMDB calls this episode: its own title in Chinese, then in whatever else it files the work, then
+   *  nothing — the same ladder the synopsis rides, and the reason a card stops wearing a release group's
+   *  label. Empty is the cue for the surface to fall back to the server's row. */
+  async function episodeTitle(item: LibraryItem): Promise<string> {
+    const r = await tmdbEpisode(item);
+    return r?.nZh || r?.nOther || '';
+  }
+
+  /** TMDB's paragraph for one episode, same ladder and same single ask per season. Empty is the cue for the
+   *  surface to fall back to the server's line, which for a lot of this library's episodes is English. */
+  async function episodeOverview(item: LibraryItem): Promise<string> {
+    const r = await tmdbEpisode(item);
+    return r?.ovZh || r?.ovOther || '';
+  }
+
+  async function episodeStill(item: LibraryItem): Promise<string> {
+    const p = (await tmdbEpisode(item))?.p;
     // w500 is the size the detail page already uses for these; a card is 300 css px = 375 device px here.
-    return row?.p ? `https://image.tmdb.org/t/p/w500${row.p}` : '';
+    return p ? `https://image.tmdb.org/t/p/w500${p}` : '';
   }
 
   /** An Episode rarely has art of its own here: measured on the 在看 row, 48 of 60 rows carry no Primary tag
@@ -341,5 +362,5 @@ export const useAppStore = defineStore('app', () => {
     offWatched = window.echoemby.player.onWatched(w => void rememberPlayback(w));
   }
 
-  return { config, account, rows, views, genres, loading, error, ready, counts, init, login, switchTo, remove, update, saveSettings, loadCounts, loadHome, loadViews, loadGenres, imageUrl, backdropUrl, logoCandidates, itemArt, setFavorite, watchPlayback };
+  return { config, account, rows, views, genres, loading, error, ready, counts, init, login, switchTo, remove, update, saveSettings, loadCounts, loadHome, loadViews, loadGenres, imageUrl, backdropUrl, logoCandidates, itemArt, episodeTitle, episodeOverview, setFavorite, watchPlayback };
 });
