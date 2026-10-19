@@ -112,18 +112,20 @@ const headline = computed(() => {
   return episodeName(at, tmName.value, i.name) || episodePosition(i.parentIndexNumber, i.indexNumber) || i.name;
 });
 const overview = computed(() => {
-  if (isWork.value) return tmdb.value?.overviewZh || tmdb.value?.overviewOther || props.item.overview || '';
+  if (isWork.value) return tmdb.value.meta?.overviewZh || tmdb.value.meta?.overviewOther || props.item.overview || '';
   return tmOv.value || props.item.overview || '';
 });
-const cert = computed(() => tmdb.value?.cert || props.item.officialRating || '');
+const cert = computed(() => tmdb.value.meta?.cert || props.item.officialRating || '');
 /* One ladder, then the card's own floor. Two numbers for one title is what this used to print: measured on
    70 sampled titles, 12 differ by ≥0.3 and 5 by ≥1.0 — 孤独摇滚! held 8.5 here against the TMDB 8.3 the page
    it opens shows, and 首尔破笑组's 10.0 is server data that no rater agrees with. A score belongs to the work,
-   so an episode row takes it from the series above it exactly as the badge beside it does. The floor stays:
-   a 4.8 on a card is not a fact anybody asked to see. */
+   so an episode row takes it from the series above it exactly as the badge beside it does, and a row whose
+   answer is still owed prints nothing rather than the number that is about to be replaced. The floor at 6
+   went with the card's: a 4.8 is a rating the platform publishes, and this row and that card are one title. */
 const rating = computed(() => {
-  const v = tmdb.value?.voteAverage || props.item.communityRating || 0;
-  return v >= 6 ? v.toFixed(1) : '';
+  const { meta, ready, fallback } = tmdb.value;
+  const v = meta?.voteAverage || (ready ? fallback : 0);
+  return v > 0 ? v.toFixed(1) : '';
 });
 const meta = computed(() =>
   [

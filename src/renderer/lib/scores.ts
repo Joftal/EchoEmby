@@ -78,16 +78,49 @@ function slot(id: string): Scores {
   return cache[id];
 }
 
-function put<K extends keyof Scores>(id: string, key: K, p: Promise<IpcResult<Scores[K] | null>>): void {
+/* Whether a source has *answered*, per (item, source), kept apart from the answer itself because a null is
+   two different facts wearing one shape: 「TMDB 没有这个标题」 and 「TMDB 还没回」. Only the badge ladder needs
+   the difference, and it is written by the success branch alone — a transport failure settles nothing until
+   the tries below run out, which is what keeps a request that died in the proxy from being dressed up as a
+   title TMDB does not have. */
+const settled = reactive<Record<string, boolean>>({});
+
+/* A failure costs one more try and then hands the claim back. Immediately is wrong — one lost request on a
+   title is usually the proxy blinking, and re-asking at once asks again into the same blink — and never is
+   wrong too: TMDB's single reply carries the synopsis, the certification, the season table, the credits and
+   the rating, so the hero caption of a title nobody else re-mounts stayed blank until the app restarted. */
+const TRIES = 2;
+const RETRY_MS = 1_500;
+
+function put<K extends keyof Scores>(id: string, key: K, ask: () => Promise<IpcResult<Scores[K] | null>>): void {
   if (!claim(id, key)) return;
   const s = slot(id);
-  void p.then(
-    x => {
-      if (x.ok) s[key] = x.data || null;
-      else release(id, key);
-    },
-    () => release(id, key),
-  );
+  const attempt = (left: number): void => {
+    const fail = () => {
+      if (left > 1) setTimeout(() => attempt(left - 1), RETRY_MS);
+      else {
+        /* Out of tries. The claim goes back so the next mount of this title can ask again, and the source is
+           still called answered, because a badge that waits on a source which will not reply waits forever:
+           themoviedb.org is exactly the kind of host this machine reaches only through a proxy, and an empty
+           不代理 mode would otherwise wipe every score off every poster while the library itself plays fine.
+           The server's own number takes the place instead. */
+        release(id, key);
+        settled[`${id}|${key}`] = true;
+      }
+    };
+    void ask().then(
+      x => {
+        if (!x.ok) {
+          fail();
+          return;
+        }
+        s[key] = x.data || null;
+        settled[`${id}|${key}`] = true;
+      },
+      fail,
+    );
+  };
+  attempt(TRIES);
 }
 
 /** Every source the score strip can draw, each one skipped if an earlier reader already asked for it. */
@@ -96,19 +129,19 @@ function load(item: LibraryItem): void {
   const imdb = item.providers?.imdb || '';
   const kind = tmdbKind(item);
   if (imdb) {
-    put(id, 'rt', window.echoemby.meta.rt(imdb));
-    put(id, 'imdb', window.echoemby.meta.imdb(imdb));
-    if (kind) put(id, 'trakt', window.echoemby.meta.trakt({ kind, imdb }));
+    put(id, 'rt', () => window.echoemby.meta.rt(imdb));
+    put(id, 'imdb', () => window.echoemby.meta.imdb(imdb));
+    if (kind) put(id, 'trakt', () => window.echoemby.meta.trakt({ kind, imdb }));
   }
   askTmdb(item);
   // CSM reverse-looks-up by title slug, so it wants the Latin original title when there is one.
   // Neither title-keyed source is asked for a Season row: its name is 「第一季」, a position rather than a
   // title, and the page that needs the answer is the series above it, which asks for itself.
   const csmTitle = item.originalTitle || item.name;
-  if (kind && item.type !== 'Season' && csmTitle) put(id, 'csm', window.echoemby.meta.csm({ kind, title: csmTitle }));
+  if (kind && item.type !== 'Season' && csmTitle) put(id, 'csm', () => window.echoemby.meta.csm({ kind, title: csmTitle }));
   // Bangumi is the opposite half: its search only reaches CJK names, and that is where the anime and
   // domestic-drama titles this server holds are actually reviewed.
-  if (kind && item.type !== 'Season' && item.name) put(id, 'bgm', window.echoemby.meta.bangumi(item.name));
+  if (kind && item.type !== 'Season' && item.name) put(id, 'bgm', () => window.echoemby.meta.bangumi(item.name));
 }
 
 /** TMDB answers for a work, never for an episode row, and only when the server actually carries its id. */
@@ -122,7 +155,7 @@ function tmdbAskable(item: LibraryItem): boolean {
 /** TMDB alone: the one source that carries a synopsis and a certification for a title the server left blank. */
 function askTmdb(item: LibraryItem): void {
   if (!tmdbAskable(item)) return;
-  put(item.id, 'tmdb', window.echoemby.meta.tmdb({ kind: tmdbKind(item)!, tmdbId: item.providers!.tmdb! }));
+  put(item.id, 'tmdb', () => window.echoemby.meta.tmdb({ kind: tmdbKind(item)!, tmdbId: item.providers!.tmdb! }));
 }
 
 /** The work a row's outside data lives on. An Episode's own provider ids point at the episode and no source
@@ -161,21 +194,49 @@ export function useScores(get: () => LibraryItem | null | undefined): ComputedRe
  *  trips it has nowhere to print, and the gateway 500s on a burst of them. A row that is not a work is
  *  resolved upward first, and the answer is read off the work's own key, so twenty-four episodes of one
  *  show cost one TMDB trip and share its answer with that show's detail page. */
-export function useTmdb(get: () => LibraryItem | null | undefined): ComputedRef<TmdbMeta | null> {
+export interface TmdbSlot {
+  meta: TmdbMeta | null;
+  /** The number to print when the work has no TMDB rating: the work's own, and only if it has none, the
+   *  row's. An episode row's server rating is a per-episode figure (measured on 待看: 3 of the 8 rows a
+   *  badge can stand on disagree with the series above them, e.g. 9.5 against the series' 7.0), and the
+   *  badge beside a poster is read as the title's score, so it may fall back to that one alone. */
+  fallback: number;
+  /** Whether TMDB is still owed an answer. False covers the three waits a card cannot see the difference
+   *  between — the row has not come near yet, its series has not come back from the server, TMDB has not
+   *  replied — and a badge that prints the server's number through any of them is the second number.
+   *  A row that can never reach TMDB is ready at once: a work the server left without a digit id, and an
+   *  episode whose series lookup came back empty, would otherwise wait on an ask that is never coming. */
+  ready: boolean;
+}
+
+export function useTmdb(get: () => LibraryItem | null | undefined): ComputedRef<TmdbSlot> {
   const id = computed(() => get()?.id || '');
   const workId = ref('');
+  const deadEnd = ref(false);
+  const fallback = ref(0);
   watch(
     id,
     async () => {
       const it = get();
       workId.value = '';
+      deadEnd.value = false;
+      fallback.value = 0;
       if (!it) return;
       const w = await workOf(it);
-      if (!w || get()?.id !== it.id) return;
+      if (get()?.id !== it.id) return;
+      fallback.value = Number(w?.communityRating) || Number(it.communityRating) || 0;
+      if (!w || !tmdbAskable(w)) {
+        deadEnd.value = true;
+        return;
+      }
       askTmdb(w);
-      if (tmdbAskable(w)) workId.value = w.id;
+      workId.value = w.id;
     },
     { immediate: true },
   );
-  return computed(() => (workId.value ? cache[workId.value]?.tmdb || null : null));
+  return computed(() =>
+    workId.value
+      ? { meta: cache[workId.value]?.tmdb || null, ready: !!settled[`${workId.value}|tmdb`], fallback: fallback.value }
+      : { meta: null, ready: deadEnd.value, fallback: fallback.value },
+  );
 }

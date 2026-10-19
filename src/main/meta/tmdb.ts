@@ -142,8 +142,10 @@ const seasonTable = (rows: any[] | undefined): TmdbSeasonRow[] => {
 };
 
 /** `answered` distinguishes "TMDB says this id does not exist" from "TMDB did not reply", which
- *  matters because only the former should be cached as a miss. */
-const fetchJson = async <T>(url: string, cred: string): Promise<{ json: T | null; answered: boolean }> => {
+ *  matters because only the former should be cached as a miss. `why` names what to blame for the
+ *  silence; it only ever reaches the log, through ipc.ts's detail(), because the mapped sentence a
+ *  caller sees must not pretend to know the user's own server broke. */
+const fetchJson = async <T>(url: string, cred: string): Promise<{ json: T | null; answered: boolean; why: string }> => {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 15000);
   /* TMDB has two credentials and they do not interchange: a v4 read token is a JWT and only the
@@ -162,16 +164,16 @@ const fetchJson = async <T>(url: string, cred: string): Promise<{ json: T | null
        401/403 means our own key is wrong, 429 means we are being throttled, and a 5xx — or the empty 502
        this machine's proxy paints over a failed lookup — means the request never got through. Recording
        any of those as a miss would hide a title's whole season for MISS_TTL. */
-    if (!res.ok) return { json: null, answered: res.status === 404 };
+    if (!res.ok) return { json: null, answered: res.status === 404, why: `HTTP ${res.status}` };
     const text = await res.text();
     try {
-      return { json: JSON.parse(text) as T, answered: true };
+      return { json: JSON.parse(text) as T, answered: true, why: '' };
     } catch {
       // Truncated proxy responses land here; treat as unanswered so we retry next open.
-      return { json: null, answered: false };
+      return { json: null, answered: false, why: '回应的 JSON 是截断的' };
     }
-  } catch {
-    return { json: null, answered: false };
+  } catch (e) {
+    return { json: null, answered: false, why: `${(e as any)?.name || 'Error'}: ${(e as any)?.message ?? e}` };
   } finally {
     clearTimeout(timer);
   }
@@ -213,8 +215,8 @@ const metaHit = (key: string): { state: 'miss' } | { state: 'cold' } | { state: 
   const hit = load().meta[key];
   if (!hit) return { state: 'cold' };
   if (Date.now() - hit.fetchedAt >= ('missing' in hit ? MISS_TTL : META_TTL)) return { state: 'cold' };
-  /* A recorded miss is its own state because `tmdbMeta` reads a null as 「go and ask」. Without it, a title
-     TMDB genuinely does not have costs a request on every open instead of one per MISS_TTL. */
+  /* A recorded miss is its own state because `tmdbMeta`'s null now reads as 「TMDB has nothing」: without it,
+     a title TMDB genuinely does not have would cost a request on every open instead of one per MISS_TTL. */
   if ('missing' in hit) return { state: 'miss' };
   /* `schema` is the one staleness test. It replaces a run of presence checks (`originalLanguage`,
      `overviewOther`, `seasons`, `cast`), each of which only worked while its field was written every
@@ -238,9 +240,13 @@ export async function tmdbMeta(kind: Kind, tmdbId: string): Promise<TmdbMeta | n
      The certification half is asked per kind: a movie's rating is read off `release_dates`, a show's off
      `content_ratings`, and neither has a use for the other. */
   const q = `?language=zh-CN&append_to_response=${kind === 'movie' ? 'credits,release_dates' : 'credits,content_ratings'}`;
-  const { json, answered } = await fetchJson<any>(base + q, token);
+  const { json, answered, why } = await fetchJson<any>(base + q, token);
   const s = load();
-  if (!answered) return null;
+  /* Thrown instead of returned as null: a null that reaches a card now means TMDB answered and has nothing
+     to say, which is the one thing a badge may print the server's number over. Silence is not that answer,
+     and holding it as one cost a title its whole caption for the rest of the session on a single lost
+     request. */
+  if (!answered) throw new Error(`TMDB 没有答上（${why}）`);
   if (!json || json.status_code === 7 || json.success === false) {
     s.meta[key] = { missing: true, fetchedAt: Date.now() };
     persist();
@@ -532,7 +538,9 @@ export async function tmdbLogos(kind: Kind, tmdbId: string): Promise<string[]> {
   /* The work's own language is the fourth tier, and Emby does not carry it (measured: this gateway
      returns no OriginalLanguage even when asked for it). TMDB's detail record does, and that request is
      already made and cached for the score badges, so asking here only costs on a cold title. */
-  const film = (await tmdbMeta(kind, tmdbId))?.originalLanguage || '';
+  /* Only the work's own language is borrowed here, so a failed lookup must not empty the strip: the logo
+     rows may already sit on disk and rank perfectly well without the fourth tier. */
+  const film = (await tmdbMeta(kind, tmdbId).catch(() => null))?.originalLanguage || '';
   if (hit && Date.now() - hit.fetchedAt < LOGO_TTL) return rankLogos(hit.value, film);
 
   /* `include_image_language=zh,en` would be the cheap ask, but measured on this library it silently

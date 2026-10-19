@@ -94,14 +94,19 @@ watch(
 
 const target = computed(() => (props.item.type === 'Episode' ? props.item.parentId : props.item.id));
 const played = computed(() => Math.min(100, props.item.userData?.playedPercentage || 0));
-/* The number on this card has to be the number on the page it opens, or one title wears two of them. The
-   list rows already read TMDB first; this card read the server alone. It asks nobody today, so the ladder
-   is a new trip: one per title per session (episode rows fold into their series), gated by the same `near`
-   the art already rides, and the answer sits on disk for 30 days. */
+/* The number on this card has to be the number on the page it opens, or one title wears two of them: TMDB
+   first, the server only once TMDB has answered and has nothing to say, and neither while the answer is
+   still owed. That third state is the whole point — printing the server's 8.9 and then switching to TMDB's
+   7.7 is still two numbers, one of them wrong, and a badge that simply arrives a frame later is one.
+   One ask per title per session (episode rows fold into their series), gated by the same `near` the art
+   already rides, and the answer sits on disk for 30 days.
+   The floor at 6 is gone: it hid a rating the platform publishes, and the season band on the page this card
+   opens already printed anything above 0, so one title could read 7.4 here and 5.9 there. */
 const tmdb = useTmdb(() => (near.value ? props.item : null));
 const rating = computed(() => {
-  const v = tmdb.value?.voteAverage || props.item.communityRating || 0;
-  return v >= 6 ? v.toFixed(1) : '';
+  const { meta, ready, fallback } = tmdb.value;
+  const v = meta?.voteAverage || (ready ? fallback : 0);
+  return v > 0 ? v.toFixed(1) : '';
 });
 const sub = computed(() => {
   const i = props.item;
