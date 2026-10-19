@@ -6,14 +6,15 @@ import { computed } from 'vue';
  *  Both pages that own a hero handed the swap a rectangle painted with the page's own pale shimmer,
  *  so the transition finished onto something that looked like an empty window — the loading state read as
  *  a failure. This is the shape of what is coming instead: the hero's dark ramp with no photo in it, the
- *  plate holding whatever art the card already had on screen, and bars where the title, the meta line, the
- *  badges, the overview and the buttons will sit.
+ *  bars where the title, the meta line, the badges, the overview and the buttons will sit, and — on the
+ *  detail page only — the plate holding whatever art the card already had on screen.
  *
  *  One component rather than two copies because this plate has to be the hero's box to the pixel: the real
  *  hero lands in the same slot, and a few px of difference between the two is a jump you can see the moment
- *  the transition ends. The one thing the two pages do not share is the row order: the lobby puts its score
+ *  the transition ends. The two pages do not share a row order or a left column: the lobby puts its score
  *  strip under the synopsis, the detail page puts it above, and the copy column is pinned to the bottom of
- *  the box, so drawing the wrong order parks the badges a hundred px from where they land.
+ *  the box, so drawing the wrong order parks the badges a hundred px from where they land. The lobby has no
+ *  plate at all, so it gets no plate here either — the copy starts on the same x the real one does.
  *  The ramp is the detail page's; the lobby's is a touch lighter, and nothing can tell once the art lands. */
 const props = withDefaults(defineProps<{ poster?: string; layout?: 'detail' | 'lobby' }>(), { layout: 'detail' });
 /** The lobby's synopsis is clamped to two lines and the detail page's to four; the paragraph draws the
@@ -24,7 +25,13 @@ const lines = computed(() => (props.layout === 'lobby' ? 2 : 4));
 <template>
   <section class="hero" :class="{ lobby: layout === 'lobby' }">
     <div class="copy">
-      <div class="art">
+      <!-- The plate is the detail page's own element. The lobby has one too, but it is 104px wide, 2:3 and
+           mounts only for a slide whose art is a poster rather than a backdrop — and the hero promotes
+           backdrop-bearing titles first by construction, so a cold lobby has never been measured with a
+           plate in it (5 of 5 slides carried backdropImageTag, plateInDom:false). Drawing the detail page's
+           250x375 plate here pushed every copy row 270px to the right of where it lands (skeleton .text
+           @528 against the real one @258), which is the jump this whole component exists to avoid. -->
+      <div v-if="layout !== 'lobby'" class="art">
         <img v-if="poster" :src="poster" alt="" />
       </div>
       <div class="text">
@@ -37,6 +44,10 @@ const lines = computed(() => (props.layout === 'lobby' ? 2 : 4));
         <i class="sl p"></i>
         <i class="sl ic"></i>
       </div>
+    </div>
+    <!-- The carousel's own five dots, and the wide one is the first because a hero always starts at idx 0. -->
+    <div v-if="layout === 'lobby'" class="dots">
+      <i v-for="n in 5" :key="n" class="sl dt" :class="{ on: n === 1 }"></i>
     </div>
   </section>
 </template>
@@ -198,10 +209,39 @@ const lines = computed(() => (props.layout === 'lobby' ? 2 : 4));
   height: 26px;
   margin-bottom: 0;
 }
+/* The lobby's two buttons measured on the slide it replaces: 播放/继续播放 is a 166x48 pill and 详情 a
+   93x38 one, 10px apart — 269 wide in total, against the 224 this column used to draw. Both boxes are
+   pinned to the copy's right edge by `margin-left: auto`, so the shortfall only ever showed as the pill's
+   left edge sitting 45px past where the real one lands. */
+.lobby .cta {
+  gap: 10px;
+}
+.lobby .p {
+  width: 166px;
+}
 .lobby .ic {
-  width: 92px;
+  width: 93px;
   height: 38px;
   border-radius: 19px;
+}
+/* The carousel's dots, on the same box the real one uses: centred on the hero band rather than the window,
+   10px above its bottom edge, five of them with the first one 40 wide because a fresh hero always opens on
+   slide zero. */
+.dots {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 10px;
+  display: flex;
+  gap: 7px;
+}
+.dt {
+  width: 22px;
+  height: 4px;
+  border-radius: 999px;
+}
+.dt.on {
+  width: 40px;
 }
 /* The lobby shortens its synopsis to one line below a 700px-tall window, and the placeholder has to follow
    it: that paragraph sits above the pinned strip, so one still drawn two lines tall parks the strip 22px
