@@ -3,6 +3,7 @@ import { ref } from 'vue';
 import LoginView from './views/LoginView.vue';
 import HomeView from './views/HomeView.vue';
 import DetailView from './views/DetailView.vue';
+import WorkView from './views/WorkView.vue';
 import PlayerView from './views/PlayerView.vue';
 import BrowseView from './views/BrowseView.vue';
 import ServersView from './views/ServersView.vue';
@@ -26,6 +27,9 @@ export const router = createRouter({
     { path: '/servers', name: 'servers', component: ServersView, meta: { rank: 2 } },
     { path: '/settings', name: 'settings', component: SettingsView, meta: { rank: 3 } },
     { path: '/detail/:id', name: 'detail', component: DetailView, props: true, meta: { rank: 10 } },
+    // A work keyed by its TMDB id rather than by a row this server holds, so the two pages sit at the same
+    // depth: moving between them is a title changing, not going somewhere deeper or shallower.
+    { path: '/work/:kind/:tmdbId', name: 'work', component: WorkView, props: true, meta: { rank: 10 } },
   ],
 });
 

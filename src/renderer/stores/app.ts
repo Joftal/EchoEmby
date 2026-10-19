@@ -208,6 +208,13 @@ export const useAppStore = defineStore('app', () => {
   const tmdbLogoUrl = (path: string): string =>
     `https://image.tmdb.org/t/p/${path.endsWith('.svg') ? 'original' : 'w500'}${path}`;
 
+  /** The same ranking for a work this server does not hold. It is handed to `logoCandidates` as a one-field
+   *  item because that is the shape the ranking already walks: the only difference is there is no server
+   *  Logo tag to fall back to, and the dedup key cannot collide with a real item id. */
+  function workLogos(kind: 'movie' | 'tv', tmdbId: string): Promise<string[]> {
+    return logoCandidates({ id: `tmdb:${kind}:${tmdbId}`, type: kind === 'movie' ? 'Movie' : 'Series', providers: { tmdb: tmdbId } } as LibraryItem);
+  }
+
   function logoCandidates(item: LibraryItem): Promise<string[]> {
     const key = `${account.value?.accountId}|${item.id}`;
     const hit = logoAsk.get(key);
@@ -374,5 +381,5 @@ export const useAppStore = defineStore('app', () => {
     offWatched = window.echoemby.player.onWatched(w => void rememberPlayback(w));
   }
 
-  return { config, account, rows, views, genres, loading, error, ready, counts, lastStop, init, login, switchTo, remove, update, saveSettings, loadCounts, loadHome, loadViews, loadGenres, imageUrl, backdropUrl, logoCandidates, itemArt, episodeTitle, episodeOverview, setFavorite, watchPlayback };
+  return { config, account, rows, views, genres, loading, error, ready, counts, lastStop, init, login, switchTo, remove, update, saveSettings, loadCounts, loadHome, loadViews, loadGenres, imageUrl, backdropUrl, logoCandidates, workLogos, itemArt, episodeTitle, episodeOverview, setFavorite, watchPlayback };
 });

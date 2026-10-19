@@ -60,6 +60,27 @@ export function seedTypeFor(id: string): string {
   return seedTypeId === id ? seedType : '';
 }
 
+/** A recommendation the library does not hold has no row to hand over, so the card hands over what it was
+ *  drawn with instead: its own frame and the two lines under it. The work page those open is keyed by an
+ *  outside id and its first answer is a round trip to TMDB, which is exactly the wait this is for. */
+interface WorkSeedRow {
+  url: string;
+  name: string;
+  year: string;
+}
+let workSeedKey = '';
+let workSeed: WorkSeedRow | null = null;
+
+export function beginWork(img: HTMLImageElement | null | undefined, key: string, name: string, year: string): void {
+  workSeedKey = key;
+  workSeed = { url: img ? img.currentSrc || img.src : '', name, year };
+}
+
+/** What the card this work page was opened from printed. Null when the page was not opened from a card. */
+export function workSeedFor(key: string): WorkSeedRow | null {
+  return workSeedKey === key ? workSeed : null;
+}
+
 /* 播放 is a separate note from the art because it is an intent, not data, and only one page can carry it
    out: a `Series` names no media source, so the click that means "start this" has to travel through the
    page that knows which episode to open. */

@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import type { LibraryItem, MediaStreamInfo, PlaybackSource, TmdbCreditRow, TmdbCredits, TmdbEpisodeRow, TmdbSeasonRow, TmdbSimilar, TmdbStills } from '../../shared/types';
+import type { LibraryItem, MediaStreamInfo, PlaybackSource, TmdbCreditRow, TmdbCredits, TmdbEpisodeRow, TmdbSeasonRow, TmdbStills } from '../../shared/types';
 import HScroller from '../components/detail/HScroller.vue';
 import FilterSelect from '../components/browse/FilterSelect.vue';
 import BlockPh from '../components/detail/BlockPh.vue';
+import RelatedStrip from '../components/detail/RelatedStrip.vue';
 import ScoreStrip from '../components/ScoreStrip.vue';
 import HeroPlay from '../components/HeroPlay.vue';
 import TitleArt from '../components/TitleArt.vue';
@@ -16,6 +17,7 @@ import { episodeHead, fmtDate, fmtDateTime, fmtRuntime, seenLabel, seasonTitle }
 import { PLAYABLE, PLAYABLE_PAGE, resumeTarget } from '../lib/resume';
 import { genreLabels } from '../lib/genres';
 import { embyCached } from '../lib/embycache';
+import { useRelated, type WorkSeed } from '../lib/related';
 import { seedFor, seedItemFor, seedTypeFor, takeAutoplay } from '../lib/handoff';
 import { vReveal } from '../lib/reveal';
 
@@ -44,7 +46,6 @@ const favBusy = ref(false);
  *  2242px of height with scrollTop clamped 700 -> 0 on every switch. */
 const swap = ref(false);
 
-const similar = ref<TmdbSimilar[]>([]);
 const stills = ref<TmdbStills>({});
 const backdrops = ref<string[]>([]);
 
@@ -65,6 +66,37 @@ const work = computed(() => (isSeason.value ? seriesItem.value || item.value : i
 /** The six score sources, asked once per title; TMDB's answer also carries the season table the hero
  *  reads its date, art and synopsis off. */
 const scores = useScores(() => work.value);
+
+/** The work the 「相似作品」 band belongs to, in the three fields it needs and nothing else: what TMDB
+ *  calls it, which of its two shapes it is, and which genres fill the band's last slots when TMDB's list
+ *  comes back short. A Season page has none of these on its own row, so it inherits them from the series
+ *  above it along with everything else one level up. */
+const relatedSeed = computed<WorkSeed | null>(() => {
+  const w = work.value;
+  const kind = w ? kindOf(w) : undefined;
+  const tmdbId = String(w?.providers?.tmdb || '');
+  return kind && /^\d{1,8}$/.test(tmdbId) ? { kind, tmdbId, genres: w!.genres } : null;
+});
+const related = useRelated(() => relatedSeed.value);
+
+/** Seasons on each side of the pair, counted the same way: a numbered season. TMDB bills specials as
+ *  season 0 and this server files rows the same way, so comparing the two raw lists would report a gap
+ *  for a show whose only extra rows are specials. */
+const tmdbSeasonCount = computed(() => (scores.value.tmdb?.seasons || []).filter(s => s.n >= 1).length);
+const serverSeasonCount = computed(() => seasons.value.filter(s => (s.indexNumber ?? 0) >= 1).length);
+/* A work this server splits across several Series rows. Measured on this library: 81 works are filed that
+   way, and the fullest row of the 200 seasons those shows have holds 117 of them - the rest sit under a
+   sibling row with the same name. They are not concatenated here: two rows that both bill a 第 1 季 would
+   make a season list that never existed (measured, 11 of 14 sampled split works overlap that way, and
+   碧蓝之海 has two copies of 第 3 季). The page says which part it holds and hands the whole work to the
+   page keyed by TMDB's id, where the two are told apart. */
+const partialSeasons = computed(
+  () => relatedSeed.value?.kind === 'tv' && serverSeasonCount.value > 0 && tmdbSeasonCount.value > serverSeasonCount.value,
+);
+function openWork(): void {
+  const s = relatedSeed.value;
+  if (s) void router.push('/work/' + s.kind + '/' + s.tmdbId);
+}
 
 // The server files its people on the series and never on a season row (measured: 0 on every Season
 // page sampled), so a page opened on one season reads the show it belongs to rather than nobody.
@@ -707,7 +739,7 @@ function pickSeason(v: string | string[]): void {
   void loadEpisodes(v, work.value?.id);
 }
 
-/** Which title the once-per-title asks (logo band, TMDB's similar titles and its stills) have been made
+/** Which title the once-per-title asks (the logo band and the backdrop strip) have been made
  *  for. The row and the server's copy of it are the same work, so the second paint refines the item
  *  without paying for them again. */
 let painted = '';
@@ -756,7 +788,7 @@ function paint(it: LibraryItem): void {
   askWork(it);
 }
 
-/** The title's own three asks: its ranked treatments, TMDB's similar titles, its backdrop strip. None of
+/** The title's own two asks: its ranked treatments and its backdrop strip. None of
  *  them has a season-level answer, so a Season page runs them for the series above it. */
 function askWork(series: LibraryItem): void {
   const page = props.id;
@@ -764,7 +796,6 @@ function askWork(series: LibraryItem): void {
   const kind = kindOf(series);
   const tmdbId = String(series.providers?.tmdb || '');
   if (!kind || !/^\d{1,8}$/.test(tmdbId)) return;
-  void window.echoemby.meta.tmdbSimilar({ kind, tmdbId }).then(x => (props.id === page ? (similar.value = x.ok ? x.data || [] : []) : undefined));
   void window.echoemby.meta.tmdbImages({ kind, tmdbId }).then(x => (props.id === page ? (backdrops.value = x.ok ? x.data || [] : []) : undefined));
 }
 
@@ -808,7 +839,6 @@ watch(
   async id => {
     autoplayFor = takeAutoplay(id) ? id : '';
     error.value = '';
-    similar.value = [];
     backdrops.value = [];
     viewer.value = null;
     titleUrls.value = [];
@@ -971,6 +1001,13 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
                   :title="`TMDB ${pack?.tag} 评分`"
                 >TMDB <i>{{ seasonVote.toFixed(1) }}</i></a>
               </span>
+              <button
+                v-if="partialSeasons"
+                type="button"
+                class="part"
+                title="这台服务器把这个作品拆成了几条，点这里看它全部的季"
+                @click="openWork"
+              >本机 <i>{{ serverSeasonCount }}</i> 季 · TMDB 全 <i>{{ tmdbSeasonCount }}</i> 季</button>
             </div>
           </template>
           <button v-for="e in episodes" :key="e.id" class="epi" @click="play(e.id, false)">
@@ -1081,16 +1118,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
           </button>
         </HScroller>
 
-        <HScroller v-if="similar.length" class="block" title="相似作品" :count="similar.length">
-          <div v-for="s in similar" :key="s.tmdbId" class="sim">
-            <div class="sposter">
-              <img v-reveal v-if="s.posterPath" :src="posterUrl(s.posterPath)" alt="" loading="lazy" decoding="async" />
-              <span v-else class="ph">{{ s.title.slice(0, 1) }}</span>
-            </div>
-            <p class="stitle">{{ s.title }}</p>
-            <p class="smeta"><span v-if="s.voteAverage" class="srate">★ {{ s.voteAverage.toFixed(1) }}</span><span v-if="s.year">{{ s.year }}</span></p>
-          </div>
-        </HScroller>
+        <RelatedStrip :cards="related" />
       </div>
     </template>
 
@@ -1519,13 +1547,12 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
 .still:active { transform: scale(0.982); }
 .stillimg { display: block; width: 320px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: var(--radius); border: 1px solid var(--line); box-shadow: var(--shadow-sm); }
 
-.sim { flex: none; width: 150px; }
-.sposter { position: relative; aspect-ratio: 2 / 3; border-radius: var(--radius); overflow: hidden; background: var(--bg-elev-2); border: 1px solid var(--line); box-shadow: var(--shadow-sm); }
-.sposter img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-.sposter .ph { position: absolute; inset: 0; display: grid; place-items: center; font-size: 34px; font-weight: 700; color: var(--text-faint); background: linear-gradient(150deg, var(--bg), var(--bg-elev-2)); }
-.stitle { margin: 8px 0 0; font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.smeta { margin: 2px 0 0; display: flex; gap: 8px; font-size: 12.5px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
-.smeta .srate { color: #b8860b; font-weight: 650; }
+/* The split work's own line. It keeps the season row's dim weight and brightens only its two numbers,
+   so it reads as the same kind of mark as 本季 TMDB 8.4 beside it. Both figures name their own subject:
+   one is what this server holds, the other what the work has. */
+.part { padding: 0; font-size: 13px; font-weight: 550; color: var(--text-dim); white-space: nowrap; transition: opacity var(--hov) var(--ease); }
+.part:hover { opacity: 0.82; }
+.part i { font-style: normal; color: var(--text); font-weight: 700; }
 
 .err { color: var(--danger); }
 .banner { margin: 0 0 12px; padding: 0 44px; }
