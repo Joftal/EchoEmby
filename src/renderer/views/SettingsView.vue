@@ -57,13 +57,18 @@ watch(token, v => { if (v.trim()) tokenTyped.value = true; });
 const dmUrl = ref('');
 watch(() => dm.value?.source?.url, v => (dmUrl.value = v || ''), { immediate: true });
 
-/* The TMDB key lives on its own channel because it is not a setting the player reads — it is a
-   credential the meta modules sign their requests with, and it is masked across the bridge the same
+/* These keys live on their own channel because they are not settings the player reads — they are
+   credentials the meta modules sign their requests with, and they are masked across the bridge the same
    way the danmaku token is. */
 const tmdbKey = ref('');
 const tmdbTyped = ref(false);
 const tmdbSaved = computed(() => store.config?.meta?.tmdbV4Token === '<set>');
 watch(tmdbKey, v => { if (v.trim()) tmdbTyped.value = true; });
+
+const traktKey = ref('');
+const traktTyped = ref(false);
+const traktSaved = computed(() => store.config?.meta?.traktClientId === '<set>');
+watch(traktKey, v => { if (v.trim()) traktTyped.value = true; });
 
 async function commitTmdb(explicit = false): Promise<void> {
   const v = tmdbKey.value.trim();
@@ -74,6 +79,17 @@ async function commitTmdb(explicit = false): Promise<void> {
   if (store.config) store.config.meta = r.data;
   tmdbKey.value = '';
   tmdbTyped.value = false;
+}
+
+async function commitTrakt(explicit = false): Promise<void> {
+  const v = traktKey.value.trim();
+  if (v === '<set>') return;
+  if (!v && !explicit && !traktTyped.value) return;
+  const r = await window.echoemby.meta.setKeys({ traktClientId: v });
+  if (!r.ok) return;
+  if (store.config) store.config.meta = r.data;
+  traktKey.value = '';
+  traktTyped.value = false;
 }
 
 const probe = ref<NetProbe | null>(null);
@@ -316,6 +332,21 @@ async function runProbe(): Promise<void> {
             autocomplete="off"
             @blur="commitTmdb()"
             @keydown.enter="commitTmdb(true)"
+          />
+        </div>
+        <div class="row addr">
+          <div class="k">
+            <b>Trakt Client ID</b>
+            <i>{{ traktSaved ? '已保存，重新输入可替换，清空后回车可删除' : 'trakt.tv/app 免费申请，填上后评分条多一格 Trakt 分数' }}</i>
+          </div>
+          <input
+            v-model="traktKey"
+            type="password"
+            :placeholder="traktSaved ? '••••••••' : '可留空'"
+            spellcheck="false"
+            autocomplete="off"
+            @blur="commitTrakt()"
+            @keydown.enter="commitTrakt(true)"
           />
         </div>
       </div>

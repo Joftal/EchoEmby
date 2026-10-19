@@ -29,6 +29,10 @@ const ask = async (url: string, key: string): Promise<any | null> => {
     });
     // 404 is Trakt saying it has no such title; only a 5xx or a dead socket is not an answer.
     if (res.status >= 500) return null;
+    // A rejected key answers for no title in particular, so it must not be filed as 「this one has no
+    // Trakt score」 — measured: a bad id gets HTTP 403 "Forbidden" from the CDN, and a caller that
+    // negative-cached that would leave the strip dark for three days after the key is fixed.
+    if (res.status === 401 || res.status === 403) return null;
     if (res.status === 404) return {};
     return await res.json().catch(() => null);
   } catch {
