@@ -1,8 +1,10 @@
 <script setup lang="ts">
 /** The room a block will occupy once its data arrives. `kind` picks the height measured off the real
- *  thing — the season rail lands at 370px, the file's technical block at 540px — and both of those are
- *  the tallest arrivals on the page and both land in the middle of it: without the room taken, every
- *  block below jumps down the screen while the reader is already looking at them.
+ *  thing — the season rail lands at 370px, the file's technical block somewhere inside 487–621px (three
+ *  titles measured: 487 twice, 621 once, because the codec cards stretch to whichever of them carries more
+ *  audio tracks) and 540 is the middle of that band — and both of those are the tallest arrivals on the
+ *  page and both land in the middle of it: without the room taken, every block below jumps down the screen
+ *  while the reader is already looking at them.
  *
  *  Which of them belongs on this page is decided by the item's type, and the card that was clicked knows
  *  the type before the server answers (see lib/handoff), so this is claimed on the first frame rather

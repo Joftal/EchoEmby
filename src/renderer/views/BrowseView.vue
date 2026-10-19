@@ -492,7 +492,13 @@ onBeforeUnmount(() => {
 
       <div v-if="loading" class="grid sk" :class="{ list: layout === 'list' }" :style="gridStyle">
         <template v-if="layout === 'list'">
-          <div v-for="n in 8" :key="n" class="cell list"><span></span></div>
+          <div v-for="n in 8" :key="n" class="cell list">
+            <span class="th"></span>
+            <span class="bd">
+              <i class="k1"></i><i class="k2"></i><i class="o"></i><i class="o"></i><i class="o"></i>
+              <span class="gs"><i></i><i></i></span>
+            </span>
+          </div>
         </template>
         <template v-else>
           <div v-for="n in 18" :key="n" class="cell" :class="{ wide: variant === 'still' }" :style="{ width: cardW + 'px' }"><span></span></div>
@@ -678,6 +684,79 @@ h1 {
   aspect-ratio: auto;
   height: 186px;
   border-radius: var(--r-tile);
+  /* The row drawn from the inside rather than as one slab. What a real 待看 row is while it fills in: a
+     panel holding a 92-wide thumb (the only part of it that shimmers, because that is the only part of it
+     that has an image to wait for) and four text rows — the title, the meta line, the synopsis, the badge
+     row. Measured off the real card: head 23, +5 meta 20, +9 and 20.8 a line for three, +11 badges 26 =
+     156.4 against this tile's own 156 of content.
+     The height keeps the tall shape because 待看 puts two rows on a grid line and the line takes the taller
+     of the pair (26 of 48 rows measure 168, 22 measure 184-186, so the pitch the grid really answers for is
+     the tall one) — and a thumb stretched to the line is what the short row shows there too. */
+  display: flex;
+  gap: 14px;
+  padding: 14px;
+}
+.cell.list > .th {
+  width: 92px;
+  height: auto;
+  flex: none;
+  aspect-ratio: 2 / 3;
+  border-radius: var(--radius);
+}
+.cell.list > .bd {
+  width: auto;
+  height: auto;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  /* `span` is the shimmer selector in this block, and the two boxes that hold the bars must not take it
+     themselves: a sweep behind the whole text column is the slab this shape replaces. */
+  background: none;
+  animation: none;
+}
+.bd i {
+  display: block;
+  border-radius: 6px;
+  background: var(--shimmer);
+  background-size: var(--sk-tile) 100%;
+  animation: sh 1.3s linear infinite;
+}
+.bd .k1 {
+  width: 46%;
+  height: 23px;
+}
+.bd .k2 {
+  width: 88%;
+  height: 20px;
+  margin-top: 5px;
+}
+.bd .o {
+  width: 100%;
+  height: 20.8px;
+  margin-top: 9px;
+}
+.bd .o + .o {
+  margin-top: 0;
+}
+.bd .o:last-of-type {
+  width: 72%;
+}
+/* The two badges the row actually carries here: 「看到」 and the runtime, 41 and 56 wide on the real card. */
+.cell.list .gs {
+  width: auto;
+  height: 26px;
+  display: flex;
+  gap: 7px;
+  margin-top: 11px;
+  background: none;
+  animation: none;
+}
+.gs i:first-child {
+  width: 42px;
+}
+.gs i:last-child {
+  width: 58px;
 }
 .cell span {
   display: block;
