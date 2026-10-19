@@ -240,6 +240,10 @@ onBeforeUnmount(() => {
 .val {
   min-width: 0;
   max-width: 214px;
+  /* A season switch rewrites this text, and 「第 1 季」/「第 2 季」 set 1.97px apart in proportional
+     figures (measured) — the pill resized under the reader's own click. Tabular digits cost nothing and
+     hold the line still. */
+  font-variant-numeric: tabular-nums;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
