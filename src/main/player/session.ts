@@ -60,6 +60,10 @@ interface Current {
   danmaku: DanmakuQuery | null;
   /** Completing the same item twice must not POST 已播放 twice. */
   reported: boolean;
+  /** The stop position this item has already been given to the server, or -1 while it has not been left
+   *  yet. Every exit path funnels through one write, and this is what keeps two of them — 播完 then the
+   *  close that follows it — from posting the same item twice. */
+  flushedMs: number;
 }
 
 const tierLabel = (bitrate: number): string => (bitrate === 0 ? '原片' : `${Math.round(bitrate / 1_000_000)} Mbps`);
@@ -82,7 +86,6 @@ export class PlayerController {
   private kernel: MpvKernel | null = null;
   private bridge = new StreamBridge();
   private current: Current | null = null;
-  private ticker: NodeJS.Timeout | null = null;
   private state: PlayerState = emptyPlayerState();
   private media: PlayerMedia = emptyPlayerMedia();
   private seenMethods = new Map<string, Record<number, PlayMethod>>();
@@ -152,6 +155,13 @@ export class PlayerController {
    *  so a label can never promise a first view the player then starts halfway through. */
   async play(itemId: string, fromStart = false): Promise<void> {
     this.tearing = false;
+    // Leaving an item for another one is an exit just as surely as closing the window is, so the episode
+    // the user walked away from gets its stop written before anything new is asked for.
+    const leaving = this.current;
+    if (leaving && leaving.itemId !== itemId) {
+      const w = await this.flushStop();
+      if (w) this.out.watched(w);
+    }
     const c = this.client();
     const prefs = config.get().settings.player;
     const item = await c.item(itemId);
@@ -185,6 +195,7 @@ export class PlayerController {
       prev: nav.prev,
       danmaku: this.danmakuOf(item),
       reported: resume.played,
+      flushedMs: -1,
     };
     this.out.session(this.getSession());
     this.raise();
@@ -195,8 +206,11 @@ export class PlayerController {
       this.fail(e);
       throw e;
     }
-    void this.report('start');
-    this.startTicker();
+    // The start report carries the offset the *server* holds, never the 0 a 「播放」 button loaded at:
+    // measured on bangumi, an open that reports 0 rewrites the item to 0 about a minute later while the
+    // session is live, so a hard-killed app left 187396 sitting at nothing and the next 看到 had no number
+    // to print. An open that reports the stored offset leaves that offset standing.
+    void this.announceStart(resume.startMs, Math.round((item.runTimeTicks || 0) / 1e4)).catch(() => undefined);
   }
 
   /** What a danmaku service is asked about. An episode called 「第 3 集」 matches nothing, so the series
@@ -253,7 +267,6 @@ export class PlayerController {
   }
 
   private onGone(message?: string): void {
-    this.stopTicker();
     this.kernel = null;
     if (this.tearing) return;
     this.state = { ...this.state, status: 'error', error: message || '播放器退出了' };
@@ -287,14 +300,16 @@ export class PlayerController {
     const c = this.current;
     if (!c || c.reported) return;
     c.reported = true;
-    const client = this.client();
-    await client.session(this.progressInput(false, this.state.durationMs), 'stopped');
-    await client.markPlayed(c.itemId);
+    const w = await this.flushStop(this.state.durationMs);
+    if (w) {
+      w.played = await this.client().markPlayed(c.itemId);
+      this.out.watched(w);
+    }
     const next = config.get().settings.player.autoNext ? c.next : null;
     if (next) await this.play(next.itemId);
   }
 
-  private progressInput(paused: boolean, atMs: number): ProgressInput {
+  private progressInput(paused: boolean, atMs: number, durationMs = this.state.durationMs): ProgressInput {
     const c = this.current!;
     const ordinal = (kind: 'video' | 'audio' | 'subtitle') => this.media.tracks.find(t => t.kind === kind && t.selected)?.ordinal;
     return {
@@ -302,7 +317,7 @@ export class PlayerController {
       sourceId: c.sources[c.sourceIndex]?.id || '',
       playSessionId: c.playSessionId,
       positionMs: atMs,
-      durationMs: this.state.durationMs,
+      durationMs,
       paused,
       rate: this.state.speed,
       volume: this.state.muted ? 0 : this.state.volume,
@@ -312,25 +327,36 @@ export class PlayerController {
     };
   }
 
-  /** One event to the server, with the position read at the moment of sending rather than from the last
-   *  throttled repaint — a 15 s ticker that reports a stale clock is how a resume point drifts. */
-  private async report(event: 'start' | 'progress' | 'stopped'): Promise<void> {
+  /** One event opening a session. Nothing is written while the film runs: 进度 used to post every 15 s, and
+   *  every one of those numbers was already stale by the time it landed. `atMs`/`durationMs` are the offset
+   *  the server already holds rather than the live clock, because mpv has not reported one yet — and the
+   *  number a start carries is the number the gateway writes back into the item about a minute later
+   *  (368040 became 59000 there while nothing was being sent, 187396 became 0 after a start at 0), so it is
+   *  the one number this app must not guess at. */
+  private async announceStart(atMs?: number, durationMs?: number): Promise<void> {
     const c = this.current;
     const k = this.kernel;
     if (!c) return;
-    const at = event === 'stopped' || !k ? this.state.positionMs : await k.positionMs().catch(() => this.state.positionMs);
+    const at = atMs ?? (k?.running ? await k.positionMs().catch(() => this.state.positionMs) : this.state.positionMs);
     if (this.current !== c) return;
-    await this.client().session(this.progressInput(event === 'progress' ? this.state.paused : event === 'stopped', at), event);
+    await this.client().session(this.progressInput(false, at, durationMs ?? this.state.durationMs), 'start');
   }
 
-  private startTicker(): void {
-    this.stopTicker();
-    this.ticker = setInterval(() => void this.report('progress').catch(() => undefined), 15000);
-  }
-
-  private stopTicker(): void {
-    if (this.ticker) clearInterval(this.ticker);
-    this.ticker = null;
+  /** Say once, at the moment the item is left, where it actually stopped — the only write that decides
+   *  what 看到 shows anywhere in the app. Returns the number the server took, or null when there was
+   *  nothing to say or the server did not take it; a caller must not patch a card with a position the
+   *  server refused, because the next re-read would contradict it.
+   *  `atMs` is the end-of-file override: mpv's clock at the last frame is a frame short of the runtime. */
+  private async flushStop(atMs?: number): Promise<WatchedRecord | null> {
+    const c = this.current;
+    const durationMs = this.state.durationMs;
+    if (!c || !durationMs || c.flushedMs >= durationMs) return null;
+    const k = this.kernel;
+    const at = atMs ?? (k?.running ? await k.positionMs().catch(() => this.state.positionMs) : this.state.positionMs);
+    if (this.current !== c) return null;
+    if (!(await this.client().session(this.progressInput(true, at, durationMs), 'stopped'))) return null;
+    c.flushedMs = at;
+    return { itemId: c.itemId, positionMs: at, durationMs };
   }
 
   /** Every control the overlay can ask for. Each arm returns once mpv has been told; the state comes back
@@ -342,12 +368,10 @@ export class PlayerController {
       case 'toggle': {
         if (this.state.status === 'ended') await k.rewind();
         else await k.setPaused(!this.state.paused);
-        void this.report('progress').catch(() => undefined);
         return;
       }
       case 'seekMs':
         await k.seekTo(cmd.value);
-        void this.report('progress').catch(() => undefined);
         return;
       case 'skip':
         await k.seekBy(cmd.value);
@@ -456,7 +480,7 @@ export class PlayerController {
       throw e;
     }
     await k.setSpeed(speed).catch(() => undefined);
-    void this.report('start').catch(() => undefined);
+    void this.announceStart().catch(() => undefined);
   }
 
   /** A knob changed while something is playing: apply live what mpv can apply live, re-negotiate when the
@@ -493,9 +517,9 @@ export class PlayerController {
 
   async close(): Promise<void> {
     this.tearing = true;
-    this.stopTicker();
-    const w = this.watchedRecord();
-    if (this.current && this.state.durationMs) await this.report('stopped').catch(() => undefined);
+    // The stop is written before anything is torn down: mpv still holds the real position, and the number
+    // the lobby is handed must be the one the server just took.
+    const w = await this.flushStop();
     this.current = null;
     await this.kernel?.quit().catch(() => undefined);
     this.kernel = null;
@@ -510,20 +534,11 @@ export class PlayerController {
     this.out.reveal();
   }
 
-  /** The last position the state line carried, before the shutdown blanks it. Null when nothing really
-   *  played: a window opened and closed again has no number worth writing onto a card. */
-  private watchedRecord(): WatchedRecord | null {
-    const c = this.current;
-    if (!c || !this.state.durationMs) return null;
-    return { itemId: c.itemId, positionMs: this.state.positionMs, durationMs: this.state.durationMs };
-  }
-
   /** Quit-time teardown: the same shutdown, but a window that is already going away must not be talked to.
    *  The server still gets the stopped report; the lobby's write-back does not, because the page that
    *  would read it is being destroyed and the ask it triggers would only delay the exit. */
   async shutdown(): Promise<void> {
-    this.stopTicker();
-    if (this.current && this.state.durationMs) await this.report('stopped').catch(() => undefined);
+    await this.flushStop();
     this.current = null;
     await this.kernel?.quit().catch(() => undefined);
     this.kernel = null;

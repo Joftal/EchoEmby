@@ -2,6 +2,8 @@ import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
 import type { AppConfig, FacetOption, LibraryItem, LibraryRow, SettingsPatch, TmdbEpisodeRow, TmdbStills, WatchedRecord } from '../../shared/types';
 import { clearEmbyCache, embyCached, patchItem, rescope } from '../lib/embycache';
+import { applyStop } from '../lib/resume';
+import { stoppedAtMs } from '../lib/format';
 import { tmdbKind } from '../lib/scores';
 
 export const useAppStore = defineStore('app', () => {
@@ -333,14 +335,24 @@ export const useAppStore = defineStore('app', () => {
     else rows.value.unshift(r.data);
   }
 
+  /** The last stop the server accepted. Write-back covers every copy this app holds, but two browse
+   *  lists answer from the server instead — 在看 orders titles by when they were last opened, 待看 is
+   *  literally 「not played yet」 — and their rows are not in the shared cache, so nothing patches them.
+   *  They re-read on this: a replaced object fires the watcher even when the same episode stops twice at
+   *  the same number. */
+  const lastStop = ref<WatchedRecord | null>(null);
+
   async function rememberPlayback(w: WatchedRecord): Promise<void> {
-    const pct = w.durationMs > 0 ? Math.min(100, (w.positionMs / w.durationMs) * 100) : 0;
-    writeBack(w.itemId, it => {
-      const u = userDataOf(it);
-      u.positionMs = w.positionMs;
-      u.playedPercentage = Math.round(pct * 10) / 10;
-    });
+    writeBack(w.itemId, it => applyStop(it, w));
+    lastStop.value = w;
     await refreshResume();
+    // The re-read can come back holding less than the stop it was just given: the row is built from the
+    // resume endpoint, and a title whose offset the gateway has not folded in yet lands there with no
+    // position at all (measured: bangumi rewrites a live session's item to the number its own start
+    // carried, about a minute in — which can be after this call). The player's own number is the better
+    // witness of where the viewer stopped, so the row keeps it.
+    const held = rows.value.find(r => r.key === 'resume')?.items.find(x => x.id === w.itemId);
+    if (held && stoppedAtMs(held.userData, held.runTimeTicks) < w.positionMs) applyStop(held, w);
   }
 
   async function setFavorite(id: string, on: boolean): Promise<boolean> {
@@ -362,5 +374,5 @@ export const useAppStore = defineStore('app', () => {
     offWatched = window.echoemby.player.onWatched(w => void rememberPlayback(w));
   }
 
-  return { config, account, rows, views, genres, loading, error, ready, counts, init, login, switchTo, remove, update, saveSettings, loadCounts, loadHome, loadViews, loadGenres, imageUrl, backdropUrl, logoCandidates, itemArt, episodeTitle, episodeOverview, setFavorite, watchPlayback };
+  return { config, account, rows, views, genres, loading, error, ready, counts, lastStop, init, login, switchTo, remove, update, saveSettings, loadCounts, loadHome, loadViews, loadGenres, imageUrl, backdropUrl, logoCandidates, itemArt, episodeTitle, episodeOverview, setFavorite, watchPlayback };
 });

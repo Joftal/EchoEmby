@@ -453,12 +453,16 @@ export interface PlayerNav {
   label: string;
 }
 
-/** Where a film stopped, sent once on the way out of the player. The state line has already been
+/** Where a film stopped, sent once on the way out of the player — after the server has taken the write,
+ *  so the number here is the number any other client would read back. The state line has already been
  *  blanked by then, so this is the only place the number still exists after the window is gone. */
 export interface WatchedRecord {
   itemId: string;
   positionMs: number;
   durationMs: number;
+  /** Set only when the item was run to the end and the server agreed it is 已看. It travels with the
+   *  position because finishing changes two things a page shows: the stop, and how many are left. */
+  played?: boolean;
 }
 
 /** The identity of what is playing, plus everything the panels list. Changes only when the file or the

@@ -1,4 +1,4 @@
-import type { LibraryItem } from '../../shared/types';
+import type { LibraryItem, WatchedRecord } from '../../shared/types';
 import { episodePosition, seenLabel, stoppedAtMs } from './format';
 
 /** What a hero's play button stands for: the row it hands the player, and the sentence under the label.
@@ -8,9 +8,10 @@ export interface ResumeTarget {
   /** Not always the hero's own card: a Series resumes into the episode that stopped. */
   item: LibraryItem;
   /** Whether the server said *how far* the viewer got. 「继续播放」 is only honest with a position behind
-   *  it, and a gateway can name the stopped episode while leaving the offset at 0 — measured on nyamedia,
-   *  9 of its 11 在看 rows are that kind of row. Those buttons say 「播放」 over the episode they will
-   *  really open. */
+   *  it, and a row can still name an episode while carrying 0: 在看's second ask is a title the resume
+   *  endpoint holds no offset for, and a gateway writes the number a *start* report carries back into the
+   *  item about a minute later, so an open that reported 0 leaves a real stop erased (measured on nyamedia:
+   *  187396 → 0). Those buttons say 「播放」 over the episode they will really open. */
   resumed: boolean;
   /** 「第 1 季 · 第 2 集 · 看到 27:06」, and only the halves this server answered. The same `seenLabel` the
    *  episode card's own chip prints, so one episode cannot wear two of them. */
@@ -28,6 +29,15 @@ export const PLAYABLE = ['Movie', 'Episode', 'Video'];
 export const PLAYABLE_PAGE = [...PLAYABLE, 'Series', 'Season'];
 
 const stopped = (it: LibraryItem): number => stoppedAtMs(it.userData, it.runTimeTicks);
+
+/** Write the stop the server just took onto a row that is showing this item.
+ *  One number reaches the screen through two fields — the exact offset and the gateway's rounded
+ *  percentage — and a page holding only the second would print a 「看到」 that disagrees with the hero over
+ *  it. Both are written here so no surface has to know which one this server chose to answer with. */
+export function applyStop(it: LibraryItem, w: WatchedRecord): void {
+  const pct = w.durationMs > 0 ? Math.min(100, (w.positionMs / w.durationMs) * 100) : 0;
+  it.userData = { ...it.userData, positionMs: w.positionMs, playedPercentage: Math.round(pct * 10) / 10 };
+}
 
 function target(it: LibraryItem, seasonNamed = false): ResumeTarget {
   // A Season page already prints its own season above the button, so restating it there buys nothing.

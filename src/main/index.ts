@@ -86,8 +86,20 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('window-all-closed', () => app.quit());
 
-  const cleanup = () => { void services?.shutdown(); };
-  app.on('before-quit', cleanup);
+  // Quitting waits for the player's stop, because that one POST is what decides where the film resumes
+  // anywhere. Bounded: a server that has stopped answering must not be able to hold the app open, so the
+  // exit goes ahead without it after a beat.
+  let cleanupStarted = false;
+  app.on('before-quit', e => {
+    if (cleanupStarted) return;
+    e.preventDefault();
+    cleanupStarted = true;
+    // Measured on these two gateways: the stop POST lands in 394ms and 657ms on a warm connection, while the
+    // first request after a cold handshake took 7050ms. A budget of 1.5s would cut the one write that
+    // decides where a film resumes whenever the app quits onto a connection that has gone cold.
+    const exit = Promise.race([services?.shutdown(), new Promise(resolve => setTimeout(resolve, 5000))]);
+    void exit.finally(() => app.quit());
+  });
 }
 
 export type { AppServices };

@@ -8,7 +8,7 @@ import RowScroller from '../components/home/RowScroller.vue';
 import FilterBar from '../components/browse/FilterBar.vue';
 import { defaultSort, filterParams, fromQuery, isFiltered, localSort, sortParams, toQuery, type Filters } from '../lib/filters';
 import { embyCached } from '../lib/embycache';
-import { PLAYABLE } from '../lib/resume';
+import { PLAYABLE, applyStop } from '../lib/resume';
 import { useAppStore } from '../stores/app';
 import { usePlayerStore } from '../stores/player';
 
@@ -324,6 +324,18 @@ async function load(reset: boolean): Promise<void> {
   }
 }
 
+/** Re-ask the window of rows the page already shows, without emptying it first. Used for a refresh the
+ *  user did not ask for — the rows on screen are not wrong yet, and swapping them under the cursor is
+ *  cheaper than a skeleton that blinks for nothing. */
+async function sync(): Promise<void> {
+  if (busy.value) return;
+  const r = await askRows(0);
+  if (!r.ok) return;
+  const batch = r.data || [];
+  items.value = batch;
+  hasMore.value = batch.length === pageSize.value;
+}
+
 const wrapEl = ref<HTMLElement | null>(null);
 const cols = ref(6);
 const cardW = ref(190);
@@ -382,6 +394,21 @@ watch(
     // Picking a sort on a search only re-orders the window we hold; the query is unchanged.
     if (JSON.stringify(params(0)) === lastKey) return;
     void load(true);
+  },
+);
+
+/** Closing the player moves rows that no write-back can reach: 在看 re-orders by when a title was last
+ *  opened (and gains one that was never in it), 待看 loses the item that just finished. Both are the
+ *  server's answer, not a copy of one, so they are re-asked — and only a finished item changes 待看,
+ *  so a pause-and-close on a half-watched one asks for nothing. */
+watch(
+  () => store.lastStop,
+  w => {
+    if (!w) return;
+    if (kind.value === 'resume' || (kind.value === 'unwatched' && w.played)) void sync();
+    // 搜索 and a library window hold their own rows too, and a film in one of them wears the same 看到
+    // chip. A stop moves neither list's order, so the number is written onto the row instead of re-asked.
+    else for (const it of items.value) if (it.id === w.itemId) applyStop(it, w);
   },
 );
 

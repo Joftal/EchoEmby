@@ -670,16 +670,17 @@ export class EmbyClient {
     return body;
   }
 
-  /** The three session events Emby expects: 开场 once, 进度 on a timer, 结束时最后一次. A session that
-   *  never says Stopped leaves the row in 继续观看 with a stale position. */
-  async session(input: ProgressInput, event: 'start' | 'progress' | 'stopped'): Promise<void> {
-    const path = event === 'start' ? '/Sessions/Playing' : event === 'progress' ? '/Sessions/Playing/Progress' : '/Sessions/Playing/Stopped';
-    const body = { ...this.progressBody(input), EventName: event === 'progress' ? 'TimeUpdate' : event === 'start' ? 'FirstPlay' : undefined };
-    await this.post(path, body, {}, 8000).catch(() => undefined);
+  /** The two session events the player sends: 开场 once, 结束时最后一次. Nothing is written while the film
+   *  runs, so the stopped call is the only answer to "where did it stop" and it reports whether the server
+   *  took it — a card patched from a refused write would be corrected by the next re-read and look broken. */
+  async session(input: ProgressInput, event: 'start' | 'stopped'): Promise<boolean> {
+    const path = event === 'start' ? '/Sessions/Playing' : '/Sessions/Playing/Stopped';
+    const body = { ...this.progressBody(input), EventName: event === 'start' ? 'FirstPlay' : undefined };
+    return this.post(path, body, {}, 8000).then(() => true, () => false);
   }
 
-  async markPlayed(itemId: string): Promise<void> {
-    await this.post(`/Users/${this.account.userId}/PlayedItems/${itemId}`).catch(() => undefined);
+  async markPlayed(itemId: string): Promise<boolean> {
+    return this.post(`/Users/${this.account.userId}/PlayedItems/${itemId}`).then(() => true, () => false);
   }
 
   /** Returns the state after the toggle so the caller can render it without a refetch. */

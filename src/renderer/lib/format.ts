@@ -15,9 +15,11 @@ export const ticksToMs = (ticks?: number): number => Math.round((ticks || 0) / 1
  *  an integer the gateway rounded before sending it. */
 export const stoppedAtMs = (u?: { playedPercentage?: number; positionMs?: number }, runTimeTicks?: number): number => {
   if (!u) return 0;
-  if (u.positionMs) return u.positionMs;
   const pct = Math.min(100, u.playedPercentage || 0);
-  return pct > 0 ? Math.round((ticksToMs(runTimeTicks) * pct) / 100) : 0;
+  const ms = u.positionMs || (pct > 0 ? Math.round((ticksToMs(runTimeTicks) * pct) / 100) : 0);
+  // Under a second there is no stop to print: 播完 rolls straight into the next episode and that switch
+  // flushes the one that just began, which measured pos=33 - a card reading 「看到 0:00」 under 继续播放.
+  return ms >= 1000 ? ms : 0;
 };
 
 /** The progress read-out, 「看到 27:06」 — the one wording every surface that answers how far a viewer got
