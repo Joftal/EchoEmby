@@ -141,7 +141,7 @@ export class AppServices {
 
     ipcMain.handle('emby:views', () => wrap(() => this.client().navViews()));
     ipcMain.handle('emby:homeRows', () => wrap(() => this.client().homeRows()));
-    ipcMain.handle('emby:resumeRow', () => wrap(() => this.client().resumeRow()));
+    ipcMain.handle('emby:resumeRow', (_e, limit?: number) => wrap(() => this.client().resumeRow(Number(limit) || 18)));
     ipcMain.handle('emby:items', (_e, params) => wrap(() => this.client().items(params)));
     ipcMain.handle('emby:genres', () => wrap(() => this.client().genres()));
     ipcMain.handle('emby:item', (_e, id: string) => wrap(() => this.client().item(id)));

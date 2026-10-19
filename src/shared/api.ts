@@ -19,8 +19,9 @@ export interface EchoEmbyApi {
     views(): Promise<IpcResult<LibraryItem[]>>;
     homeRows(): Promise<IpcResult<LibraryRow[]>>;
     /** Just the 在看 row, for the one moment the lobby has to be re-read: the film that stopped is the
-     *  only thing on the page whose row, order or membership can have changed. */
-    resumeRow(): Promise<IpcResult<LibraryRow | null>>;
+     *  only thing on the page whose row, order or membership can have changed. `limit` is how many cards
+     *  to build — the lobby's rail wants 18, the 在看 page wants the whole shelf. */
+    resumeRow(limit?: number): Promise<IpcResult<LibraryRow | null>>;
     items(params: Record<string, string | number | boolean>): Promise<IpcResult<LibraryItem[]>>;
     /** The library's own genre labels, used to fill the 分类 dropdown. */
     genres(): Promise<IpcResult<FacetOption[]>>;

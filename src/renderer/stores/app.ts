@@ -320,7 +320,7 @@ export const useAppStore = defineStore('app', () => {
 
   /** The row a stopped film can move, and the only one a write-back cannot produce: a title watched past
    *  the server's cutoff leaves 继续观看, a new one enters at the top, and both orders are the server's.
-   *  Asked alone it is one round trip; the lobby's other rows are library ingest order. */
+   *  Asked alone it is two round trips; the lobby's other rows are library ingest order. */
   async function refreshResume(): Promise<void> {
     const r = await window.echoemby.emby.resumeRow();
     if (!r.ok) return;

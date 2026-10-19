@@ -205,7 +205,12 @@ const mapItem = (r: any): LibraryItem => ({
   parentIndexNumber: r.ParentIndexNumber,
   childCount: r.ChildCount,
   userData: r.UserData
-    ? { playedPercentage: r.UserData.PlayedPercentage, isFavorite: r.UserData.IsFavorite, positionMs: Math.round(positionTicks(r.UserData) / 1e4) }
+    ? {
+        playedPercentage: r.UserData.PlayedPercentage,
+        isFavorite: r.UserData.IsFavorite,
+        positionMs: Math.round(positionTicks(r.UserData) / 1e4),
+        played: !!r.UserData.Played,
+      }
     : undefined,
   providers: mapProviders(r.ProviderIds),
   dateCreated: r.DateCreated,
@@ -480,16 +485,47 @@ export class EmbyClient {
     return m;
   }
 
+  /** The server's own 「继续观看」 answer: one row per title that has something to continue, already in
+   *  last-opened order, already one-per-series. Measured against the list below on both gateways: 8 of its
+   *  12 rows carry a real offset where the list carries 2 of 18, it names the *next unwatched* episode of a
+   *  show whose episodes you finished (鬼灭之刃 S01E03, not the played-over E01/E02 the list hands back),
+   *  and it reaches titles the list's window never gets to (这个杀手不太冷静 parked at 80.5%).
+   *  `SortBy` is ignored by it on both servers — its own order is the wanted one. `MediaTypes` is not
+   *  decoration: asked without it the endpoint answers zero rows. */
+  private async resumePoints(limit: number): Promise<LibraryItem[]> {
+    const j = await this.get<any>(`/Users/${this.account.userId}/Items/Resume`, {
+      Limit: limit,
+      MediaTypes: 'Video',
+      Fields: FIELDS,
+      ImageTypeLimit: 1,
+      EnableImageTypes: 'Primary,Backdrop,Thumb,Logo',
+    });
+    return (j.Items || []).map(mapItem);
+  }
+
+  /** Nothing left to continue: finished, and not parked anywhere with an offset. `IsResumable=true` is not
+   *  the filter its name suggests on these forks — 33 of the 60 rows bangumi answers that way are already
+   *  Played, so the row was filling with episodes that have nothing to resume and no 看到 time to show. */
+  private stalled = (x: LibraryItem): boolean => !!x.userData?.played && !x.userData.positionMs;
+
   /** The 在看 row on its own. Closing the player changes which titles are in it and in what order, and
    *  that is the only part of the lobby a stopped film can move — a 新加入 row is a library's ingest order
-   *  and does not care what was watched. Asked alone, it is one round trip instead of the fifteen the
-   *  whole lobby costs. */
-  async resumeRow(): Promise<LibraryRow | null> {
-    const raw = await this.items({ Recursive: true, MediaTypes: 'Video', SortBy: 'DatePlayed', SortOrder: 'Descending', Limit: 18, IsResumable: true });
-    // The row is newest-played first, so the first card per series is the episode to resume.
+   *  and does not care what was watched. Asked alone, it is two round trips in parallel instead of the
+   *  fifteen the whole lobby costs. */
+  async resumeRow(limit = 18): Promise<LibraryRow | null> {
+    // The endpoint first because it knows where each title actually continues; the DatePlayed list behind it
+    // because a title the server has no offset for is still something the viewer was in the middle of, and
+    // dropping it would take the show off the shelf they reach for.
+    const [points, recent] = await Promise.all([
+      this.resumePoints(limit).catch(() => []),
+      this.items({ Recursive: true, MediaTypes: 'Video', SortBy: 'DatePlayed', SortOrder: 'Descending', Limit: limit, IsResumable: true }),
+    ]);
     const seen = new Set<string>();
-    const items = raw.filter(x => {
-      const key = x.seriesName ? x.parentId || x.seriesName : x.id;
+    // One card is one show, so an episode folds onto its series by name — the same rule the 在看 page's
+    // own fold uses. Keying on `parentId` instead split a show whose two stopped episodes sit in
+    // different seasons into two cards on the rail, which has no fold of its own.
+    const items = [...points, ...recent].filter(x => !this.stalled(x)).filter(x => {
+      const key = x.type === 'Episode' ? x.seriesName || x.parentId || x.id : x.id;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;

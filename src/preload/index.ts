@@ -28,7 +28,7 @@ const api: EchoEmbyApi = {
   emby: {
     views: () => invoke('emby:views'),
     homeRows: () => invoke('emby:homeRows'),
-    resumeRow: () => invoke('emby:resumeRow'),
+    resumeRow: limit => invoke('emby:resumeRow', limit),
     items: params => invoke('emby:items', params),
     genres: () => invoke('emby:genres'),
     item: id => invoke('emby:item', id),

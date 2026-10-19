@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import type { LibraryItem, StudioRef } from '../../shared/types';
+import type { IpcResult, LibraryItem, StudioRef } from '../../shared/types';
 import MediaCard from '../components/home/MediaCard.vue';
 import ListCard from '../components/home/ListCard.vue';
 import RowScroller from '../components/home/RowScroller.vue';
@@ -83,6 +83,8 @@ function params(startIndex: number): Record<string, string | number | boolean> {
   const f = filterParams(filters.value);
   const s = sortParams(filters.value);
   const page = { StartIndex: startIndex, Limit: pageSize.value };
+  // 在看 no longer sends this — `askRows` below answers the page from the lobby's row — but the shape stays
+  // as the page's identity: `lastKey` compares it to decide whether a chip change is a new ask.
   if (kind.value === 'resume') return { Recursive: true, MediaTypes: 'Video', IsResumable: true, SortBy: 'DatePlayed', SortOrder: 'Descending', ...page };
   // `MediaTypes=Video` cannot carry a genre: measured on this gateway, adding Genres to it answers HTTP 500
   // for every label, while the same window asked by item type is byte-identical to it (48 of 48 rows, same
@@ -98,6 +100,16 @@ function params(startIndex: number): Record<string, string | number | boolean> {
   if (kind.value === 'search')
     return { Recursive: true, SearchTerm: effectiveQuery(), IncludeItemTypes: 'Movie,Series,Episode,Video,BoxSet,Playlist', ...f, ...page };
   return { ParentId: viewId.value, IncludeItemTypes: 'Movie,Series,BoxSet,Playlist,Video', Recursive: true, ...f, ...s, ...page };
+}
+
+/** 在看 does not read the raw list: `IsResumable=true` on these forks says the *file* can be resumed, not
+ *  that anything was stopped in it — measured, 33 of the 60 rows bangumi answers that way are already
+ *  Played, so the shelf filled with finished episodes wearing no 看到 time. The lobby's merged row knows
+ *  where each title actually continues, and it is the same two asks the rail already makes. */
+async function askRows(startIndex: number): Promise<IpcResult<LibraryItem[]>> {
+  if (kind.value !== 'resume') return window.echoemby.emby.items(params(startIndex));
+  const r = await window.echoemby.emby.resumeRow(pageSize.value);
+  return { ok: r.ok, data: r.ok ? r.data?.items || [] : undefined, error: r.error };
 }
 
 const items = ref<LibraryItem[]>([]);
@@ -273,7 +285,7 @@ async function load(reset: boolean): Promise<void> {
       lastKey = JSON.stringify(params(0));
     }
     const from = reset ? 0 : items.value.length;
-    let r = await window.echoemby.emby.items(params(from));
+    let r = await askRows(from);
     let batch = r.ok ? r.data || [] : [];
     // One retry pass, and only on an empty first page, so a term that already answers costs one request.
     // The shapes go out together: measured on this gateway, eight of them come back in 198ms while

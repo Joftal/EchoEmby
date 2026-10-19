@@ -153,8 +153,10 @@ export interface LibraryItem {
   latestEpisode?: { season?: number; episode: number };
   /** `positionMs` is where this item stopped: the gateway's own 「播到这里」 number, and the only one that
    *  covers every resumable row (measured: 326185 answers PlaybackPositionTicks 8306670000 = 13分50秒).
-   *  `playedPercentage` is sparser — 2 of the 8 rows the resume query returns. */
-  userData?: { playedPercentage?: number; isFavorite?: boolean; positionMs?: number };
+   *  `playedPercentage` is sparser — 2 of the 8 rows the resume query returns.
+   *  `played` is the server's 「this one is done」 flag, and a 在看 row needs it: asked for the same 60
+   *  rows both gateways answer, 33 of bangumi's and 8 of okemby's are already finished. */
+  userData?: { playedPercentage?: number; isFavorite?: boolean; positionMs?: number; played?: boolean };
   /** External ids the server already scraped. Every outside source is keyed off these instead of the
    *  title, which matters because our item names are Chinese and the outside databases are not. */
   providers?: Providers;
