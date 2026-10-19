@@ -28,8 +28,10 @@ const MISS_TTL = 3 * DAY;
    refetched once instead of being served for the rest of `META_TTL`. A shape marker is needed rather than
    a field-presence test because some fields are written only when they carry something: a season TMDB
    rates at 0 and a season row mapped by a build that never read the rating are then the same object, and
-   presence cannot tell them apart. */
-const META_SCHEMA = 2;
+   presence cannot tell them apart. Schema 3 added the work's own identity - its name, year, poster,
+   genres and length - because a title this server does not hold has no row to be billed from, and the page
+   for it can only be built out of what TMDB's own reply carries. */
+const META_SCHEMA = 3;
 
 type Kind = 'movie' | 'tv';
 type MetaEntry = TmdbMeta | { missing: true; fetchedAt: number };
@@ -116,6 +118,13 @@ const pickWriters = (crew: any[]): string[] =>
  *  Rows are capped because one library here files a season per 季 of a long-running show, and a kept
  *  synopsis costs ~200 bytes a row. */
 const SEASON_ROWS_CAP = 80;
+
+/** TMDB's four-digit year, read off whichever date the kind files its premiere under. 0 when it has not
+   dated the work: a page that prints 「0」 where a year belongs is worse than one that prints no year. */
+const yearOf = (date: unknown): number => {
+  const s = String(date ?? '');
+  return /^\d{4}/.test(s) ? Number(s.slice(0, 4)) : 0;
+};
 
 const seasonTable = (rows: any[] | undefined): TmdbSeasonRow[] => {
   const out: TmdbSeasonRow[] = [];
@@ -255,6 +264,13 @@ export async function tmdbMeta(kind: Kind, tmdbId: string): Promise<TmdbMeta | n
   const out: TmdbMeta = {
     schema: META_SCHEMA,
     fetchedAt: Date.now(),
+    name: String(json.name || json.title || '').trim(),
+    year: yearOf(json.first_air_date || json.release_date),
+    poster: typeof json.poster_path === 'string' ? json.poster_path : '',
+    genres: (Array.isArray(json.genres) ? json.genres : [])
+      .map((g: any) => String(g?.name || '').trim())
+      .filter(Boolean),
+    runtime: Math.max(0, Math.round(num(json.runtime) || 0)),
     originalLanguage: String(json.original_language || '').toLowerCase(),
     seasons: seasonTable(json.seasons),
     /* The actor list is kept for a movie only, because that is the one page that reads it; a show's band
@@ -428,8 +444,9 @@ export async function tmdbSeasonCast(tmdbId: string, season: number): Promise<Tm
 
 const SIMILAR_CAP = 12;
 
-/** The `/similar` list for one title, as poster-only rows. These cannot be resolved back into the
- *  library (they are outside ids), so the strip is a read-only "more like this", never a link. */
+/** The `/similar` list for one title: its name, year, poster, TMDB's own rating and how many people
+ *  stand behind that rating. The renderer resolves
+ *  these back into the library and links every row somewhere, so the row needs no server id of its own. */
 export async function tmdbSimilar(kind: Kind, tmdbId: string): Promise<TmdbSimilar[]> {
   if (!/^\d{1,8}$/.test(tmdbId)) return [];
   const token = tmdbToken();
@@ -437,7 +454,9 @@ export async function tmdbSimilar(kind: Kind, tmdbId: string): Promise<TmdbSimil
   const key = `${kind}:${tmdbId}`;
   const s = load();
   const hit = s.similar[key];
-  if (hit && Date.now() - hit.fetchedAt < SIMILAR_TTL) return hit.value;
+  // votes is written for every row this build fetches, so a cached list without it predates the field
+  // and cannot be ranked. Such a list is refetched once rather than served shapeless.
+  if (hit && Date.now() - hit.fetchedAt < SIMILAR_TTL && hit.value.every(v => v.votes != null)) return hit.value;
 
   const { json, answered } = await fetchJson<any>(
     `https://api.themoviedb.org/3/${kind}/${tmdbId}/similar?language=zh-CN`,
@@ -452,17 +471,22 @@ export async function tmdbSimilar(kind: Kind, tmdbId: string): Promise<TmdbSimil
     if (id === undefined) continue;
     const v = num(r?.vote_average);
     const date = String(r?.release_date || r?.first_air_date || '');
+    const cast = Math.max(0, Math.round(num(r?.vote_count) ?? 0));
     out.push({
       tmdbId: id,
       title: String(r?.title || r?.name || '').trim(),
       posterPath: typeof r?.poster_path === 'string' ? r.poster_path : undefined,
       year: /^\d{4}/.test(date) ? date.slice(0, 4) : undefined,
-      voteAverage: v !== undefined ? Math.round(v * 10) / 10 : undefined,
+      // The gate the work's own entry already applies: a number nobody cast is not a rating, and a card
+      // that prints one while the page it opens withholds it is the same title wearing two answers.
+      voteAverage: v !== undefined && cast > 0 ? Math.round(v * 10) / 10 : undefined,
+      votes: cast,
     });
     if (out.length >= SIMILAR_CAP) break;
   }
   const prev = hit?.value;
-  if (!prev || prev.length !== out.length || prev.some((p, i) => p.tmdbId !== out[i].tmdbId)) {
+  const shaped = !!prev && prev.every(p => p.votes != null);
+  if (!prev || !shaped || prev.length !== out.length || prev.some((p, i) => p.tmdbId !== out[i].tmdbId)) {
     s.similar[key] = { value: out, fetchedAt: Date.now() };
     persist();
   }
