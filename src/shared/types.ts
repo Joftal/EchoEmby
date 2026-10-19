@@ -217,6 +217,10 @@ export interface BangumiScore {
   score: number;
   subjectId: number;
   name: string;
+  /** Set when the record Bangumi answered with is one season rather than the work — the C-drama and
+   *  western-drama half of the site is filed per season (庆余年 → 《庆余年 第一季》), so a number taken from
+   *  such a record describes 第一季 and not the show. Absent means the work's own subject. */
+  season?: number;
   fetchedAt: number;
 }
 
