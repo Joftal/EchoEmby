@@ -125,12 +125,12 @@ const crew = computed<CrewRow[]>(() => {
   }
   return out.slice(0, 30);
 });
-/** The work's own synopsis, in the order the page falls back once a season has nothing to say: TMDB in
- *  Chinese, then whatever the server carries, then TMDB in whatever language it happens to have. The
- *  middle step exists because TMDB records no synopsis at all for much of this library's non-Asian
- *  titles, while the server usually has one. */
+/** The work's own synopsis, in the one order every text surface here uses: TMDB in Chinese, then TMDB in
+ *  whatever language it happens to have, then whatever the server carries. The last step is where a title
+ *  TMDB records no synopsis at all still gets a line — measured over the 181 works cached now, every
+ *  TMDB synopsis this server gets back is already Chinese, so the middle rung has never had to speak. */
 const workOverview = computed(
-  () => scores.value.tmdb?.overviewZh || item.value?.overview || scores.value.tmdb?.overviewOther || '',
+  () => scores.value.tmdb?.overviewZh || scores.value.tmdb?.overviewOther || item.value?.overview || '',
 );
 
 const source = computed<PlaybackSource | undefined>(() => item.value?.sources?.[0]);
@@ -155,13 +155,13 @@ const stillUrl = (ep: number | undefined): string => {
   const p = stillRow(ep)?.p;
   return p ? `https://image.tmdb.org/t/p/w500${p}` : '';
 };
-/** The episode's own paragraph, in the order the work-level one above it uses: TMDB in Chinese, then the
- *  server's line, then TMDB in whatever else it filed. The server carries no overview for 475 of the
+/** The episode's own paragraph, in the order every text surface here uses: TMDB in Chinese, then TMDB in
+ *  whatever else it filed, then the server's line. The server carries no overview for 475 of the
  *  library's 600 sampled episodes, and TMDB's line for each of them arrives inside the season reply the
  *  pictures were already being asked for. */
 const epOverview = (e: LibraryItem): string => {
   const r = stillRow(e.indexNumber);
-  return r?.ovZh || e.overview || r?.ovOther || '';
+  return r?.ovZh || r?.ovOther || e.overview || '';
 };
 const posterUrl = (p?: string): string => (p ? `https://image.tmdb.org/t/p/w342${p}` : '');
 const backdropUrl = (p: string): string => `https://image.tmdb.org/t/p/w780${p}`;
@@ -599,7 +599,7 @@ const pack = computed(() => {
        season that runs 17 小时 18 分), so there is no cheaper number to put here while the fetch is out. */
     runtime: episodeSeason.value === seasonId.value ? fmtRuntime(episodes.value.reduce((a, e) => a + (e.runTimeTicks || 0), 0)) : '',
     vote: t?.voteAverage || 0,
-    overview: t?.ovZh || row?.overview || t?.ovOther || '',
+    overview: t?.ovZh || t?.ovOther || row?.overview || '',
   };
 });
 const overviewText = computed(() => pack.value?.overview || workOverview.value);

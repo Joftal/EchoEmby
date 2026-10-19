@@ -49,7 +49,7 @@ const current = computed(() => props.items[idx.value] ?? null);
 const scores = useScores(() => current.value);
 const overview = computed(() => {
   const t = scores.value.tmdb;
-  return t?.overviewZh || current.value?.overview || t?.overviewOther || '';
+  return t?.overviewZh || t?.overviewOther || current.value?.overview || '';
 });
 const playable = computed(() => PLAYABLE.includes(current.value?.type || ''));
 /** The slide's own button reads the lobby's 继续观看 rows as its candidates: a Series card has no progress
