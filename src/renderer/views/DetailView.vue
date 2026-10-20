@@ -16,6 +16,7 @@ import { useAppStore } from '../stores/app';
 import { accountName, episodeHead, fmtDate, fmtDateTime, fmtRuntime, seenLabel, seasonTitle } from '../lib/format';
 import { PLAYABLE, PLAYABLE_PAGE, resumeTarget, seasonTarget } from '../lib/resume';
 import { genreLabels } from '../lib/genres';
+import { resetPageScroll } from '../lib/scroll';
 import { embyCached } from '../lib/embycache';
 import { libraryWorks, useRelated, type WorkSeed } from '../lib/related';
 import { seedFor, seedItemFor, seedTypeFor, takeAutoplay } from '../lib/handoff';
@@ -527,9 +528,13 @@ const resumeIndex = computed(() => {
    spent and held scrollLeft 0 while the card sat 56206px away. */
 let focusedOn = '';
 watch([episodeN, resumeIndex, () => epiBand.value], async () => {
-  const i = resumeIndex.value;
+  if (episodeN.value < 0 || !epiBand.value) return;
+  // -1 is a season the viewer never started, and 0 is one whose stop is its first card: both are read
+  // from the front, so the ask is card 0 either way. Skipping it left the rail where the previous season
+  // had put it — 爱情公寓 第 4 季 opened holding 4075px of the 第 1 季 list it no longer shows.
+  const i = Math.max(0, resumeIndex.value);
   const key = `${episodeN.value}:${i}`;
-  if (i < 1 || episodeN.value < 0 || !epiBand.value || focusedOn === key) return;
+  if (focusedOn === key) return;
   await nextTick();
   if (epiBand.value?.focusCard(i)) focusedOn = key;
 });
@@ -957,6 +962,10 @@ function paint(it: LibraryItem): void {
   stills.value = {};
   seasonArt.value = '';
   seasonCast.value = null;
+  // The line that says 「这一项还不能直接播放」 is about the title being left, not the one arriving.
+  playErr.value = '';
+  scroll.value = 0;
+  resetPageScroll(scroller.value);
   // A Season row carries no external id and no Logo, so every ask below would be made against nothing.
   // On those pages they come with the series, from loadChildren.
   if (it.type === 'Season') return;

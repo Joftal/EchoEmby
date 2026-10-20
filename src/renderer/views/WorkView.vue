@@ -14,6 +14,7 @@ import { libraryWorks, useRelated, type WorkKind, type WorkSeed } from '../lib/r
 import { embyCached } from '../lib/embycache';
 import { beginPlay, workSeedFor } from '../lib/handoff';
 import { accountName, episodeHead, fmtDate, fmtRuntime, seenLabel, seasonTitle } from '../lib/format';
+import { resetPageScroll } from '../lib/scroll';
 import { useAppStore } from '../stores/app';
 import { vReveal } from '../lib/reveal';
 
@@ -288,6 +289,9 @@ async function loadWork(): Promise<void> {
   seasonCast.value = null;
   bandAsked.value = false;
   seasonPick.value = '';
+  // vue-router hands the next `/work/*` the same instance, so this is where a new work takes over the page.
+  scroll.value = 0;
+  resetPageScroll(scroller.value);
   if (!k || !idKey.value) {
     error.value = '这个链接打不开';
     return;

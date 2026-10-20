@@ -8,6 +8,7 @@ import RowScroller from '../components/home/RowScroller.vue';
 import FilterBar from '../components/browse/FilterBar.vue';
 import { defaultSort, filterParams, fromQuery, isFiltered, localSort, sortParams, toQuery, type Filters } from '../lib/filters';
 import { embyCached } from '../lib/embycache';
+import { resetPageScroll } from '../lib/scroll';
 import { PLAYABLE, applyStop } from '../lib/resume';
 import { useAppStore } from '../stores/app';
 import { usePlayerStore } from '../stores/player';
@@ -385,6 +386,11 @@ function onFilters(next: Filters): void {
   void router.replace({ path: '/browse', query: { ...rest, ...toQuery(next) } });
 }
 
+/** The rail's 在看/待看/收藏 and each library window are ONE instance of this page, so nothing is torn down
+ *  between them and the reader's place in the list they were reading survives as a place in the list they
+ *  never asked for: measured, 待看 scrolled to 1200 landed on 收藏 at 197 — that is just the shorter page
+ *  clamping the old offset, not a reset. */
+const pageEl = ref<HTMLElement | null>(null);
 watch(
   () => route.fullPath,
   () => {
@@ -393,6 +399,7 @@ watch(
     filters.value = fromQuery(route.query, defaultSort(isSearch.value));
     // Picking a sort on a search only re-orders the window we hold; the query is unchanged.
     if (JSON.stringify(params(0)) === lastKey) return;
+    resetPageScroll(pageEl.value);
     void load(true);
   },
 );
@@ -462,7 +469,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="page">
+  <div ref="pageEl" class="page">
     <header class="head">
       <h1>{{ title }}</h1>
 
