@@ -234,6 +234,12 @@ const metaHit = (key: string): { state: 'miss' } | { state: 'cold' } | { state: 
   return hit.schema === META_SCHEMA ? { state: 'fresh', value: hit } : { state: 'cold' };
 };
 
+/** One trip per title for the asks that arrive while it is still out. The disk entry is only written when a
+ *  fetch answers, so a card's ★ and the work page that same card opens a moment later each pay for the title
+ *  twice — and the hover prefetch, which starts the ask early, would gain nothing if the page it opens simply
+ *  sent a second one. */
+const inflight = new Map<string, Promise<TmdbMeta | null>>();
+
 /** Returns the metadata TMDB has for one title, or null when TMDB does not (or no key is configured). */
 export async function tmdbMeta(kind: Kind, tmdbId: string): Promise<TmdbMeta | null> {
   if (!/^\d{1,8}$/.test(tmdbId)) return null;
@@ -243,7 +249,14 @@ export async function tmdbMeta(kind: Kind, tmdbId: string): Promise<TmdbMeta | n
   const hit = metaHit(key);
   if (hit.state === 'miss') return null;
   if (hit.state === 'fresh') return served(hit.value);
+  const running = inflight.get(key);
+  if (running) return running;
+  const out = fetchMeta(kind, tmdbId, token, key).finally(() => inflight.delete(key));
+  inflight.set(key, out);
+  return out;
+}
 
+async function fetchMeta(kind: Kind, tmdbId: string, token: string, key: string): Promise<TmdbMeta | null> {
   const base = `https://api.themoviedb.org/3/${kind}/${tmdbId}`;
   /* `credits` comes along for both kinds because the writers the credit band falls back to are inside it.
      The certification half is asked per kind: a movie's rating is read off `release_dates`, a show's off

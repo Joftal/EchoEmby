@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import { useRouter } from 'vue-router';
 import type { RelatedCard } from '../../lib/related';
 import { begin, beginWork } from '../../lib/handoff';
+import { prefetchKey } from '../../lib/prefetch';
 import { vReveal } from '../../lib/reveal';
 import HScroller from './HScroller.vue';
 
@@ -25,18 +26,26 @@ const router = useRouter();
 
 /** The handoff is what lets the page arrive painted. For a library card it carries the row itself, so the
  *  hero has its name, its rating and its synopsis on the first frame; for a work the server does not hold
- *  there is no row, and the plate alone is worth handing over — same picture, same 2:3 box. */
+ *  there is no row, and the plate alone is worth handing over — same picture, same 2:3 box. Such a card is
+ *  the only kind that opens a work page: once the server answers that it holds the title, the card points
+ *  at its own row instead, so a work page never arrives with a row under it. */
 function press(card: RelatedCard, ev: MouseEvent): void {
   const img = (ev.currentTarget as HTMLElement).querySelector('img');
   if (card.item) begin(img, card.item.id, card.item);
   beginWork(img, card.key, card.name, card.year);
   void router.push(card.to);
 }
+
+/** The pointer settling on a card is the only notice this app gets that one of its pages is about to be
+ *  opened, and a card that opens a work page is the one whose page still has three asks left to make. */
+function peek(card: RelatedCard): void {
+  if (card.to.startsWith('/work/')) prefetchKey(card.key);
+}
 </script>
 
 <template>
   <HScroller v-if="cards.length" class="block" :title="title" :count="cards.length">
-    <button v-for="c in cards" :key="c.key" type="button" class="sim" @click="press(c, $event)">
+    <button v-for="c in cards" :key="c.key" type="button" class="sim" @pointerenter.passive="peek(c)" @click="press(c, $event)">
       <div class="sposter">
         <img v-reveal v-if="c.poster" :src="c.poster" alt="" loading="lazy" decoding="async" />
         <span v-else class="ph">{{ c.name.slice(0, 1) }}</span>
