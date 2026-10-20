@@ -54,9 +54,11 @@ function target(it: LibraryItem, seasonNamed = false): ResumeTarget {
 const inSet = (list: LibraryItem[], it: LibraryItem): boolean => list.some(x => x.id === it.id);
 
 /** The row a hero's button should play, or null when nothing on this page says which file to open.
- *  `candidates` are the rows the page already holds for this title — the lobby's 继续观看 row, the
- *  detail page's season — because a Series or Season card carries no position of its own (measured: its
- *  UserData answers UnplayedItemCount and 8 rows, nothing about where the viewer stopped).
+ *  `candidates` are the rows the page already holds for this title — the lobby's 继续观看 row, since the
+ *  lobby asks the work-level question of where the viewer last stopped. A detail page open on one season
+ *  asks a different question and uses `seasonTarget` instead, because a Series or Season card carries no
+ *  position of its own (measured: its UserData answers UnplayedItemCount and 8 rows, nothing about where
+ *  the viewer stopped).
  *  `flagged` is the half of those the server itself returned as in progress, and it is what lets a row
  *  count without an offset. A season's episode list must not be read that way: every one of its rows
  *  matches the same query, so 第 1 集 — never opened — would land under a button labelled 播放.
@@ -82,4 +84,40 @@ export function resumeTarget(
         (!c.seriesId && !c.seasonId && !!c.seriesName && c.seriesName === item.name)),
   );
   return hit ? target(hit, seasonNamed) : null;
+}
+
+/** A row the server bills as watched is not a stop. It answers `PlayedPercentage: 100` with position 0, and
+ *  `stoppedAtMs` multiplies that into the row's whole runtime — so a button that read it as a stop would say
+ *  「继续播放 · 看到 41:00」 and open an episode at its own last frame. One step under 100 because a gateway
+ *  that rounds its percentage up from 99.6 is still answering "watched". */
+const WATCHED = 99;
+
+/** The furthest-along episode in a season that was started and not finished, or null when the season holds
+ *  no such row. Recency is deliberately not the rule: `LastPlayed` is not returned by these servers, and the
+ *  question a season's button answers is 「这一季看到哪了」, which is the largest number rather than the
+ *  newest write — re-watching 第 1 集 leaves the button on 第 8 集 on purpose. */
+function seasonStopped(rows: LibraryItem[]): LibraryItem | null {
+  let best: LibraryItem | null = null;
+  for (const e of rows) {
+    if ((e.userData?.playedPercentage || 0) >= WATCHED) continue;
+    if (stopped(e) <= 0) continue;
+    if (!best || (e.indexNumber ?? -1) > (best.indexNumber ?? -1)) best = e;
+  }
+  return best;
+}
+
+/** The target for one season, read off the rows that season holds: where the viewer got to, else its first
+ *  episode. Null when neither is in hand — the rows are still on their way, or this server has no files for
+ *  the season — which is the caller's cue to say 播放 without naming an episode, or that nothing here opens.
+ *  The 「第 N 季」 half is never printed: this button sits under a heading that has already named the season.
+ *  `flagged` plays no part: a season's rows are the whole season, so membership in the 在看 query says
+ *  nothing about the one on screen. */
+export function seasonTarget(rows: LibraryItem[]): ResumeTarget | null {
+  const stop = seasonStopped(rows);
+  if (stop) return target(stop, true);
+  const first = rows.find(e => PLAYABLE.includes(e.type)) || null;
+  if (!first) return null;
+  // A first row the server already bills as watched carries a full-runtime position, and this button opens
+  // it at 0 — so it names the episode without borrowing the number.
+  return { item: first, resumed: false, caption: episodePosition(null, first.indexNumber) };
 }

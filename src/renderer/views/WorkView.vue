@@ -8,6 +8,7 @@ import FilterSelect from '../components/browse/FilterSelect.vue';
 import TitleArt from '../components/TitleArt.vue';
 import ScoreStrip from '../components/ScoreStrip.vue';
 import HeroSkeleton from '../components/HeroSkeleton.vue';
+import HeroPlay from '../components/HeroPlay.vue';
 import logoTmdb from '../assets/logos/tmdb.svg';
 import { libraryWorks, useRelated, type WorkKind, type WorkSeed } from '../lib/related';
 import { embyCached } from '../lib/embycache';
@@ -63,9 +64,6 @@ const serverName = computed(() => (app.account ? accountName(app.account) : ''))
 /** Seasons across all of those rows, each still knowing which row it came from: the episodes below it can
  *  only be asked for through that row. */
 const serverSeasons = ref<{ row: LibraryItem; season: LibraryItem }[]>([]);
-/** Whether every row this account holds for the work has answered about its seasons. Until then the page
- *  cannot tell 「没有资源」 from 「这台还没答」, and the two are not the same sentence. */
-const seasonsAsked = ref(false);
 const serverEps = ref<LibraryItem[]>([]);
 /** Whether the band on screen has its answer — TMDB's episode list, or this season's files. An empty band
  *  that has not been asked yet is not an empty band, and the line under the season says which of the two
@@ -166,15 +164,6 @@ const serverRow = computed(() => {
   if (!held.length) return null;
   return held.sort((a, b) => (b.season.childCount || 0) - (a.season.childCount || 0))[0];
 });
-
-/** Whether the season line may state a verdict at all: the work's rows and every one of their season lists
- *  have answered. Before that the line would print its verdict about seasons nobody has been asked for. */
-const seasonsSettled = computed(() => libAsked.value && seasonsAsked.value);
-
-/** The season on screen is one this server holds nothing for — no row carries the number, or the row that
- *  does says it has no episodes. The same test the detail page's hero plate and its badge are read off,
- *  and the same sentence in both: the picker's rows stay plain so a season switch cannot widen the pill. */
-const seasonAbsent = computed(() => seasonsSettled.value && (!serverRow.value || serverRow.value.season.childCount === 0));
 
 interface EpView {
   key: string;
@@ -297,7 +286,6 @@ async function loadWork(): Promise<void> {
   logos.value = [];
   stills.value = {};
   seasonCast.value = null;
-  seasonsAsked.value = false;
   bandAsked.value = false;
   seasonPick.value = '';
   if (!k || !idKey.value) {
@@ -347,15 +335,11 @@ async function loadWork(): Promise<void> {
  *  and the fallback, over the single row the click came from. */
 async function askSeasons(rows: LibraryItem[], mine: number): Promise<void> {
   const series = rows.filter(x => x.type === 'Series');
-  if (!series.length) {
-    seasonsAsked.value = true;
-    return;
-  }
+  if (!series.length) return;
   const groups = await Promise.all(
     series.map(async row => ({ row, s: await embyCached('seasons', row.id, () => window.echoemby.emby.seasons(row.id)) })),
   );
   if (mine !== run) return;
-  seasonsAsked.value = groups.every(g => g.s.ok);
   const before = serverRow.value;
   serverSeasons.value = groups.flatMap(g => (g.s.ok ? g.s.data || [] : []).map(season => ({ row: g.row, season })));
   // Re-run only where the season on screen changed hands. The stills are already on screen and a second
@@ -412,7 +396,10 @@ function open(to: string, autoplay = false): void {
               <button v-if="libItem" type="button" class="cta" @click="open(`/detail/${libItem.id}`)">
                 在&nbsp;<span class="nm">{{ serverName }}</span>&nbsp;播放
               </button>
-              <span v-else-if="libAsked" class="none">当前服务器无资源</span>
+              <!-- The same plate the detail page answers with: this sentence is the same fact about the same
+                   server, and two renderings of it had drifted apart (a 44px translucent pill here, a 48px
+                   white plate there). `none` also makes it a non-button, which a `<span>` could not be. -->
+              <HeroPlay v-else-if="libAsked" :target="null" none />
               <a v-if="tmdbUrl && !fallback" class="ext" :href="tmdbUrl" target="_blank" rel="noreferrer" title="TMDB 上这一部的页面">
                 <img :src="logoTmdb" alt="TMDB" />
               </a>
@@ -451,12 +438,13 @@ function open(to: string, autoplay = false): void {
                 >TMDB <i>{{ season.voteAverage.toFixed(1) }}</i></a
               >
             </span>
-            <span v-if="seasonAbsent" class="qline qmiss">{{ serverName }} 服务器没有资源</span>
           </div>
         </template>
-        <!-- The other empty band — the server holds the season and says it has no files — is already said
-             by the line above, in the same words it uses everywhere else. -->
+        <!-- Two empties, and this is the only place either of them is said: the season line's verdict was
+             dropped on 2026-10-20 because the detail page's play button carries that sentence, and this page
+             has no per-season button to carry it. So the band names which side failed to answer for it. -->
         <p v-if="!eps.length && bandAsked && !serverRow" class="qempty">TMDB 还没有这一季的分集。</p>
+        <p v-else-if="!eps.length && bandAsked" class="qempty">{{ serverName }} 服务器在这一季没有文件。</p>
         <component
           v-for="e in eps"
           :is="e.to ? 'button' : 'div'"
@@ -675,14 +663,18 @@ function open(to: string, autoplay = false): void {
   min-height: 92.4px;
 }
 /* The row keeps its height whether the answer is a button, an absence or a question still out, so the
-   copy column does not move when the server says whether it holds this work. */
+   copy column does not move when the server says whether it holds this work.
+   48.2px is the height the shared plate arrives with — 16px of padding over the two text lines it reserves —
+   so the reservation is the tallest thing that can land here rather than the pill that used to be, and
+   `flex-end` is what makes the shorter ones sit on the same line the poster and the copy already end at
+   instead of re-centring when the plate arrives. */
 .actions {
   flex: none;
   margin-left: auto;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 12px;
-  min-height: 44px;
+  min-height: 48.2px;
 }
 .cta {
   display: inline-flex;
@@ -709,19 +701,6 @@ function open(to: string, autoplay = false): void {
 .cta:hover {
   transform: translateY(-1px);
   opacity: 0.92;
-}
-.none {
-  height: 44px;
-  display: inline-flex;
-  align-items: center;
-  padding: 0 16px;
-  border-radius: 999px;
-  font-size: 13px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.86);
-  background: rgba(255, 255, 255, 0.12);
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  backdrop-filter: blur(10px);
 }
 .ext {
   display: grid;
@@ -792,14 +771,8 @@ h2 {
   color: var(--text-dim);
   font-weight: 550;
 }
-/* The season's verdict sits in the same row, at the same weight and colour as the season's own mark: it is
-   the same kind of statement about the same season, and it is word for word what the detail page prints. */
-.qmiss {
-  color: var(--text-dim);
-  font-weight: 550;
-}
 /* A season with nothing to draw is a rail of zero cards, and a reader cannot tell that apart from a band
-   that failed to load. Which of the two it is depends on who was asked, and the header already says that. */
+   that failed to load. Which of the two it is depends on who was asked, and the line above says it. */
 .qempty {
   margin: 0;
   padding: 2px 0 12px;

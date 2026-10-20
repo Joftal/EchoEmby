@@ -14,7 +14,7 @@ import { tmdbKind as kindOf, trustSeason, useScores } from '../lib/scores';
 import { usePlayerStore } from '../stores/player';
 import { useAppStore } from '../stores/app';
 import { accountName, episodeHead, fmtDate, fmtDateTime, fmtRuntime, seenLabel, seasonTitle } from '../lib/format';
-import { PLAYABLE, PLAYABLE_PAGE, resumeTarget } from '../lib/resume';
+import { PLAYABLE, PLAYABLE_PAGE, resumeTarget, seasonTarget } from '../lib/resume';
 import { genreLabels } from '../lib/genres';
 import { embyCached } from '../lib/embycache';
 import { libraryWorks, useRelated, type WorkSeed } from '../lib/related';
@@ -31,7 +31,7 @@ const serverName = computed(() => (app.account ? accountName(app.account) : ''))
 const item = ref<LibraryItem | null>(null);
 /** What the server's own rows answer as this work's seasons, each tagged with the Series row that holds
  *  it. A work this account files as several rows (measured: 12 of this library's 386) has its seasons
- *  spread over them, and a list built from the row being looked at alone would say 「服务器没有资源」
+ *  spread over them, and a list built from the row being looked at alone would answer 「当前服务器无资源」
  *  two rows down from where its files really sit (measured: 6 of the 72 shortfall rows). */
 const serverSeasons = ref<{ seriesId: string; season: LibraryItem }[]>([]);
 /** Whether every row this account holds for the work has answered about its seasons. Until then a season
@@ -466,31 +466,27 @@ const plateSrc = computed(() => tmdbPlate.value || seasonArt.value || heroPoster
 /** Ranked title treatments for this item; TitleArt walks them and falls back to the name. */
 const titleUrls = ref<string[]>([]);
 
-/** The 在看 rows the lobby pulled, still in hand on this page. `resume` reads them before it reads the
- *  season, so nothing here waits for a request to know where the viewer stopped. */
+/** The 在看 rows the lobby pulled, still in hand on this page. Two readers: the work-level pick that
+ *  decides which season the page opens on, and the stop a Movie or Episode page names from its own row.
+ *  A season's button does not read them — it reads that season's rows. */
 const resumeRow = computed(() => app.rows.find(r => r.key === 'resume')?.items || []);
-/** The row this hero is about, as the shared button reads it: null when nothing has been started.
- *  The rows above go in first because they cost no request: a Series used to paint a bare 「播放」 while the
- *  season query was in flight and only then grow its caption, and that step measured 156 -> 290px taken off
- *  the top of the synopsis - the paragraph re-wrapped one beat after the hero had already arrived. Joining
- *  the same row as the lobby also keeps the two buttons honest: same title, same stopped episode, no matter
- *  which one was clicked. */
+/** The rows of the season on screen, and only while they really are that season's: the band keeps its
+ *  height across a switch, so the rows being left sit here for a beat under the new season's number. */
+const seasonRows = computed<LibraryItem[]>(() => (episodeN.value === seasonN.value ? episodes.value : []));
+/** The row this hero is about, as the shared button reads it. A show's button answers for the season the
+ *  page is open on rather than for the work: 第 2 季 says what 第 2 季 holds, and a season nobody has
+ *  started names its own first episode. The lobby keeps asking the work-level question of where the viewer
+ *  last stopped, so the two now disagree on purpose — measured on 摩登家庭, the work-level button named
+ *  「第 1 季 · 第 1 集 · 看到 18:26」 while the page was open on a 特别篇 this server holds nothing for, so
+ *  the plate promised a file and the badge under it denied it. */
 const resume = computed(() =>
-  resumeTarget(
-    item.value,
-    isSeries.value || isSeason.value ? [...resumeRow.value, ...episodes.value] : [],
-    resumeRow.value,
-    isSeason.value,
-  ),
+  isSeries.value || isSeason.value ? seasonTarget(seasonRows.value) : resumeTarget(item.value, [], resumeRow.value, false),
 );
-/** The one item the play button is about: the episode still in progress, else the first of the season.
- *  Everything the button says and plays comes from here, so the two cannot disagree. A type that names no
- *  media source is not handed to the player at all — measured, 合集/播放列表/资源库 pages answering
- *  「播放」 died on 「服务器出错了（HTTP 500）」 because PlaybackInfo has no file to negotiate. */
+/** The one item the play button is about: whatever it says, it plays. A type that names no media source is
+ *  not handed to the player at all — measured, 合集/播放列表/资源库 pages answering 「播放」 died on
+ *  「服务器出错了（HTTP 500）」 because PlaybackInfo has no file to negotiate. */
 const playTarget = computed<LibraryItem | null>(
-  () =>
-    resume.value?.item ||
-    ((isSeries.value || isSeason.value) ? episodes.value[0] || null : PLAYABLE.includes(item.value?.type || '') ? item.value : null),
+  () => resume.value?.item || (PLAYABLE.includes(item.value?.type || '') ? item.value : null),
 );
 /** Whether this page's type can hold a play button at all. Read off `pageType`, which is known from the
  *  seed row before the item arrives, so the button is either there or not from the first painted frame —
@@ -501,7 +497,8 @@ const playableId = computed(() => playTarget.value?.id || '');
  *  back count, because a promise retracted a frame later is the same lie in reverse: a TMDB-only season
  *  row is only made once the season list has answered, and a server row carrying `ChildCount: 0` is the
  *  server itself saying it holds no episodes. This is the same test `openSeason` makes at its own early
- *  return, and the work page's `seasonAbsent` is the same sentence about the same season. */
+ *  return, and since 2026-10-20 it is the only place the page says it: the season line's badge is gone and
+ *  the hero's 「当前服务器无资源」 carries the sentence, which is where the reader was about to act. */
 const seasonAbsent = computed(() => {
   if (!isSeries.value && !isSeason.value) return false;
   const at = seasonAt.value;
@@ -1187,7 +1184,6 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
                   :title="`TMDB ${pack?.tag} 评分`"
                 >TMDB <i>{{ seasonVote.toFixed(1) }}</i></a>
               </span>
-              <span v-if="seasonAbsent" class="qline qmiss">{{ serverName }} 服务器没有资源</span>
             </div>
           </template>
           <button v-for="r in band" :key="r.key" class="epi" :class="{ off: !r.id }" :disabled="!r.id" @click="play(r.id, false)">
@@ -1207,9 +1203,10 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
               <p v-if="r.ov" class="eov">{{ r.ov }}</p>
             </div>
           </button>
-          <!-- The season line above already says 「{服务器} 服务器没有资源」 for every season the server
-               holds nothing for, so this one only speaks for the case that sentence does not cover: a row
-               that promises episodes and then answers with none. -->
+          <!-- Two empties, and only one of them gets a sentence here: a season this server holds nothing
+               for is answered by the hero's own 「当前服务器无资源」, which is where the reader was about to
+               act. What is left to say is the anomaly the button cannot see — a row that promised episodes
+               and then answered with none. -->
           <p v-if="noBand && !seasonAbsent" class="noband">这台服务器在这一季没有文件，分集也列不出来。</p>
         </HScroller>
         <BlockPh v-else-if="wantRail" kind="rail" />
@@ -1566,12 +1563,6 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
   animation: fade-in 0.3s var(--ease) both;
 }
 .qn {
-  color: var(--text-dim);
-  font-weight: 550;
-}
-/* The season's verdict sits in the same row, at the same weight and colour as the season's own mark: it is
-   the same kind of statement about the same season, and it is word for word what the work page prints. */
-.qmiss {
   color: var(--text-dim);
   font-weight: 550;
 }
