@@ -13,11 +13,11 @@ import HeroSkeleton from '../components/HeroSkeleton.vue';
 import { tmdbKind as kindOf, trustSeason, useScores } from '../lib/scores';
 import { usePlayerStore } from '../stores/player';
 import { useAppStore } from '../stores/app';
-import { episodeHead, fmtDate, fmtDateTime, fmtRuntime, seenLabel, seasonTitle } from '../lib/format';
+import { accountName, episodeHead, fmtDate, fmtDateTime, fmtRuntime, seenLabel, seasonTitle } from '../lib/format';
 import { PLAYABLE, PLAYABLE_PAGE, resumeTarget } from '../lib/resume';
 import { genreLabels } from '../lib/genres';
 import { embyCached } from '../lib/embycache';
-import { useRelated, type WorkSeed } from '../lib/related';
+import { libraryWorks, useRelated, type WorkSeed } from '../lib/related';
 import { seedFor, seedItemFor, seedTypeFor, takeAutoplay } from '../lib/handoff';
 import { vReveal } from '../lib/reveal';
 
@@ -25,14 +25,32 @@ const props = defineProps<{ id: string }>();
 const router = useRouter();
 const player = usePlayerStore();
 const app = useAppStore();
+/** Whose file the play button opens. The lobby only offers titles; this page is about to open one. */
+const serverName = computed(() => (app.account ? accountName(app.account) : ''));
 
 const item = ref<LibraryItem | null>(null);
-const seasons = ref<LibraryItem[]>([]);
+/** What the server's own rows answer as this work's seasons, each tagged with the Series row that holds
+ *  it. A work this account files as several rows (measured: 12 of this library's 386) has its seasons
+ *  spread over them, and a list built from the row being looked at alone would say 「服务器没有资源」
+ *  two rows down from where its files really sit (measured: 6 of the 72 shortfall rows). */
+const serverSeasons = ref<{ seriesId: string; season: LibraryItem }[]>([]);
+/** Whether every row this account holds for the work has answered about its seasons. Until then a season
+ *  TMDB lists and this page cannot find is unasked-for rather than absent, and only one of those two is a
+ *  sentence worth printing. */
+const seasonsAsked = ref(false);
 const episodes = ref<LibraryItem[]>([]);
-const seasonId = ref('');
+/** The season this page is answering for, held as its number. Keyed by number rather than by the server's
+ *  row id because the list now offers seasons this server has no row for: a show filed as 第 1 季 and
+ *  第 3 季 has a 第 2 季 the reader can open, and nothing on this machine names it. -1 until it lands —
+ *  0 is a real answer here, since 第 0 季 Specials is a season the server files like any other (measured:
+ *  10 of the 196 season rows across 120 sampled shows). */
+const seasonN = ref(-1);
 /** Which season the rows now in `episodes` were read for. The list keeps its height across a switch, so
  *  without this the hero would print the season being left's length under the new one's date. */
-const episodeSeason = ref('');
+const episodeN = ref(-1);
+/** Whether TMDB has answered the episode list for the season on screen. Consulted only for a season this
+ *  server holds no row for, where it is the whole difference between 「还没有分集」 and an ask still out. */
+const stillsSettled = ref(false);
 /** The series above a Season item. The server files the favourite, the external ids and every
  *  work-level question there, so a page opened on one season still needs its parent. */
 const seriesItem = ref<LibraryItem | null>(null);
@@ -78,25 +96,6 @@ const relatedSeed = computed<WorkSeed | null>(() => {
   return kind && /^\d{1,8}$/.test(tmdbId) ? { kind, tmdbId, genres: w!.genres } : null;
 });
 const related = useRelated(() => relatedSeed.value);
-
-/** Seasons on each side of the pair, counted the same way: a numbered season. TMDB bills specials as
- *  season 0 and this server files rows the same way, so comparing the two raw lists would report a gap
- *  for a show whose only extra rows are specials. */
-const tmdbSeasonCount = computed(() => (scores.value.tmdb?.seasons || []).filter(s => s.n >= 1).length);
-const serverSeasonCount = computed(() => seasons.value.filter(s => (s.indexNumber ?? 0) >= 1).length);
-/* A work this server splits across several Series rows. Measured on this library: 81 works are filed that
-   way, and the fullest row of the 200 seasons those shows have holds 117 of them - the rest sit under a
-   sibling row with the same name. They are not concatenated here: two rows that both bill a 第 1 季 would
-   make a season list that never existed (measured, 11 of 14 sampled split works overlap that way, and
-   碧蓝之海 has two copies of 第 3 季). The page says which part it holds and hands the whole work to the
-   page keyed by TMDB's id, where the two are told apart. */
-const partialSeasons = computed(
-  () => relatedSeed.value?.kind === 'tv' && serverSeasonCount.value > 0 && tmdbSeasonCount.value > serverSeasonCount.value,
-);
-function openWork(): void {
-  const s = relatedSeed.value;
-  if (s) void router.push('/work/' + s.kind + '/' + s.tmdbId);
-}
 
 // The server files its people on the series and never on a season row (measured: 0 on every Season
 // page sampled), so a page opened on one season reads the show it belongs to rather than nobody.
@@ -178,7 +177,9 @@ const pageType = computed(() => item.value?.type || seedTypeFor(props.id));
 /** The two arrivals tall enough to be felt: the season rail (370px, and the last thing to land) and the
  *  file's technical block (487px). Both sit above other blocks, so each one pushed the rest of the page
  *  down while the reader was already looking at it. Their heights are claimed here and filled in place. */
-const wantRail = computed(() => (pageType.value === 'Series' || pageType.value === 'Season') && !episodes.value.length);
+const wantRail = computed(
+  () => (pageType.value === 'Series' || pageType.value === 'Season') && !episodes.value.length && !!seasonRow.value,
+);
 const wantTech = computed(() => pageType.value === 'Movie' && !source.value);
 
 /** image.tmdb.org answers directly on this machine (the API host needs the system proxy). */
@@ -496,6 +497,22 @@ const playTarget = computed<LibraryItem | null>(
  *  gating it on `playTarget` would let it pop in when a show's season list lands and slide 收藏 along. */
 const pagePlays = computed(() => PLAYABLE_PAGE.includes(pageType.value));
 const playableId = computed(() => playTarget.value?.id || '');
+/** Whether the season on screen is one this server holds nothing for. Only answers that cannot be taken
+ *  back count, because a promise retracted a frame later is the same lie in reverse: a TMDB-only season
+ *  row is only made once the season list has answered, and a server row carrying `ChildCount: 0` is the
+ *  server itself saying it holds no episodes. This is the same test `openSeason` makes at its own early
+ *  return, and the work page's `seasonAbsent` is the same sentence about the same season. */
+const seasonAbsent = computed(() => {
+  if (!isSeries.value && !isSeason.value) return false;
+  const at = seasonAt.value;
+  return !!at && (!at.season || at.season.childCount === 0);
+});
+/** Whether the hero says 「当前服务器无资源」 in the button's place. A page whose item arrived but names no
+ *  file is settled by the item endpoint; a rail still on its way keeps saying 播放. */
+const noResource = computed(() => {
+  if (!pagePlays.value || playTarget.value) return false;
+  return isSeries.value || isSeason.value ? seasonAbsent.value : !!item.value;
+});
 const epiBand = ref<InstanceType<typeof HScroller> | null>(null);
 /** The card the episode row should open on: the episode still in progress, when the season on screen holds
  *  it. -1 for a movie, for a finished show and for a season the viewer never started. */
@@ -512,10 +529,10 @@ const resumeIndex = computed(() => {
    第 1 季 page are one object over one stopped card, so the season page mounted to find the key already
    spent and held scrollLeft 0 while the card sat 56206px away. */
 let focusedOn = '';
-watch([episodeSeason, resumeIndex, () => epiBand.value], async () => {
+watch([episodeN, resumeIndex, () => epiBand.value], async () => {
   const i = resumeIndex.value;
-  const key = `${episodeSeason.value}:${i}`;
-  if (i < 1 || !episodeSeason.value || !epiBand.value || focusedOn === key) return;
+  const key = `${episodeN.value}:${i}`;
+  if (i < 1 || episodeN.value < 0 || !epiBand.value || focusedOn === key) return;
   await nextTick();
   if (epiBand.value?.focusCard(i)) focusedOn = key;
 });
@@ -539,18 +556,117 @@ const epTitle = (e: LibraryItem): string => {
 const epSeen = (e: LibraryItem): string => seenLabel(e.userData, e.runTimeTicks);
 const epPlayed = (e: LibraryItem): number => Math.min(100, e.userData?.playedPercentage || 0);
 
+/** One card of the episode band, drawn from whichever side owns that episode. A season this server holds
+ *  files for answers with its own rows — its art, its length, where the viewer stopped; a season it holds
+ *  none of answers with TMDB's list, and its card has no file to open, so `id` is empty and the play
+ *  triangle is not drawn. One shape rather than two blocks of markup, because the same episode must not be
+ *  able to wear two different cards on the same page. */
+interface BandRow {
+  key: string;
+  id: string;
+  art: string;
+  ph: string;
+  title: string;
+  date: string;
+  len: string;
+  seen: string;
+  played: number;
+  ov: string;
+}
+const band = computed<BandRow[]>(() => {
+  if (seasonRow.value) {
+    return episodes.value.map(e => ({
+      key: e.id,
+      id: e.id,
+      art: epArt.value[e.id] || stillUrl(e.indexNumber),
+      ph: (e.name || '?').slice(0, 1),
+      title: epTitle(e),
+      date: fmtDate(e.premiereDate),
+      len: fmtRuntime(e.runTimeTicks),
+      seen: epSeen(e),
+      played: epPlayed(e),
+      ov: epOverview(e),
+    }));
+  }
+  return Object.keys(stills.value)
+    .map(Number)
+    .sort((a, b) => a - b)
+    .map(k => {
+      const r = stills.value[k];
+      return {
+        key: `t${k}`,
+        id: '',
+        art: stillUrl(k),
+        ph: (r?.nZh || r?.nOther || '?').slice(0, 1),
+        title: episodeHead({ episode: k, season: seasonNumber.value, seriesName: work.value?.name }, r?.nZh, r?.nOther),
+        date: '',
+        // TMDB bills no running time per episode, so the card prints nothing rather than the work's.
+        len: '',
+        seen: '',
+        played: 0,
+        ov: r?.ovZh || r?.ovOther || '',
+      };
+    });
+});
+
+/** The band on screen with its header and no cards. The header holds the season picker, so a season that
+ *  turns out to have nothing to show has to keep the band: without it the control that put the reader here
+ *  goes away with the cards and there is no way back. It waits for the ask to land, because a line about
+ *  what is missing while the answer is still on its way is the same lie as a blank stretch of page. */
+const noBand = computed(() => seasonN.value >= 0 && !band.value.length && !wantRail.value && stillsSettled.value);
+
 const genres = computed(() => genreLabels(work.value?.genres));
 const premiered = computed(() => fmtDate(item.value?.premiereDate) || String(item.value?.productionYear || ''));
 
-/** The season this page is answering for: the open tab on a Series, the item itself on a Season page. */
-const seasonRow = computed<LibraryItem | null>(
-  () => seasons.value.find(x => x.id === seasonId.value) || (isSeason.value ? item.value : null),
-);
-const seasonNumber = computed(() => seasonRow.value?.indexNumber ?? item.value?.indexNumber ?? null);
+/** One numbered season of this work, and where its files would be. `season` is null for the seasons this
+ *  server has no row for — the ones the reader now opens here instead of on another page. */
+interface ServerSeason {
+  n: number;
+  seriesId: string;
+  season: LibraryItem | null;
+}
 
 /* TMDB and this server do not always count the same season. The threshold and the sweep that picked it
    live in `trustSeason`, because the player's season chips have to refuse the same pairings this page does. */
 const trustRow = (n?: number | null, count?: number): TmdbSeasonRow | null => trustSeason(scores.value.tmdb?.seasons, n, count);
+
+/** Every season this work has, on either side of the pair, in one number-ordered list.
+ *
+ *  Two rows of one split work can both bill a 第 1 季 (measured: 11 of 14 sampled split works overlap that
+ *  way, and 碧蓝之海 holds two copies of 第 3 季), so the rows are never concatenated — the fuller one
+ *  answers for the number. TMDB's own rows join only once the server has finished answering, so the list can
+ *  grow but cannot contradict itself: a season added after the sweep is one the sweep found nothing for.
+ *  TMDB's own rows join only when they hold episodes: 15 of the 1753 season rows in this machine's cache
+ *  carry a number and no episodes at all, which is an announcement, not anything a viewer can press. Season
+ *  0 joins on those same terms (232 of the 889 works cached here hold a 特别篇 with episodes in it, and
+ *  TMDB names every one of them 特别篇, so the picker never reads 第 0 季), and a server row for the same
+ *  number answers for it first, which is how 冰菓 keeps its own 「Specials」. */
+const seasons = computed<ServerSeason[]>(() => {
+  const byN = new Map<number, ServerSeason>();
+  for (const g of serverSeasons.value) {
+    const n = g.season.indexNumber ?? 0;
+    if (n < 0) continue;
+    const held = byN.get(n);
+    if (!held || (g.season.childCount || 0) > (held.season?.childCount || 0)) byN.set(n, { n, seriesId: g.seriesId, season: g.season });
+  }
+  if (seasonsAsked.value) {
+    for (const t of scores.value.tmdb?.seasons || []) if (t.epCount && !byN.has(t.n)) byN.set(t.n, { n: t.n, seriesId: '', season: null });
+  }
+  return [...byN.values()].sort((a, b) => a.n - b.n);
+});
+
+/** The season this page is answering for: the open tab on a Series, the item itself on a Season page. A page
+ *  opened straight on a season its parent's list did not answer with is still its own answer, and the series
+ *  above it is the row those episodes belong to. */
+const seasonAt = computed<ServerSeason | null>(() => {
+  const hit = seasons.value.find(x => x.n === seasonN.value);
+  if (hit) return hit;
+  return isSeason.value && item.value && (item.value.indexNumber ?? 0) === seasonN.value
+    ? { n: seasonN.value, seriesId: item.value.parentId || '', season: item.value }
+    : null;
+});
+const seasonRow = computed<LibraryItem | null>(() => seasonAt.value?.season || null);
+const seasonNumber = computed(() => (seasonN.value >= 0 ? seasonN.value : null));
 const tmdbSeason = computed(() => trustRow(seasonNumber.value, seasonRow.value?.childCount));
 
 /* Asked from a watch rather than from `loadEpisodes`, because the trust test needs TMDB's meta and
@@ -564,9 +680,7 @@ const castByKey = new Map<string, TmdbCredits>();
  *  getter because `loadEpisodes` has to look up the same key the watch is about to ask for. */
 const castKey = (): string => {
   const id = String(work.value?.providers?.tmdb || '');
-  return tmdbSeason.value && seasonNumber.value != null && /^\d{1,8}$/.test(id)
-    ? `${seasonId.value}|${seasonNumber.value}|${id}`
-    : '';
+  return tmdbSeason.value && seasonNumber.value != null && /^\d{1,8}$/.test(id) ? `${seasonNumber.value}|${id}` : '';
 };
 watch(castKey, key => {
   if (!key) return;
@@ -577,12 +691,12 @@ watch(castKey, key => {
   }
   if (castAsked.has(key)) return;
   castAsked.add(key);
-  const [, n, id] = key.split('|');
-  const sid = seasonId.value;
+  const [n, id] = key.split('|');
+  const at = seasonN.value;
   void window.echoemby.meta.tmdbSeasonCast({ tmdbId: id, season: Number(n) }).then(x => {
     if (!x.ok || !x.data) return;
     castByKey.set(key, x.data);
-    if (seasonId.value === sid) seasonCast.value = x.data;
+    if (seasonN.value === at) seasonCast.value = x.data;
   });
 });
 
@@ -595,25 +709,34 @@ const stillsAsked = new Set<string>();
 const stillsByKey = new Map<string, TmdbStills>();
 const stillsKey = (): string => {
   const id = String(work.value?.providers?.tmdb || '');
-  return tmdbSeason.value && seasonNumber.value != null && /^\d{1,8}$/.test(id)
-    ? `${seasonId.value}|${seasonNumber.value}|${id}`
-    : '';
+  return tmdbSeason.value && seasonNumber.value != null && /^\d{1,8}$/.test(id) ? `${seasonNumber.value}|${id}` : '';
 };
 watch(stillsKey, key => {
   if (!key) return;
   const hit = stillsByKey.get(key);
   if (hit) {
     stills.value = hit;
+    stillsSettled.value = true;
     return;
   }
   if (stillsAsked.has(key)) return;
   stillsAsked.add(key);
-  const [, n, id] = key.split('|');
-  const sid = seasonId.value;
+  const [n, id] = key.split('|');
+  const at = seasonN.value;
   void window.echoemby.meta.tmdbStills({ tmdbId: id, season: Number(n) }).then(x => {
-    if (!x.ok || !x.data) return;
+    if (!x.ok || !x.data) {
+      /* A question that failed is not an answer of no. Let the next visit ask it again, and say on screen
+         for the season open now that there is no list, since the band would otherwise stay empty with no
+         reason given for it. */
+      stillsAsked.delete(key);
+      if (seasonN.value === at) stillsSettled.value = true;
+      return;
+    }
     stillsByKey.set(key, x.data);
-    if (seasonId.value === sid) stills.value = x.data;
+    if (seasonN.value === at) {
+      stills.value = x.data;
+      stillsSettled.value = true;
+    }
   });
 });
 
@@ -630,12 +753,15 @@ const pack = computed(() => {
      *  short: 爱的迫降's first season is filed as 「全 1 季」, so the hero reads 「第 1 季 · 全 1 季」 and a
      *  tooltip that repeated it would read as a stumble. */
     tag: seasonNumber.value != null && seasonNumber.value > 0 ? `第 ${seasonNumber.value} 季` : label,
-    date: fmtDate(t?.airDate) || fmtDate(row?.premiereDate) || premiered.value,
+    /* This season's own date, from either side of the pair. The work-level premiere used to sit here as
+       the last fallback, and under a heading that names a season it prints the day the series started as
+       though that season aired then. */
+    date: fmtDate(t?.airDate) || fmtDate(row?.premiereDate),
     eps: row?.childCount ?? t?.epCount ?? 0,
     /* The season's length summed from the rows in hand, and only when those rows are this season's. The
        server's Series-level RunTimeTicks is neither this season's nor any episode's (measured: 64 分钟 for a
        season that runs 17 小时 18 分), so there is no cheaper number to put here while the fetch is out. */
-    runtime: episodeSeason.value === seasonId.value ? fmtRuntime(episodes.value.reduce((a, e) => a + (e.runTimeTicks || 0), 0)) : '',
+    runtime: episodeN.value === seasonN.value ? fmtRuntime(episodes.value.reduce((a, e) => a + (e.runTimeTicks || 0), 0)) : '',
     vote: t?.voteAverage || 0,
     overview: t?.ovZh || t?.ovOther || row?.overview || '',
   };
@@ -673,30 +799,73 @@ const seasonVoteUrl = computed(() => {
 
 const fav = computed(() => !!work.value?.userData?.isFavorite);
 
-async function loadEpisodes(sid: string, seriesId = props.id) {
-  seasonId.value = sid;
+async function loadSeason(n: number) {
+  if (!(n >= 0)) return;
+  seasonN.value = n;
   // Whatever belonged to the season being left goes before anything new is asked for: an old season's
   // stills would otherwise hang on the new season's episode numbers for the few hundred ms TMDB takes,
   // and its art would dress the new one. The episode row keeps its height, so the page does not jump.
   // The stills and the credits are repainted from the key this season is asked under rather than blanked:
   // clicking the season already on screen re-enters here, and the watches do not fire for a key they have
   // already seen, so a blind clear would drop this season's pictures for the rest of the visit.
-  stills.value = stillsByKey.get(stillsKey()) || {};
+  const hit = stillsByKey.get(stillsKey());
+  stills.value = hit || {};
+  stillsSettled.value = !!hit;
   seasonArt.value = '';
   seasonCast.value = castByKey.get(castKey()) || null;
-  if (!sid) return;
-  const row = seasonRow.value;
-  if (row?.primaryImageTag) {
-    void app.imageUrl({ id: row.id, primaryImageTag: row.primaryImageTag }, 300).then(u => {
-      if (seasonId.value === sid) seasonArt.value = u;
+  const at = seasonAt.value;
+  if (!at?.season) {
+    // This machine holds no row for the season just picked, so there is nothing to ask it for. The band
+    // below is built from TMDB's own list, and the cards it draws carry no file to open.
+    episodes.value = [];
+    episodeN.value = n;
+    return;
+  }
+  const seriesId = at.seriesId;
+  const sid = at.season.id;
+  if (at.season.primaryImageTag) {
+    void app.imageUrl({ id: sid, primaryImageTag: at.season.primaryImageTag }, 300).then(u => {
+      if (seasonN.value === n) seasonArt.value = u;
     });
   }
   const r = await embyCached('episodes', { seriesId, seasonId: sid }, () => window.echoemby.emby.episodes({ seriesId, seasonId: sid }));
-  if (r.ok && seasonId.value === sid) {
+  if (r.ok && seasonN.value === n) {
     episodes.value = r.data || [];
-    episodeSeason.value = sid;
+    episodeN.value = n;
   }
   if (isSeason.value) await loadSeries(seriesId);
+}
+
+/** The seasons this work's sibling Series rows hold.
+ *
+ *  Run beside the row on screen rather than before it: the picker can be drawn from one answer, and all this
+ *  sweep adds is the seasons that row does not have — and the label saying whether anything does. A work
+ *  filed as a single row (374 of this library's 386) pays one cached title query and no season query at all.
+ *
+ *  It is also the only thing that keeps that verdict honest. Measured: of 72 rows with a shortfall, 6 have
+ *  the missing season on a sibling row, and a list built from one row would print that label on files the
+ *  account really does hold. */
+async function askSiblings(series: LibraryItem): Promise<void> {
+  const page = props.id;
+  const tmdb = String(series.providers?.tmdb || '');
+  const kind = kindOf(series);
+  if (!kind || !/^\d{1,8}$/.test(tmdb)) {
+    seasonsAsked.value = true;
+    return;
+  }
+  const rows = await libraryWorks(kind, tmdb, series.name);
+  // `null` is a server that has not answered, not one that holds nothing: the list keeps its silence about
+  // seasons nobody has been asked for rather than label them absent.
+  if (props.id !== page || rows === null) return;
+  const groups = await Promise.all(
+    rows
+      .filter(x => x.id !== series.id)
+      .map(async row => ({ id: row.id, s: await embyCached('seasons', row.id, () => window.echoemby.emby.seasons(row.id)) })),
+  );
+  if (props.id !== page) return;
+  const extra = groups.flatMap(g => (g.s.ok ? g.s.data || [] : []).map(season => ({ seriesId: g.id, season })));
+  if (extra.length) serverSeasons.value = [...serverSeasons.value, ...extra];
+  seasonsAsked.value = groups.every(g => g.s.ok);
 }
 
 /** The series above a Season item. A season row carries no external id, so TMDB, the score sources and
@@ -723,20 +892,27 @@ async function loadSeries(seriesId: string): Promise<LibraryItem | null> {
 /** A chip reads the season's own subtitle when it has one (「第 1 季 · 立志篇」, 「第 4 季 · 最终季」) and
  *  nothing but the number when its name only repeats the position (「季 3」, 「Season 1」). TMDB's name for
  *  the same season is the second candidate, for the rows this server left plainly numbered. */
-const chipLabel = (s: LibraryItem): string => seasonTitle(s.indexNumber, s.name, trustRow(s.indexNumber, s.childCount)?.name);
+/** 「第 3 季 · 刀匠村篇」, and nothing else. The name comes off whichever side has one: TMDB bills 立志篇
+ *  for seasons this machine files by number alone, and it bills the ones nobody has at all. Whether this
+ *  server holds the season is not part of its name — that is the badge beside the picker's job, so the pill
+ *  reads the same width whichever season is picked and the work page's rows match these. */
+const seasonLabel = (s: ServerSeason): string => seasonTitle(s.n, s.season?.name, trustRow(s.n, s.season?.childCount)?.name);
 
 /* One button that pours the season list out of its bottom edge, on the picker's own vocabulary rather than a
    second dropdown drawn for this page. Its options stack one to a row: 「第 1 季」 and
    「第 1 季 · 追想篇」 have no cell wide enough for both, and a cloud of them wrapped into two columns
    whose right edges lined up with nothing. */
-const seasonOptions = computed(() => seasons.value.map(s => ({ value: s.id, label: chipLabel(s) })));
+const seasonOptions = computed(() => seasons.value.map(s => ({ value: String(s.n), label: seasonLabel(s) })));
 /** A Season page can name a season its parent's list did not answer with, and a picker that cannot match its
  *  value prints that value as the label. An unmatched season hands it the empty one instead. */
-const seasonPick = computed(() => (seasons.value.some(s => s.id === seasonId.value) ? seasonId.value : ''));
+const seasonPick = computed(() => (seasons.value.some(s => s.n === seasonN.value) ? String(seasonN.value) : ''));
 /** Re-picking the season already on screen is the picker's "unset" answer, not a request to load it again. */
 function pickSeason(v: string | string[]): void {
-  if (typeof v !== 'string' || !v) return;
-  void loadEpisodes(v, work.value?.id);
+  // The control answers with the empty string when the chip already on screen is pressed again, and
+  // `Number('')` is 0 — which is 第 0 季 here, not "nothing". Read the string before the number.
+  const n = typeof v === 'string' && v !== '' ? Number(v) : NaN;
+  if (!(n >= 0)) return;
+  void loadSeason(n);
 }
 
 /** Which title the once-per-title asks (the logo band and the backdrop strip) have been made
@@ -774,10 +950,12 @@ function paint(it: LibraryItem): void {
      outgoing hero is still on screen and reading it, and not never, because `seasonRow` looks its id up
      in the previous show's season list: measured, walking 咒术回战 → 007 left 「2023-07-06 · 59 集 ·
      24小时6分」 printed under a movie that has neither episodes nor seasons. */
-  seasons.value = [];
-  seasonId.value = '';
+  serverSeasons.value = [];
+  seasonsAsked.value = false;
+  seasonN.value = -1;
   episodes.value = [];
-  episodeSeason.value = '';
+  episodeN.value = -1;
+  stillsSettled.value = false;
   focusedOn = '';
   stills.value = {};
   seasonArt.value = '';
@@ -807,7 +985,8 @@ async function loadChildren(it: LibraryItem): Promise<void> {
   if (it.type === 'Series') {
     const s = await embyCached('seasons', it.id, () => window.echoemby.emby.seasons(it.id));
     if (props.id !== it.id) return;
-    seasons.value = s.ok ? s.data || [] : [];
+    serverSeasons.value = (s.ok ? s.data || [] : []).map(season => ({ seriesId: it.id, season }));
+    void askSiblings(it);
     /* Open on the season the viewer stopped in, not on whichever row the server listed first: 爱情公寓 was left
        at 第 2 季 第 3 集 while the page showed 第 1 季's cards, so the episode they meant to press sat behind a
        tab. Read off the 在看 rows the lobby already pulled — measured: 200/200 of the resumable episode rows
@@ -815,11 +994,11 @@ async function loadChildren(it: LibraryItem): Promise<void> {
        to the first season with episodes, exactly as before. */
     const stop = resumeTarget(it, resumeRow.value)?.item;
     const home =
-      (stop && seasons.value.find(x => x.id === stop.seasonId)) ||
-      (stop && stop.parentIndexNumber != null && seasons.value.find(x => x.indexNumber === stop.parentIndexNumber)) ||
+      (stop && serverSeasons.value.find(x => x.season.id === stop.seasonId)) ||
+      (stop && stop.parentIndexNumber != null && serverSeasons.value.find(x => x.season.indexNumber === stop.parentIndexNumber)) ||
       undefined;
-    const first = home?.childCount ? home : seasons.value.find(x => x.childCount) || seasons.value[0];
-    if (first) await loadEpisodes(first.id, it.id);
+    const first = home?.season.childCount ? home : serverSeasons.value.find(x => x.season.childCount) || serverSeasons.value[0];
+    if (first) await loadSeason(first.season.indexNumber ?? 0);
   } else if (it.type === 'Season') {
     /* A page opened on one season is still a page about a series: its scores, its logo and its season
        tabs all belong one level up, and the switcher cannot be drawn from a list nobody asked for. */
@@ -828,9 +1007,12 @@ async function loadChildren(it: LibraryItem): Promise<void> {
     if (series) {
       askWork(series);
       const s = await embyCached('seasons', series.id, () => window.echoemby.emby.seasons(series.id));
-      if (props.id === it.id) seasons.value = s.ok ? s.data || [] : [];
+      if (props.id === it.id) {
+        serverSeasons.value = (s.ok ? s.data || [] : []).map(season => ({ seriesId: series.id, season }));
+        void askSiblings(series);
+      }
     }
-    await loadEpisodes(it.id, it.parentId || '');
+    await loadSeason(it.indexNumber ?? 0);
   }
 }
 
@@ -853,7 +1035,11 @@ watch(
       item.value = null;
       heroPoster.value = '';
       heroBackdrop.value = '';
-      seasons.value = [];
+      serverSeasons.value = [];
+      seasonsAsked.value = false;
+      seasonN.value = -1;
+      episodeN.value = -1;
+      stillsSettled.value = false;
       episodes.value = [];
       loaded = '';
       // The row the card was drawn from is already this title, so the hero paints from it instead of
@@ -954,7 +1140,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
               <p class="overview">{{ overviewText || '暂无简介。' }}</p>
             </div>
             <div class="actions">
-              <HeroPlay v-if="pagePlays" :target="resume" :busy="player.busy" @play="play()" />
+              <HeroPlay v-if="pagePlays" :target="resume" :busy="player.busy" :server="serverName" :none="noResource" @play="play()" />
               <button class="iconb" :class="{ on: fav }" :disabled="favBusy" :title="fav ? '已收藏' : '收藏'" @click="toggleFav">
                 <svg viewBox="0 0 24 24" width="20" height="20"><path :d="fav ? 'M12 21l-1.5-1.3C5.4 15 2 11.9 2 8.2 2 5.4 4.2 3.2 7 3.2c1.6 0 3.1.7 4 1.9.9-1.2 2.4-1.9 4-1.9 2.8 0 5 2.2 5 5 0 3.7-3.4 6.8-8.5 11.5L12 21z' : 'M12 21l-1.5-1.3C5.4 15 2 11.9 2 8.2 2 5.4 4.2 3.2 7 3.2c1.6 0 3.1.7 4 1.9.9-1.2 2.4-1.9 4-1.9 2.8 0 5 2.2 5 5 0 3.7-3.4 6.8-8.5 11.5L12 21zM7 5.2c-1.7 0-3 1.3-3 3 0 3 3 5.9 8 10.2 5-4.3 8-7.2 8-10.2 0-1.7-1.3-3-3-3-1.3 0-2.5.8-3 2h-4c-.5-1.2-1.7-2-3-2z'" fill="currentColor" /></svg>
               </button>
@@ -977,7 +1163,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
 
     <template v-else-if="item">
       <div class="flow sw" :class="{ on: swap }">
-        <HScroller v-if="episodes.length" ref="epiBand" class="block epi-row">
+        <HScroller v-if="band.length || noBand" ref="epiBand" class="block epi-row" :class="{ solo: noBand }">
           <template #header>
             <div class="ep-head">
               <FilterSelect
@@ -992,7 +1178,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
               />
               <h2 v-else>{{ pack?.label || item.name }}</h2>
               <span v-if="seasonVote" class="qline">
-                <span class="qn">本季</span>
+                <span class="qn">本季评分</span>
                 <a
                   class="qv"
                   :href="seasonVoteUrl || undefined"
@@ -1001,32 +1187,30 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
                   :title="`TMDB ${pack?.tag} 评分`"
                 >TMDB <i>{{ seasonVote.toFixed(1) }}</i></a>
               </span>
-              <button
-                v-if="partialSeasons"
-                type="button"
-                class="part"
-                title="这台服务器把这个作品拆成了几条，点这里看它全部的季"
-                @click="openWork"
-              >本机 <i>{{ serverSeasonCount }}</i> 季 · TMDB 全 <i>{{ tmdbSeasonCount }}</i> 季</button>
+              <span v-if="seasonAbsent" class="qline qmiss">{{ serverName }} 服务器没有资源</span>
             </div>
           </template>
-          <button v-for="e in episodes" :key="e.id" class="epi" @click="play(e.id, false)">
+          <button v-for="r in band" :key="r.key" class="epi" :class="{ off: !r.id }" :disabled="!r.id" @click="play(r.id, false)">
             <div class="ethumb">
-              <img v-reveal v-if="epArt[e.id] || stillUrl(e.indexNumber)" :src="epArt[e.id] || stillUrl(e.indexNumber)" alt="" loading="lazy" decoding="async" />
-              <span v-else class="ph">{{ (e.name || '?').slice(0, 1) }}</span>
+              <img v-reveal v-if="r.art" :src="r.art" alt="" loading="lazy" decoding="async" />
+              <span v-else class="ph">{{ r.ph }}</span>
               <span class="disc" role="presentation"><svg viewBox="0 0 24 24" width="18" height="18"><path d="M8 5l12 7-12 7z" fill="currentColor" /></svg></span>
-              <span v-if="epSeen(e)" class="echip">{{ epSeen(e) }}</span>
-              <div v-if="epPlayed(e) > 0" class="eprog"><i :style="{ width: epPlayed(e) + '%' }"></i></div>
+              <span v-if="r.seen" class="echip">{{ r.seen }}</span>
+              <div v-if="r.played > 0" class="eprog"><i :style="{ width: r.played + '%' }"></i></div>
             </div>
             <div class="einfo">
-              <p class="etitle">{{ epTitle(e) }}</p>
-              <p class="emeta">
-                <span v-if="e.premiereDate">{{ fmtDate(e.premiereDate) }}</span>
-                <span>{{ fmtRuntime(e.runTimeTicks) }}</span>
+              <p class="etitle">{{ r.title }}</p>
+              <p v-if="r.date || r.len" class="emeta">
+                <span v-if="r.date">{{ r.date }}</span>
+                <span>{{ r.len }}</span>
               </p>
-              <p v-if="epOverview(e)" class="eov">{{ epOverview(e) }}</p>
+              <p v-if="r.ov" class="eov">{{ r.ov }}</p>
             </div>
           </button>
+          <!-- The season line above already says 「{服务器} 服务器没有资源」 for every season the server
+               holds nothing for, so this one only speaks for the case that sentence does not cover: a row
+               that promises episodes and then answers with none. -->
+          <p v-if="noBand && !seasonAbsent" class="noband">这台服务器在这一季没有文件，分集也列不出来。</p>
         </HScroller>
         <BlockPh v-else-if="wantRail" kind="rail" />
 
@@ -1385,6 +1569,12 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
   color: var(--text-dim);
   font-weight: 550;
 }
+/* The season's verdict sits in the same row, at the same weight and colour as the season's own mark: it is
+   the same kind of statement about the same season, and it is word for word what the work page prints. */
+.qmiss {
+  color: var(--text-dim);
+  font-weight: 550;
+}
 .qv {
   color: var(--text-dim);
   font-weight: 550;
@@ -1405,6 +1595,9 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
   width: 280px;
   display: flex;
   flex-direction: column;
+  /* A button's UA sheet asks for flex-start, which lets the title's own width set the column's, so a long
+     特别篇 name paints over its neighbour. The work page's copy of this card already says stretch. */
+  align-items: stretch;
   text-align: left;
   padding: 0;
   background: none;
@@ -1547,12 +1740,17 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
 .still:active { transform: scale(0.982); }
 .stillimg { display: block; width: 320px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: var(--radius); border: 1px solid var(--line); box-shadow: var(--shadow-sm); }
 
-/* The split work's own line. It keeps the season row's dim weight and brightens only its two numbers,
-   so it reads as the same kind of mark as 本季 TMDB 8.4 beside it. Both figures name their own subject:
-   one is what this server holds, the other what the work has. */
-.part { padding: 0; font-size: 13px; font-weight: 550; color: var(--text-dim); white-space: nowrap; transition: opacity var(--hov) var(--ease); }
-.part:hover { opacity: 0.82; }
-.part i { font-style: normal; color: var(--text); font-weight: 700; }
+/* Neither side has anything for the season on screen: no files here, and no list from TMDB yet either.
+   Printed where the band would have been, because a blank stretch of the page reads as a load that failed. */
+.noband { font-size: 13px; color: var(--text-faint); }
+/* The band's floor exists so the blocks under it never jump when the cards land. With no cards there is
+   nothing to floor, and 370px of nothing under one line reads as a load that failed. */
+.epi-row.solo { min-height: 0; }
+.epi-row .noband { align-self: center; max-width: 62ch; }
+/* A card for an episode this machine has no file for is the same plate with the same text and nothing to
+   press. Only the triangle comes off, since it is the one mark on the card that promises a file. */
+.epi.off { cursor: default; }
+.epi.off .disc { display: none; }
 
 .err { color: var(--danger); }
 .banner { margin: 0 0 12px; padding: 0 44px; }
