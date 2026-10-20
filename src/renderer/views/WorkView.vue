@@ -12,7 +12,7 @@ import logoTmdb from '../assets/logos/tmdb.svg';
 import { libraryWorks, useRelated, type WorkKind, type WorkSeed } from '../lib/related';
 import { embyCached } from '../lib/embycache';
 import { beginPlay, workSeedFor } from '../lib/handoff';
-import { episodeHead, fmtDate, fmtRuntime, seenLabel, seasonTitle } from '../lib/format';
+import { accountName, episodeHead, fmtDate, fmtRuntime, seenLabel, seasonTitle } from '../lib/format';
 import { useAppStore } from '../stores/app';
 import { vReveal } from '../lib/reveal';
 
@@ -38,22 +38,33 @@ const idKey = computed(() => (kind.value && /^\d{1,8}$/.test(props.tmdbId) ? `${
 /** The card this page was opened from: its frame and the two lines it printed. A cold TMDB ask is a round
  *  trip the reader should not sit through with nothing on screen. */
 const seed = computed(() => workSeedFor(idKey.value));
+/** The row this account holds for the work, when the card it was clicked from was one of the server's own.
+ *  TMDB's entry is what this page is built out of, and when TMDB does not answer there is no work page — but
+ *  there can still be a page: the row knows the title, the year, its own art and the file one click away. */
+const seedRow = computed(() => seed.value?.row || null);
+/** Whether the hero may be drawn from the server's record instead of TMDB's. Only ever true alongside an
+ *  `error`, and only for a work this account really holds — a hand-typed link to a title nobody has is not
+ *  made true by a row that happens to share its name. */
+const fallback = computed(() => !meta.value && !!seedRow.value);
 
 const meta = ref<TmdbMeta | null>(null);
 const error = ref('');
 /** Every Series row this account files the work under. A TMDB id is one work; a server can hold it as
- *  several rows — 81 of this library's shows are — and picking only the fullest one would say 「这台没有」
- *  about seasons the other row does carry. */
+ *  several rows — 81 of this library's shows are — and picking only the fullest one would say 「服务器没有
+ *  资源」 about seasons the other row does carry. */
 const libRows = ref<LibraryItem[]>([]);
 /** Whether the server has answered for this work. Distinct from an empty `libRows`: an unanswered question
  *  is not an absence, and only one of them is a promise about whether the CTA is coming. */
 const libAsked = ref(false);
 const libItem = computed(() => libRows.value[0] || null);
+/** Which machine 「可播」 sits on. Once two servers are configured 「本机」 stops meaning anything, so the
+ *  CTA names the account whose files it opens instead. */
+const serverName = computed(() => (app.account ? accountName(app.account) : ''));
 /** Seasons across all of those rows, each still knowing which row it came from: the episodes below it can
  *  only be asked for through that row. */
 const serverSeasons = ref<{ row: LibraryItem; season: LibraryItem }[]>([]);
 /** Whether every row this account holds for the work has answered about its seasons. Until then the page
- *  cannot tell 「本机有」 from 「这台还没答」, and the two are not the same sentence. */
+ *  cannot tell 「没有资源」 from 「这台还没答」, and the two are not the same sentence. */
 const seasonsAsked = ref(false);
 const serverEps = ref<LibraryItem[]>([]);
 /** Whether the band on screen has its answer — TMDB's episode list, or this season's files. An empty band
@@ -78,7 +89,10 @@ const faceUrl = (p: string): string => `https://image.tmdb.org/t/p/w185${p}`;
 
 const name = computed(() => meta.value?.name || seed.value?.name || '');
 const year = computed(() => meta.value?.year || Number(seed.value?.year) || 0);
-const plateSrc = computed(() => seed.value?.url || posterUrl(meta.value?.poster));
+/** The row's own poster, asked for only by the path that needs it: a page running on the server's record
+ *  should carry the server's picture rather than an empty frame. */
+const rowArt = ref('');
+const plateSrc = computed(() => seed.value?.url || rowArt.value || posterUrl(meta.value?.poster));
 const heroBackdrop = computed(() => (backdrops.value.length ? backdropUrl(backdrops.value[0]) : plateSrc.value));
 const tmdbUrl = computed(() => (idKey.value ? `https://www.themoviedb.org/${kind.value}/${props.tmdbId}` : ''));
 
@@ -99,7 +113,22 @@ function pickSeason(v: string | string[]): void {
 
 const metaLine = computed(() => {
   const m = meta.value;
-  if (!m) return '';
+  if (!m) {
+    // The row's own caption, and only the counts the server actually claims: TMDB's season table is the
+    // very thing that did not arrive, so a 季 number here has to come from the row that is on screen.
+    const r = seedRow.value;
+    if (!r) return '';
+    // A Series row comes without ProductionYear (measured: absent on 碧蓝之海) while its own premiere date
+    // is there, so the year is taken from whichever of the two the row carries.
+    const y = String(r.productionYear || '') || (r.premiereDate || '').slice(0, 4);
+    return [
+      y,
+      r.type === 'Series' && r.childCount ? `${r.childCount} 季` : '',
+      r.type === 'Movie' && r.runTimeTicks ? fmtRuntime(r.runTimeTicks) : '',
+    ]
+      .filter(Boolean)
+      .join(' · ');
+  }
   return [
     String(year.value || ''),
     kind.value === 'tv' ? (numbered.value.length ? `${numbered.value.length} 季` : '') : m.runtime ? `${m.runtime} 分钟` : '',
@@ -109,7 +138,7 @@ const metaLine = computed(() => {
     .join(' · ');
 });
 
-const overviewText = computed(() => meta.value?.overviewZh || meta.value?.overviewOther || '');
+const overviewText = computed(() => meta.value?.overviewZh || meta.value?.overviewOther || (fallback.value ? seedRow.value?.overview || '' : ''));
 const crew = computed(() => {
   const src = kind.value === 'tv' ? seasonCast.value : meta.value?.cast || null;
   const rows: { id: string; name: string; sub: string; face: string }[] = [];
@@ -139,8 +168,13 @@ const serverRow = computed(() => {
 });
 
 /** Whether the season line may state a verdict at all: the work's rows and every one of their season lists
- *  have answered. Before that the line would print 「这台没有」 about seasons nobody has been asked for. */
+ *  have answered. Before that the line would print its verdict about seasons nobody has been asked for. */
 const seasonsSettled = computed(() => libAsked.value && seasonsAsked.value);
+
+/** The season on screen is one this server holds nothing for — no row carries the number, or the row that
+ *  does says it has no episodes. The same test the detail page's hero plate and its badge are read off,
+ *  and the same sentence in both: the picker's rows stay plain so a season switch cannot widen the pill. */
+const seasonAbsent = computed(() => seasonsSettled.value && (!serverRow.value || serverRow.value.season.childCount === 0));
 
 interface EpView {
   key: string;
@@ -273,7 +307,20 @@ async function loadWork(): Promise<void> {
   const r = await window.echoemby.meta.tmdb({ kind: k, tmdbId: props.tmdbId });
   if (mine !== run) return;
   if (!r.ok || !r.data) {
-    error.value = r.error ? `TMDB 没有答上（${r.error}）` : 'TMDB 没有这一部';
+    // The main process already words a transport failure as 「TMDB 没有答上（…）」, so wrapping it here twice
+    // is the only thing that would need saying about it.
+    error.value = r.error || 'TMDB 没有这一部';
+    // One red line on an empty page is a dead end the reader cannot leave, and on the way in from one of
+    // this account's own rows there is no need for one: the row knows the title, the year, its art and the
+    // file. What stays missing is TMDB's own half — its seasons, its credits, its similar list — and the
+    // hero says so beside the button rather than pretending the page is finished.
+    const row = seedRow.value;
+    if (row) {
+      libRows.value = [row];
+      libAsked.value = true;
+      if (row.primaryImageTag) void app.imageUrl({ id: row.id, primaryImageTag: row.primaryImageTag }, 300).then(u => (rowArt.value = u));
+      void askSeasons([row], mine);
+    }
     return;
   }
   meta.value = r.data;
@@ -291,22 +338,29 @@ async function loadWork(): Promise<void> {
     if (!rows) return;
     libRows.value = rows;
     libAsked.value = true;
-    const series = rows.filter(x => x.type === 'Series');
-    if (!series.length) {
-      seasonsAsked.value = true;
-      return;
-    }
-    const groups = await Promise.all(
-      series.map(async row => ({ row, s: await embyCached('seasons', row.id, () => window.echoemby.emby.seasons(row.id)) })),
-    );
-    if (mine !== run) return;
-    seasonsAsked.value = groups.every(g => g.s.ok);
-    const before = serverRow.value;
-    serverSeasons.value = groups.flatMap(g => (g.s.ok ? g.s.data || [] : []).map(season => ({ row: g.row, season })));
-    // Re-run only where the season on screen changed hands. The stills are already on screen and a second
-    // load blanks them first, so a season that had an answer and kept it does not get asked again.
-    if (serverRow.value !== before) void loadSeason();
+    void askSeasons(rows, mine);
   });
+}
+
+/** The seasons of every Series row this account holds for the work, and the episodes of the one on screen.
+ *  Both paths into the page ask through here: the answered one, over all of the rows a TMDB title matches,
+ *  and the fallback, over the single row the click came from. */
+async function askSeasons(rows: LibraryItem[], mine: number): Promise<void> {
+  const series = rows.filter(x => x.type === 'Series');
+  if (!series.length) {
+    seasonsAsked.value = true;
+    return;
+  }
+  const groups = await Promise.all(
+    series.map(async row => ({ row, s: await embyCached('seasons', row.id, () => window.echoemby.emby.seasons(row.id)) })),
+  );
+  if (mine !== run) return;
+  seasonsAsked.value = groups.every(g => g.s.ok);
+  const before = serverRow.value;
+  serverSeasons.value = groups.flatMap(g => (g.s.ok ? g.s.data || [] : []).map(season => ({ row: g.row, season })));
+  // Re-run only where the season on screen changed hands. The stills are already on screen and a second
+  // load blanks them first, so a season that had an answer and kept it does not get asked again.
+  if (serverRow.value !== before) void loadSeason();
 }
 
 watch(idKey, loadWork, { immediate: true });
@@ -329,7 +383,7 @@ function open(to: string, autoplay = false): void {
     <button class="back" @click="router.back()">←</button>
     <Transition name="hero-swap">
       <HeroSkeleton v-if="!meta && !error" :poster="plateSrc" />
-      <section v-else-if="meta" class="hero">
+      <section v-else-if="meta || fallback" class="hero">
         <div class="stage" :style="{ transform: `translate3d(0, ${Math.round(scroll * 0.28)}px, 0)` }">
           <img v-if="heroBackdrop" :src="heroBackdrop" alt="" decoding="async" />
         </div>
@@ -346,7 +400,7 @@ function open(to: string, autoplay = false): void {
               <TitleArt :urls="logos" :name="name" />
               <div class="line">{{ metaLine }}</div>
               <ScoreStrip v-if="libItem" :item="libItem" class="badges" />
-              <div v-else class="badges">
+              <div v-else-if="meta" class="badges">
                 <span v-if="meta.voteAverage" class="mk" :title="`TMDB ${name} 评分`">
                   <img :src="logoTmdb" alt="" /><i>{{ meta.voteAverage.toFixed(1) }}</i>
                 </span>
@@ -355,9 +409,11 @@ function open(to: string, autoplay = false): void {
               <p class="overview">{{ overviewText || '暂无简介。' }}</p>
             </div>
             <div class="actions">
-              <button v-if="libItem" type="button" class="cta" @click="open(`/detail/${libItem.id}`)">本机可播</button>
-              <span v-else-if="libAsked" class="none">这台服务器上没有</span>
-              <a v-if="tmdbUrl" class="ext" :href="tmdbUrl" target="_blank" rel="noreferrer" title="TMDB 上这一部的页面">
+              <button v-if="libItem" type="button" class="cta" @click="open(`/detail/${libItem.id}`)">
+                在&nbsp;<span class="nm">{{ serverName }}</span>&nbsp;播放
+              </button>
+              <span v-else-if="libAsked" class="none">当前服务器无资源</span>
+              <a v-if="tmdbUrl && !fallback" class="ext" :href="tmdbUrl" target="_blank" rel="noreferrer" title="TMDB 上这一部的页面">
                 <img :src="logoTmdb" alt="TMDB" />
               </a>
             </div>
@@ -366,7 +422,8 @@ function open(to: string, autoplay = false): void {
       </section>
     </Transition>
 
-    <p v-if="error" class="err pad">{{ error }}</p>
+    <p v-if="error && !fallback" class="err pad">{{ error }}</p>
+    <p v-else-if="fallback" class="miss">{{ error }}，这一页用的是服务器上的这条记录；TMDB 的分季、演职员与相似作品没有。</p>
 
     <div v-else-if="meta" class="flow">
       <HScroller v-if="seasons.length" class="block epi-row">
@@ -383,10 +440,9 @@ function open(to: string, autoplay = false): void {
               @update:model-value="pickSeason"
             />
             <h2 v-else>{{ seasonTitle(season?.n, season?.name) }}</h2>
-            <span v-if="seasonsSettled" class="qline">
-              <span class="qn">{{ serverRow ? '本机有' : '这台没有' }}</span>
+            <span v-if="season?.voteAverage" class="qline">
+              <span class="qn">本季评分</span>
               <a
-                v-if="season?.voteAverage"
                 class="qv"
                 :href="`https://www.themoviedb.org/tv/${props.tmdbId}/season/${season.n}`"
                 target="_blank"
@@ -395,11 +451,12 @@ function open(to: string, autoplay = false): void {
                 >TMDB <i>{{ season.voteAverage.toFixed(1) }}</i></a
               >
             </span>
+            <span v-if="seasonAbsent" class="qline qmiss">{{ serverName }} 服务器没有资源</span>
           </div>
         </template>
-        <p v-if="!eps.length && bandAsked" class="qempty">
-          {{ serverRow ? '这台服务器在这一季没有文件。' : 'TMDB 还没有这一季的分集。' }}
-        </p>
+        <!-- The other empty band — the server holds the season and says it has no files — is already said
+             by the line above, in the same words it uses everywhere else. -->
+        <p v-if="!eps.length && bandAsked && !serverRow" class="qempty">TMDB 还没有这一季的分集。</p>
         <component
           v-for="e in eps"
           :is="e.to ? 'button' : 'div'"
@@ -487,6 +544,15 @@ function open(to: string, autoplay = false): void {
 }
 .pad {
   padding: calc(var(--titlebar-h) + 40px) 44px 0 calc(var(--nav-w) + 44px);
+}
+/* Sits where a rail would, under a hero built from the server's record: the page is usable, and the line
+   says which half of it is missing rather than leaving the reader to find the empty space. */
+.miss {
+  margin: 18px 0 0;
+  padding: 0 var(--side) 0 var(--nav-w);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-dim);
 }
 
 .hero {
@@ -619,6 +685,8 @@ function open(to: string, autoplay = false): void {
   min-height: 44px;
 }
 .cta {
+  display: inline-flex;
+  align-items: center;
   height: 44px;
   padding: 0 22px;
   border-radius: 999px;
@@ -626,7 +694,17 @@ function open(to: string, autoplay = false): void {
   font-weight: 700;
   color: #10131c;
   background: #fff;
+  white-space: nowrap;
   transition: transform var(--hov) var(--ease-out), opacity var(--hov) var(--ease);
+}
+/* A server name is whatever the account was labelled — a host, a person's word for the machine. The two
+   words around it stay, so the name is what gives when it does not fit. */
+.cta .nm {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 9em;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .cta:hover {
   transform: translateY(-1px);
@@ -711,6 +789,12 @@ h2 {
   white-space: nowrap;
 }
 .qn {
+  color: var(--text-dim);
+  font-weight: 550;
+}
+/* The season's verdict sits in the same row, at the same weight and colour as the season's own mark: it is
+   the same kind of statement about the same season, and it is word for word what the detail page prints. */
+.qmiss {
   color: var(--text-dim);
   font-weight: 550;
 }
