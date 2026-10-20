@@ -8,6 +8,7 @@ import BlockPh from '../components/detail/BlockPh.vue';
 import RelatedStrip from '../components/detail/RelatedStrip.vue';
 import ScoreStrip from '../components/ScoreStrip.vue';
 import HeroPlay from '../components/HeroPlay.vue';
+import LoopTitle from '../components/LoopTitle.vue';
 import TitleArt from '../components/TitleArt.vue';
 import HeroSkeleton from '../components/HeroSkeleton.vue';
 import { tmdbKind as kindOf, trustSeason, useScores } from '../lib/scores';
@@ -1204,7 +1205,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
               <div v-if="r.played > 0" class="eprog"><i :style="{ width: r.played + '%' }"></i></div>
             </div>
             <div class="einfo">
-              <p class="etitle">{{ r.title }}</p>
+              <LoopTitle class="etitle" :text="r.title" />
               <p v-if="r.date || r.len" class="emeta">
                 <span v-if="r.date">{{ r.date }}</span>
                 <span>{{ r.len }}</span>
