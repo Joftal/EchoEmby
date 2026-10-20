@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue';
 import type { LibraryItem } from '../../../shared/types';
-import { fmtDate, fmtElapsed, ticksToMs } from '../../lib/format';
+import { accountName, fmtDate, fmtElapsed, ticksToMs } from '../../lib/format';
 import { genreLabels } from '../../lib/genres';
 import { PLAYABLE, resumeTarget } from '../../lib/resume';
 import { useScores } from '../../lib/scores';
@@ -52,6 +52,9 @@ const overview = computed(() => {
   return t?.overviewZh || t?.overviewOther || current.value?.overview || '';
 });
 const playable = computed(() => PLAYABLE.includes(current.value?.type || ''));
+/** Whose shelf this slide came off. The lobby shows one account's shelves, so every slide on screen shares
+ *  the answer, and it is the same sentence the detail page's copy of the button prints. */
+const serverName = computed(() => (store.account ? accountName(store.account) : ''));
 /** The slide's own button reads the lobby's 继续观看 rows as its candidates: a Series card has no progress
  *  of its own, and the episode it stopped on is already in the store. Null is not "no button" — it is "no
  *  row in hand", and the click then goes through the title's page to reach its first episode. */
@@ -246,7 +249,7 @@ watch(
              shelves are all shows (measured: nyamedia, 5 of 5 slides) read as "this server cannot be
              played" while its own detail page offered 播放 one click later. A slide that holds no row in
              hand still has something to play; the page it opens resolves which episode. -->
-        <HeroPlay :target="target" :busy="player.busy" @play="playSlide" />
+        <HeroPlay :target="target" :busy="player.busy" :server="serverName" @play="playSlide" />
         <button class="ghost" @click="openDetail">
           <svg viewBox="0 0 24 24" width="15" height="15"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8" /><path d="M12 11v6M12 7.6v.9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" /></svg>
           {{ playable ? '详情' : '查看' }}
