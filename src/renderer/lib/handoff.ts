@@ -67,17 +67,13 @@ interface WorkSeedRow {
   url: string;
   name: string;
   year: string;
-  /** The row this account holds for the work, when the card it was clicked from was one. TMDB's answer is
-   *  what the page is built out of, but a page opened from a row can keep its title, its art and its 播放
-   *  on that row alone — which is the difference between a slow answer and a dead end. */
-  row: LibraryItem | null;
 }
 let workSeedKey = '';
 let workSeed: WorkSeedRow | null = null;
 
-export function beginWork(img: HTMLImageElement | null | undefined, key: string, name: string, year: string, row: LibraryItem | null = null): void {
+export function beginWork(img: HTMLImageElement | null | undefined, key: string, name: string, year: string): void {
   workSeedKey = key;
-  workSeed = { url: img ? img.currentSrc || img.src : '', name, year, row };
+  workSeed = { url: img ? img.currentSrc || img.src : '', name, year };
 }
 
 /** What the card this work page was opened from printed. Null when the page was not opened from a card. */
