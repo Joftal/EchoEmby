@@ -6,15 +6,27 @@ import { useAppStore } from '../stores/app';
 
 /** The band under a work: 「相似作品」, twelve cards, every one of them a page you can open.
  *
- *  TMDB's `/similar` list is the part that knows what actually resembles this title, but it answers with
- *  outside ids and this app's pages are keyed by the server's, so the list used to end there: a read-only
- *  strip of posters you could look at and not press. Resolving each row back into the library is what turns
- *  it into navigation, and the resolution is a title search with an id check, measured at 334 ms for twelve
- *  of them side by side on 模范出租车 (20/20 of the sampled titles that the library holds are found by their
- *  TMDB name, and 20/20 of the ones it does not come back as no rows rather than as a near miss).
+ *  TMDB's two look-alike lists are the part that knows what resembles this title — `/similar`, what is like
+ *  it, and `/recommendations`, what viewers of it went on to watch. Measured over 18 sampled bands the two
+ *  share not one title in their first twelve, and on the account that holds most of this library they carry
+ *  34 and 67 playable rows against a merged 101, so the band is built out of both. They answer with outside
+ *  ids and this app's pages are keyed by the server's, so each row is resolved back into the library: a
+ *  title search with an id check, one ask per row. The merged list hands it up to twenty-four rows and
+ *  measured three runs of two bands on the account that holds most of this library, that fan-out takes
+ *  1.2 to 3.6 seconds: more than the window below, which is why the window is a deadline and not a fit,
+ *  and why the rows that answer after the paint are written into cards already on screen.
+ *
+ *  That search is the one thing between a good list and a shelf you can press, and it fails on a spelling,
+ *  not on a shelf: the library files 明日ちゃんのセーラー服 as 「明日同学的水手服」 while TMDB's Chinese row
+ *  reads 「明日酱的水手服」, and the search answers no rows for a title the account holds. Hence the second
+ *  ask, in the work's own language, on the row's `originalTitle`.
  *
  *  A row the library has no answer for is not a dead end either: it opens the work page, which TMDB's own
- *  entry can dress completely — seasons, episodes, credits, art — and only leaves out the file. */
+ *  entry can dress completely — seasons, episodes, credits, art — and only leaves out the file.
+ *
+ *  Where TMDB's list leaves slots empty the library's own same-genre rows fill them, up to half the shelf —
+ *  see `POOL_CAP`, which exists because uncapped the fill took four fifths of it and the band stopped being
+ *  about resemblance. */
 
 export type WorkKind = 'movie' | 'tv';
 
@@ -23,7 +35,8 @@ export type WorkKind = 'movie' | 'tv';
 export interface WorkSeed {
   kind: WorkKind;
   tmdbId: string;
-  /** Only used as the fill pool's fallback spelling; the cards themselves come from TMDB's list. */
+  /** The work's own genres, which is what the pool asks the library with. Absent on a work page whose TMDB
+   *  entry has not answered yet, and then the band has no pool to fall back on. */
   genres?: string[];
 }
 
@@ -63,18 +76,42 @@ export interface RelatedCard {
 }
 
 const CAP = 12;
+/** How many of the twelve slots the genre pool may take. Measured on the live route over eleven detail
+ *  pages, twice, with the pool uncapped: the fill took 107 and 94 of the 132 seats, because TMDB's merged
+ *  list resolves to only a couple of playable rows a band on this account — so a shelf titled 「相似作品」
+ *  was four fifths 「这片库里同类型的高分」. Six keeps the look-alikes at least half of their own shelf,
+ *  and the rows this server does not hold go in after them rather than being cut, so an unreachable title
+ *  still reads as a recommendation instead of vanishing. The pool takes all twelve only when TMDB's two
+ *  lists answer with nothing at all, and such a band says 「同类高分」 because that is what it is. */
+const POOL_CAP = 6;
 const KIND_PARAM = (kind: WorkKind) => (kind === 'movie' ? 'Movie' : 'Series');
 /** A 150 CSS px card on this machine's DPR 1.25 screen is 188 device px; w342 is TMDB's step above it and
  *  the one every other poster in the app is asked at. */
 const TMDB_POSTER = 'https://image.tmdb.org/t/p/w342';
 
-/** Where TMDB's number stops being one reader's opinion and becomes the title's standing. Measured over
- *  twelve sampled bands: every band's genuinely-watched rows carry hundreds of ratings (模范出租车 leads
- *  with 3,139) and the noise under them is single digits (1, 2, 5), so the cut sits between the two
- *  rather than on a number of its own. A row under it is not disqualified - it keeps the place TMDB's
- *  similarity order gave it. */
-const RANK_MIN_VOTES = 10;
-const rankKey = (c: RelatedCard): number => (c.votes >= RANK_MIN_VOTES ? c.vote : 0);
+/** A title as the band compares titles: run together, lower-cased. The library and TMDB split the same name
+ *  with spaces in different places, and a pool row that repeats a card already on the shelf should read as
+ *  one work rather than as a duplicated poster. */
+const titleKey = (s: string): string => s.replace(/\s+/g, '').toLowerCase();
+
+/** Where a TMDB number stops being one reader's opinion and becomes the title's standing.
+ *
+ *  A number is pulled towards the middle by how thin its sample is — ten ratings' worth of "average title"
+ *  counted in beside whatever the row actually scored — because the alternative was a floor: rows under ten
+ *  ratings were given zero and sent to the bottom in TMDB's own order. Measured over the merged list, 83.1%
+ *  of rows clear ten ratings and the rest sit in single digits, and seven whole bands (concert recordings:
+ *  明日方舟 2024/2022, ZARD ×2, 蔡依林 J1, 《我爱南京》, Makihara) had no row over the floor at all, which made
+ *  the ranking a no-op. A thin sample now costs a row its confidence instead of its place in line.
+ *
+ *  The card still prints TMDB's own figure — the shrinking orders the shelf, it does not invent a number
+ *  for it. A row with no figure at all cannot be pulled anywhere, so it keeps the bottom and TMDB's order. */
+const RANK_PRIOR = 6.5;
+const RANK_MIX = 10;
+const rankKey = (c: RelatedCard): number => {
+  if (!c.vote) return -1;
+  const v = Math.max(0, c.votes || 0);
+  return (v * c.vote + RANK_MIX * RANK_PRIOR) / (v + RANK_MIX);
+};
 
 /** Every row this account files one work under, fullest first; `null` when the server did not answer.
  *
@@ -90,27 +127,48 @@ const rankKey = (c: RelatedCard): number => (c.votes >= RANK_MIN_VOTES ? c.vote 
  *
  *  The list, rather than its first row, because 81 of this library's shows are filed under several Series
  *  rows at once and the rows hold different seasons: a page that looked only at the fullest one would say
- *  「not on this server」 about a season the account really does have, two rows down. */
-export function libraryWorks(kind: WorkKind, tmdbId: string | number, title: string): Promise<LibraryItem[] | null> {
+ *  「not on this server」 about a season the account really does have, two rows down.
+ *
+ *  `altTitle` is asked only when `title` found nothing, and it is asked because a zero-row answer is not
+ *  always an absence. Measured on the live route: the library files tv:121792 as 「明日同学的水手服」, the
+ *  ask for TMDB's Chinese name 「明日酱的水手服」 answers no rows, and the ask for the work's own name
+ *  明日ちゃんのセーラー服 answers that row. The id check is what makes the second spelling safe: a near miss
+ *  on a different work still answers as nothing. */
+export function libraryWorks(kind: WorkKind, tmdbId: string | number, title: string, altTitle?: string): Promise<LibraryItem[] | null> {
   const id = String(tmdbId);
-  return embyCached('libwork', { kind, tmdbId: id }, async () => {
+  /* Both spellings belong in the key, because this cache is shared: the hero, the season list, the detail
+     page's sibling check and the prefetch all ask the same question under a different name, and a
+     `SearchTerm` answer is only an answer about the string it was asked with. Keyed on the pair alone, the
+     first of those could hand another its zero-row reply as if it were this one's — which is exactly the
+     false absence the second spelling exists to undo. Same key only when the same two strings are asked. */
+  return embyCached('libwork', { kind, tmdbId: id, term: title, alt: altTitle || '' }, async () => {
     if (!title || !/^\d{1,8}$/.test(id)) return { ok: true, data: [] as LibraryItem[] };
-    const r = await window.echoemby.emby.items({
-      SearchTerm: title,
-      IncludeItemTypes: KIND_PARAM(kind),
-      Recursive: true,
-      Limit: 10,
-    });
-    if (!r.ok) return { ok: false, error: r.error };
-    const rows = (r.data || []).filter(x => String(x.providers?.tmdb || '') === id);
+    const ask = async (term: string) => {
+      const r = await window.echoemby.emby.items({
+        SearchTerm: term,
+        IncludeItemTypes: KIND_PARAM(kind),
+        Recursive: true,
+        Limit: 10,
+      });
+      if (!r.ok) return { ok: false as const, error: r.error };
+      return { ok: true as const, rows: (r.data || []).filter(x => String(x.providers?.tmdb || '') === id) };
+    };
+    const first = await ask(title);
+    if (!first.ok) return { ok: false, error: first.error };
+    let rows = first.rows;
+    if (!rows.length && altTitle && altTitle !== title) {
+      // A failed second ask cannot unread a first that said 「nothing」; it stays the absence it was.
+      const again = await ask(altTitle);
+      if (again.ok) rows = again.rows;
+    }
     rows.sort((a, b) => (b.childCount || 0) - (a.childCount || 0) || a.name.localeCompare(b.name));
     return { ok: true, data: rows };
   }).then(r => (r.ok ? r.data || [] : null));
 }
 
-/** Library rows that share this work's genres, for the only case TMDB's list leaves: fewer than twelve
- *  recommendations. One request, and the server's own rating does the ordering, so no cold TMDB ask is
- *  spent on a card that would have filled a gap anyway. */
+/** Library rows that share this work's genres, for the slots TMDB's list leaves short — up to `POOL_CAP`
+ *  of them, which is what keeps the shelf a similarity band. One request, and the server's own rating does
+ *  the ordering, so no cold TMDB ask is spent on a card that would have filled a gap anyway. */
 function genrePool(kind: WorkKind, genres: string[]): Promise<LibraryItem[]> {
   const g = genres.slice(0, 3).join('|');
   if (!g) return Promise.resolve([]);
@@ -139,11 +197,14 @@ const activeServer = (): string => {
 /** How long the band waits for the server's answers before painting what it has.
  *
  *  The wait buys the order: a recommendation the account can play is worth more in the first three card
- *  widths than one it cannot, and only the server says which is which. Measured, twelve of those asks run
- *  side by side in 334 ms, so the wait is shorter than the TMDB round trip in front of it on a cold page
- *  and near zero on a warm one (`embyCached`). The cap is for the case the measurement cannot cover: a
- *  server that does not answer at all must leave a band on screen, not a hole. */
-const REVEAL_MS = 1500;
+ *  widths than one it cannot, and only the server says which is which. Measured over three runs of two
+ *  bands, the twenty-four asks one cold band fires at once take 1.2 to 3.6 seconds; on a warm route the
+ *  whole band answers in 0.2s, because `embyCached` holds these rows. So this number is a deadline the
+ *  cold fan-out usually misses, not a fit: what it guarantees is only that a server which does not answer
+ *  at all still leaves a band on screen rather than a hole, and the rows that answer after it answer into
+ *  cards the page is already showing. Exported because the work page gives TMDB's own detail ask the same
+ *  window: one clock decides how long any half of the page may keep the reader waiting. */
+export const REVEAL_MS = 1500;
 /** The same courtesy for the pool's numbers: a band of rows whose figure has not arrived is painted in the
  *  server's order and re-cut by nothing, because nothing re-sorts after the paint. */
 const POOL_MS = 1500;
@@ -181,22 +242,29 @@ export function useRelated(get: () => WorkSeed | null | undefined): ComputedRef<
     card.vote = (r.ok ? r.data?.voteAverage || 0 : 0) || fallback;
   }
 
-  /** Library rows that share this work's genres, turned into cards for the slots TMDB's list left short.
+  /** Library rows that share this work's genres, turned into cards for the slots the band is short of.
    *  Every one of them is playable, because it came out of the library.
+   *
+   *  `names` is the shelf's own list of titles and a row already standing on it is skipped, because the
+   *  pool asks by genre and the library files one work under several rows: measured, 低俗小说 arrived twice
+   *  in one band at the server's 8.5 and 8.482, which reads as a duplicated poster rather than two films.
    *
    *  The server's own rating is what ordered the pool, but the number the card prints is TMDB's, and a row
    *  of visible figures that do not descend reads as a row in no order at all. So the pool's numbers are
    *  asked for before the band is painted and the pool is re-cut by them; the wait is bounded, and a row
    *  whose number did not come sits behind the rows that have one, in the server's own order. */
-  async function fill(seed: WorkSeed, have: Set<string>, room: number, alive: () => boolean): Promise<RelatedCard[]> {
-    const rows = await genrePool(seed.kind, seed.genres || []);
+  async function fill(seed: WorkSeed, pool: Promise<LibraryItem[]>, have: Set<string>, names: Set<string>, room: number, alive: () => boolean): Promise<RelatedCard[]> {
+    const rows = await pool;
     const add: RelatedCard[] = [];
     for (const row of rows) {
       if (add.length >= room) break;
       const tmdbId = Number(row.providers?.tmdb) || 0;
       const k = tmdbId ? `${seed.kind}:${tmdbId}` : `emby:${row.id}`;
       if (have.has(k)) continue;
+      const tk = titleKey(row.name);
+      if (tk && names.has(tk)) continue;
       have.add(k);
+      names.add(tk);
       add.push(
         reactive({
           key: k,
@@ -244,15 +312,22 @@ export function useRelated(get: () => WorkSeed | null | undefined): ComputedRef<
       cards.value = [];
       const seed = get();
       if (!k || !seed) return;
-      const r = await window.echoemby.meta.tmdbSimilar({ kind: seed.kind, tmdbId: seed.tmdbId });
+      const r = await window.echoemby.meta.tmdbRelated({ kind: seed.kind, tmdbId: seed.tmdbId });
       if (mine !== run) return;
 
       const have = new Set<string>([k]);
+      const names = new Set<string>();
+      /** The card key → the work's name in its own language, for the second ask `libraryWorks` may make.
+       *  Kept out here rather than on the card: the strip shows a name, and a card carrying TMDB's two
+       *  spellings of one title would be a field nothing draws. */
+      const alt = new Map<string, string>();
       const list: RelatedCard[] = [];
       for (const row of r.ok ? r.data || [] : []) {
         const ck = `${seed.kind}:${row.tmdbId}`;
         if (!row.title || have.has(ck)) continue;
         have.add(ck);
+        names.add(titleKey(row.title));
+        if (row.originalTitle) alt.set(ck, row.originalTitle);
         /* Reactive from the first draft: an ask that answers after the paint writes into the card the page
            is already showing, and a write to the plain object behind it is seen by nothing - the pill stays
            off and the card keeps pointing at the page for a title the server does hold. The number is gated
@@ -275,25 +350,28 @@ export function useRelated(get: () => WorkSeed | null | undefined): ComputedRef<
           }),
         );
       }
-      /* Ranked by rating, but only where a rating is worth ranking by: a number one reader gave is their
-         opinion, not the title's standing. Measured on 模范出租车's band, 寒枝折不断's 8.0 from a single
-         rating used to sit above 铳墓's 7.4 from 85 people and 噩梦老师's 7.7 from 33. A row under the
-         floor scores zero for ranking and so keeps TMDB's own similarity order, which is what the rest of
-         the list already is - the array sort is stable, so a row below the floor is never moved by a
-         tiebreak it did not ask for. */
+      /* Ranked by how much weight stands behind TMDB's number — see `rankKey`, which retired the ten-rating
+         floor that used to score a thin row as zero. The array sort is stable, so a row that comes out level
+         with its neighbours keeps the place the two lists gave it. */
       list.sort((a, b) => rankKey(b) - rankKey(a));
 
-      /* Twelve asks at once, and the band waits for them: their answers are the order.
-         Then one cut through that order, for the thing the ranking cannot know: measured over 16 sampled
-         bands, a Movie page's twelve recommendations are held 2 times in 84 and a Series page's 18 in 96,
-         so a band left in TMDB's order is twelve posters of titles this viewer cannot watch while the six
-         they could play sit at positions they will not scroll to. Playable first, then the pool, then the
-         rest — and no re-sort after the paint, because a card that moves is the layout change this band is
-         kept free of. */
+      /* One ask per row, all of them at once, and the band waits for the answers because they are the order.
+         Then one cut through that order, for the thing the ranking cannot know: measured over 18 sampled
+         bands on the account that holds the most of this library, a merged list of twenty-four rows carries
+         5.6 the viewer can actually play, and on the other account 2.3 — while 7 of its 18 bands could play
+         not one. A band left in TMDB's order is therefore a shelf of posters this viewer cannot watch.
+         Playable first, then the pool, then the rest — and no re-sort after the paint, because a card that
+         moves is the layout change this band is kept free of. */
+      /* The pool request goes out before the playability asks, not after them: asked only once the shelf
+         turned out short, it put a whole round trip on the critical path behind the paint. Measured over
+         eleven detail pages — first card 1485ms before any of this, 2799ms and 2103ms in two runs of the
+         build that asked for the pool afterwards, 1516ms now. It costs a request on the band that turns out
+         to need nothing, and `embyCached` folds that for the ten minutes a genre combination is reused. */
+      const pool = seed.genres?.length ? genrePool(seed.kind, seed.genres) : Promise.resolve([] as LibraryItem[]);
       await Promise.race([
         Promise.allSettled(
           list.map(card =>
-            libraryWorks(card.kind, card.tmdbId, card.name).then(rows => {
+            libraryWorks(card.kind, card.tmdbId, card.name, alt.get(card.key)).then(rows => {
               // `null` is a server that did not answer, not a library that does not hold it: the card keeps
               // its silence, prints no corner and stays pointed at the work page until some visit answers.
               if (!rows) return;
@@ -313,9 +391,22 @@ export function useRelated(get: () => WorkSeed | null | undefined): ComputedRef<
 
       const can = list.filter(c => c.item);
       const rest = list.filter(c => !c.item);
-      const pool = list.length < CAP && seed.genres?.length ? await fill(seed, have, CAP - list.length, () => mine === run) : [];
+      /* Short of twelve is counted in what this account can play, not in posters on screen. The old trigger
+         was `list.length < CAP`, which measured as unreachable: over 97 cached merged bands TMDB's pair came
+         back full 94 times, empty once and short twice (both at twelve rows) — so the shelf that held twelve
+         posters and no files at all was a shelf nothing could reach.
+
+         What the pool may then take is `POOL_CAP`, and the whole shelf only when TMDB answered with nothing
+         at all. Keying the full shelf on 「not one row playable」 instead measured as a lie on a cold first
+         visit: the asks above cut off at `REVEAL_MS`, so a slow answer looks exactly like an absent title,
+         and six of thirteen OkEmby bands painted 「同类高分」 with twelve fill rows while the look-alikes
+         were still in flight — 搏击俱乐部 among them, which on the same page a minute later carried twelve
+         look-alikes out of its own library. A row still in flight keeps its slot and badges in place when it
+         lands, which moves nothing. */
+      const room = list.length ? Math.min(CAP - can.length, POOL_CAP) : CAP;
+      const taken = await fill(seed, pool, have, names, room, () => mine === run);
       if (mine !== run) return;
-      cards.value = [...can, ...pool, ...rest].slice(0, CAP);
+      cards.value = [...can, ...taken, ...rest].slice(0, CAP);
 
       // Through the ref, not the objects built above: only writes to the reactive proxy are seen by the page,
       // and these two pieces — a poster, a number — arrive after the paint and must not move anything.

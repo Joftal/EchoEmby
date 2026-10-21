@@ -6,7 +6,7 @@ import { rtScores } from './meta/rt';
 import { imdbRating } from './meta/imdb';
 import { traktScores } from './meta/trakt';
 import { bangumiScore } from './meta/bangumi';
-import { tmdbMeta, tmdbSeasonCast, tmdbSeasonStills, tmdbSimilar, tmdbImages, tmdbLogos } from './meta/tmdb';
+import { tmdbMeta, tmdbSeasonCast, tmdbSeasonStills, tmdbRelated, tmdbImages, tmdbLogos } from './meta/tmdb';
 import { csmGuide } from './meta/csm';
 import { PlayerWindows } from './player/windows';
 import { PlayerController, type PlayerOut } from './player/session';
@@ -166,7 +166,7 @@ export class AppServices {
     ipcMain.handle('meta:tmdb', (_e, { kind, tmdbId }: { kind: 'movie' | 'tv'; tmdbId: string }) => wrap(() => tmdbMeta(kind, tmdbId)));
     ipcMain.handle('meta:tmdbStills', (_e, { tmdbId, season }: { tmdbId: string; season: number }) => wrap(() => tmdbSeasonStills(tmdbId, season)));
     ipcMain.handle('meta:tmdbSeasonCast', (_e, { tmdbId, season }: { tmdbId: string; season: number }) => wrap(() => tmdbSeasonCast(tmdbId, season)));
-    ipcMain.handle('meta:tmdbSimilar', (_e, { kind, tmdbId }: { kind: 'movie' | 'tv'; tmdbId: string }) => wrap(() => tmdbSimilar(kind, tmdbId)));
+    ipcMain.handle('meta:tmdbRelated', (_e, { kind, tmdbId }: { kind: 'movie' | 'tv'; tmdbId: string }) => wrap(() => tmdbRelated(kind, tmdbId)));
     ipcMain.handle('meta:tmdbImages', (_e, { kind, tmdbId }: { kind: 'movie' | 'tv'; tmdbId: string }) => wrap(() => tmdbImages(kind, tmdbId)));
     ipcMain.handle('meta:tmdbLogos', (_e, { kind, tmdbId }: { kind: 'movie' | 'tv'; tmdbId: string }) => wrap(() => tmdbLogos(kind, tmdbId)));
     ipcMain.handle('meta:csm', (_e, { kind, title }: { kind: 'movie' | 'tv'; title: string }) => wrap(() => csmGuide(kind, title)));

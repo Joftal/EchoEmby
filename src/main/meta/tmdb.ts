@@ -2,7 +2,7 @@ import { app, net } from 'electron';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import * as config from '../config';
-import type { TmdbCreditRow, TmdbCredits, TmdbEpisodeRow, TmdbMeta, TmdbSeasonRow, TmdbSimilar, TmdbStills } from '../../shared/types';
+import type { TmdbCreditRow, TmdbCredits, TmdbEpisodeRow, TmdbMeta, TmdbSeasonRow, TmdbRelated, TmdbStills } from '../../shared/types';
 
 /**
  * TMDB is the outside source with a real API and a Chinese locale, so it fills the four gaps Emby
@@ -19,7 +19,7 @@ const STILLS_TTL = 14 * DAY;
  *  stills — but on its own name, so tuning the picture strip cannot silently retune the credit band. */
 const CAST_TTL = 14 * DAY;
 /** A recommendation list drifts slowly; a week keeps it fresh without a request on every open. */
-const SIMILAR_TTL = 7 * DAY;
+const RELATED_TTL = 7 * DAY;
 /** Backdrops for the 剧照 strip age as lazily as the recommendation list does, under their own name. */
 const IMAGES_TTL = 7 * DAY;
 /** A miss is usually TMDB having no record for that id; asking again in a few days is cheap. */
@@ -37,6 +37,7 @@ type Kind = 'movie' | 'tv';
 type MetaEntry = TmdbMeta | { missing: true; fetchedAt: number };
 type StillsEntry = { value: TmdbStills; fetchedAt: number } | { missing: true; fetchedAt: number };
 type CastEntry = { value: TmdbCredits; fetchedAt: number } | { missing: true; fetchedAt: number };
+type RelatedEntry = { value: TmdbRelated[]; fetchedAt: number };
 
 interface Store {
   /** key = `${kind}:${tmdbId}` */
@@ -49,8 +50,8 @@ interface Store {
    *  marks the list trimmed by the single writer predicate: entries from before it carry the whole Writing
    *  department, and the job that decided it is not stored, so they cannot be re-filtered. */
   cast: Record<string, CastEntry>;
-  /** key = `${kind}:${tmdbId}`; TMDB `/similar`, capped list of poster-only rows. */
-  similar: Record<string, { value: TmdbSimilar[]; fetchedAt: number }>;
+  /** Both look-alike lists merged, capped, keyed by the shape marker explained where the list is built. */
+  related: Record<string, RelatedEntry>;
   /** key = `${kind}:${tmdbId}`; image.tmdb.org backdrop paths for the 剧照 strip. */
   images: Record<string, { value: string[]; fetchedAt: number }>;
   /** key = `${kind}:${tmdbId}`; the page's title treatments, unranked — the order depends on the work's
@@ -65,11 +66,23 @@ const load = (): Store => {
   if (store) return store;
   let next: Store;
   try {
-    next = { meta: {}, stills: {}, cast: {}, similar: {}, images: {}, logos: {}, ...JSON.parse(readFileSync(file(), 'utf8')) };
+    next = { meta: {}, stills: {}, cast: {}, related: {}, images: {}, logos: {}, ...JSON.parse(readFileSync(file(), 'utf8')) };
   } catch {
-    next = { meta: {}, stills: {}, cast: {}, similar: {}, images: {}, logos: {} };
+    next = { meta: {}, stills: {}, cast: {}, related: {}, images: {}, logos: {} };
+  }
+  let pruned = false;
+  /* The bucket was named for one of the two lists it now reads. Builds before `r2` keyed their rows by
+     plain `${kind}:${tmdbId}`, so every one of those entries is an answer about a list this function no longer
+     asks for and the read below can never reach it. Move the rows the marker does claim, drop the rest, and
+     write once so the dead weight leaves the file instead of being re-read at every launch. */
+  const legacy = next as Store & { similar?: Record<string, RelatedEntry> };
+  if (legacy.similar) {
+    for (const [k, v] of Object.entries(legacy.similar)) if (k.startsWith('r2:')) next.related[k] = v;
+    delete legacy.similar;
+    pruned = true;
   }
   store = next;
+  if (pruned) persist();
   return next;
 };
 
@@ -455,52 +468,76 @@ export async function tmdbSeasonCast(tmdbId: string, season: number): Promise<Tm
   return value;
 }
 
-const SIMILAR_CAP = 12;
+/* TMDB answers "what is like this title" with two different lists, and measured over 18 sampled bands
+   their first twelve rows do not share a single title (overlap 0.0). They are also not one's better half:
+   on OkEmby /similar places 34 rows this account can play and /recommendations places 67, and the merged
+   list carries 101 — the exact sum, because nothing is duplicated. So both are asked, in one pass, and the
+   band is built out of the pair. */
+const RELATED_CAP_EACH = 12;
+const RELATED_CAP = 24;
 
-/** The `/similar` list for one title: its name, year, poster, TMDB's own rating and how many people
- *  stand behind that rating. The renderer resolves
- *  these back into the library and links every row somewhere, so the row needs no server id of its own. */
-export async function tmdbSimilar(kind: Kind, tmdbId: string): Promise<TmdbSimilar[]> {
+/** Both look-alike lists for one title: name, the name in its own language, year, poster, TMDB's own
+ *  rating and how many people stand behind that rating. The renderer resolves these back into the library
+ *  and links every row somewhere, so the row needs no server id of its own.
+ *
+ *  The original-language name travels because the search that resolves a row is a title search, and this
+ *  library files shows under Chinese spellings that are not TMDB's. Measured on the live route: TMDB bills
+ *  tv:121792 as 「明日酱的水手服」, and on the account that holds it that spelling answers zero rows while
+ *  the work's own name 明日ちゃんのセーラー服 answers its row, filed as 「明日同学的水手服」. */
+export async function tmdbRelated(kind: Kind, tmdbId: string): Promise<TmdbRelated[]> {
   if (!/^\d{1,8}$/.test(tmdbId)) return [];
   const token = tmdbToken();
   if (!token) return [];
-  const key = `${kind}:${tmdbId}`;
+  /* `r2` marks the merged list and the original-language name. Neither can be caught by looking for a
+     field: a Chinese title's original name legitimately equals its own, and a one-list cache is otherwise
+     a well-shaped list of rows that happen to be the wrong half of the answer. */
+  const key = `r2:${kind}:${tmdbId}`;
   const s = load();
-  const hit = s.similar[key];
-  // votes is written for every row this build fetches, so a cached list without it predates the field
-  // and cannot be ranked. Such a list is refetched once rather than served shapeless.
-  if (hit && Date.now() - hit.fetchedAt < SIMILAR_TTL && hit.value.every(v => v.votes != null)) return hit.value;
+  const hit = s.related[key];
+  if (hit && Date.now() - hit.fetchedAt < RELATED_TTL) return hit.value;
 
-  const { json, answered } = await fetchJson<any>(
-    `https://api.themoviedb.org/3/${kind}/${tmdbId}/similar?language=zh-CN`,
-    token,
-  );
-  // No answer or an empty list both keep the previous value (or nothing); never cache a transport miss.
-  if (!answered) return hit?.value || [];
-  const results: any[] = Array.isArray(json?.results) ? json.results : [];
-  const out: TmdbSimilar[] = [];
-  for (const r of results) {
-    const id = num(r?.id);
-    if (id === undefined) continue;
-    const v = num(r?.vote_average);
-    const date = String(r?.release_date || r?.first_air_date || '');
-    const cast = Math.max(0, Math.round(num(r?.vote_count) ?? 0));
-    out.push({
-      tmdbId: id,
-      title: String(r?.title || r?.name || '').trim(),
-      posterPath: typeof r?.poster_path === 'string' ? r.poster_path : undefined,
-      year: /^\d{4}/.test(date) ? date.slice(0, 4) : undefined,
-      // The gate the work's own entry already applies: a number nobody cast is not a rating, and a card
-      // that prints one while the page it opens withholds it is the same title wearing two answers.
-      voteAverage: v !== undefined && cast > 0 ? Math.round(v * 10) / 10 : undefined,
-      votes: cast,
-    });
-    if (out.length >= SIMILAR_CAP) break;
+  const [sim, reco] = await Promise.all([
+    fetchJson<any>(`https://api.themoviedb.org/3/${kind}/${tmdbId}/similar?language=zh-CN`, token),
+    fetchJson<any>(`https://api.themoviedb.org/3/${kind}/${tmdbId}/recommendations?language=zh-CN`, token),
+  ]);
+  // Silence from both is not absence: keep whatever was cached and never store a transport miss.
+  if (!sim.answered && !reco.answered) return hit?.value || [];
+  const out: TmdbRelated[] = [];
+  const seen = new Set<number>();
+  for (const res of [sim, reco]) {
+    const results: any[] = Array.isArray(res.json?.results) ? res.json.results : [];
+    let taken = 0;
+    for (const r of results) {
+      if (taken >= RELATED_CAP_EACH || out.length >= RELATED_CAP) break;
+      const id = num(r?.id);
+      if (id === undefined || seen.has(id)) continue;
+      const title = String(r?.title || r?.name || '').trim();
+      if (!title) continue;
+      const orig = String(r?.original_title || r?.original_name || '').trim();
+      const v = num(r?.vote_average);
+      const date = String(r?.release_date || r?.first_air_date || '');
+      const cast = Math.max(0, Math.round(num(r?.vote_count) ?? 0));
+      taken++;
+      seen.add(id);
+      out.push({
+        tmdbId: id,
+        title,
+        originalTitle: orig && orig !== title ? orig : undefined,
+        posterPath: typeof r?.poster_path === 'string' ? r.poster_path : undefined,
+        year: /^\d{4}/.test(date) ? date.slice(0, 4) : undefined,
+        // The gate the work's own entry already applies: a number nobody cast is not a rating, and a card
+        // that prints one while the page it opens withholds it is the same title wearing two answers.
+        voteAverage: v !== undefined && cast > 0 ? Math.round(v * 10) / 10 : undefined,
+        votes: cast,
+      });
+    }
   }
+  // Both lists empty against a cached answer is TMDB having nothing to say, not a better answer: keep the
+  // rows rather than replace them with a hole that lasts a week.
+  if (!out.length && hit?.value?.length) return hit.value;
   const prev = hit?.value;
-  const shaped = !!prev && prev.every(p => p.votes != null);
-  if (!prev || !shaped || prev.length !== out.length || prev.some((p, i) => p.tmdbId !== out[i].tmdbId)) {
-    s.similar[key] = { value: out, fetchedAt: Date.now() };
+  if (!prev || prev.length !== out.length || prev.some((p, i) => p.tmdbId !== out[i].tmdbId)) {
+    s.related[key] = { value: out, fetchedAt: Date.now() };
     persist();
   }
   return out;

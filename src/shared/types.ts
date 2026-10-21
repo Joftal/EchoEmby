@@ -385,22 +385,28 @@ export interface CsmGuide {
   fetchedAt: number;
 }
 
-/** One row of TMDB's "more like this" list. These are not dead ends: `lib/related` asks the server for
- *  the row's title and keeps only the answers whose `providers.tmdb` equals this id, so a recommendation
- *  the library holds opens its playable page, and one it does not opens the work page that `TmdbMeta`
- *  can build alone. Measured: 20/20 of the titles sampled are found by their TMDB name, and 20/20 of the
- *  titles the library does not hold come back as no rows rather than as a near miss. */
-export interface TmdbSimilar {
+/** One row of TMDB's "more like this" lists — `/similar` and `/recommendations`, merged into the single
+ *  list `meta/tmdb.tmdbRelated` returns. These are not dead ends: `lib/related` asks the server for the
+ *  row's title and keeps only the answers whose `providers.tmdb` equals this id, so a recommendation the
+ *  library holds opens its playable page, and one it does not opens the work page that `TmdbMeta` can
+ *  build alone. Measured over 18 sampled bands the two lists share no first-row title, and on the sample
+ *  every title the library does hold was found by its TMDB name — where that misses, as it does on a
+ *  Chinese spelling this server files a work under, the `originalTitle` below is the second ask. */
+export interface TmdbRelated {
   tmdbId: number;
   title: string;
+  /** The work's name in its own language — TMDB's `original_title` / `original_name`. Carried because
+   *  the library search that turns a row into a page is a title search, and the Chinese spelling this
+   *  library files a work under is not always TMDB's: measured, 「明日酱的水手服」 answers zero rows on the
+   *  account that holds it as 「明日同学的水手服」. `undefined` when it is the same string as `title`.
+   */
+  originalTitle?: string;
   posterPath?: string;
   year?: string;
   voteAverage?: number;
   /** How many ratings TMDB counted for that number, 0 when it has counted none. Held because the number
    *  alone cannot be sorted by: on 模范出租车's band 寒枝折不断's 8.0 rests on one rating while 鬼怪's 8.6
-   *  rests on 3,139, and a card cannot tell those two apart without this count. A row fetched by this
-   *  build always carries it, so its absence marks a list cached before the field existed - which is what
-   *  the read path refetches on. */
+   *  rests on 3,139, and a card cannot tell those two apart without this count. */
   votes: number;
 }
 
