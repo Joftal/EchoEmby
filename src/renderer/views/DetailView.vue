@@ -771,15 +771,25 @@ const pack = computed(() => {
 });
 const overviewText = computed(() => pack.value?.overview || workOverview.value);
 
-/** 「2021-04-09 · 16 集 · 17小时18分」 for the season on screen. A work with no seasons keeps its own
- *  line, and a collection counts 部 rather than 季. */
+/** 「2021-04-09 · 16 集 · 17小时18分」 for the season on screen. Until that season is known the line says
+ *  nothing about counts: a collection keeps its own 部 count, which is the one number whose subject is
+ *  already on screen. */
 const metaLine = computed(() => {
   const p = pack.value;
   const parts = p
     ? [p.date, p.eps ? `${p.eps} 集` : '', p.runtime]
     : [
         premiered.value,
-        item.value?.childCount ? `${item.value.childCount} ${item.value.type === 'BoxSet' ? '部' : '季'}` : '',
+        /* The row's ChildCount answers for whatever the row is, and while `pack` is out the row is not yet
+           the subject this line speaks for: on a season page it is the season's own episode count, which
+           this line then printed with the 季 unit — measured, 「2018-10-16 · 20 季」 readable for 0.6-1.9 s
+           over the 「第 1 季」 heading before it corrected itself to 「20 集」 (菜鸟老警 第 1 季). Same reason
+           the runtime below waits: one row's figure under a heading that names a season. */
+        isSeries.value || isSeason.value
+          ? ''
+          : item.value?.type === 'BoxSet' && item.value.childCount
+            ? `${item.value.childCount} 部`
+            : '',
         // A show's own RunTimeTicks is neither its seasons' nor its episodes' — measured 64 分钟 for a
         // season that runs 17 小时 18 分 — so the one line that number belongs to stays empty until the
         // season rows arrive and `pack` can sum a real one.

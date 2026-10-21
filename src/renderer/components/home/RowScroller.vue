@@ -3,9 +3,12 @@ import { onBeforeUnmount, onMounted, ref } from 'vue';
 import type { LibraryItem } from '../../../shared/types';
 import MediaCard from './MediaCard.vue';
 
+/* `count` is the number beside the title, and it only means anything when the rail is the whole answer.
+   A shelf cut to fit the page would otherwise print its own length where the reader reads a category
+   total, and these servers' library rows carry no total to put in its place. */
 const props = withDefaults(
-  defineProps<{ title: string; items: LibraryItem[]; variant?: 'poster' | 'still'; width?: number }>(),
-  { variant: 'poster', width: 190 },
+  defineProps<{ title: string; items: LibraryItem[]; variant?: 'poster' | 'still'; width?: number; count?: boolean }>(),
+  { variant: 'poster', width: 190, count: true },
 );
 const emit = defineEmits<{ (e: 'play', item: LibraryItem): void }>();
 
@@ -115,7 +118,7 @@ onBeforeUnmount(() => {
   <section ref="root" class="row" @pointerenter="alignEdges">
     <header>
       <h2>{{ title }}</h2>
-      <span class="count">{{ items.length }}</span>
+      <span v-if="count" class="count">{{ items.length }}</span>
     </header>
 
     <div class="wrap">

@@ -114,7 +114,11 @@ const sub = computed(() => {
   // would put a position on the card the server never claimed.
   if (i.latestEpisode) return episodePosition(i.latestEpisode.season, i.latestEpisode.episode);
   if (i.indexNumber != null) return episodePosition(i.parentIndexNumber, i.indexNumber);
-  if (i.childCount) return `${i.childCount} ${i.type === 'BoxSet' ? '部' : '季'}`;
+  /* A Series row's ChildCount is that one row's season count, and this library files 81 of its 1569 works as
+     several Series rows, 141 of those rows billing a single season (measured) — so the card read 「1 季」 about
+     a title whose page lists more. The year beside it says the same thing about the same subject with nothing
+     to contradict it. A collection's 部 count is its own answer, so it stays. */
+  if (i.childCount && i.type === 'BoxSet') return `${i.childCount} 部`;
   return '';
 });
 /** How far in you got, not how far is left — the same read-out every other surface now uses. */

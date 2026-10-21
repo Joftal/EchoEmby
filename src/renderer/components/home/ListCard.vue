@@ -136,7 +136,10 @@ const meta = computed(() =>
     .filter(Boolean)
     .join('  ·  '),
 );
-const runtime = computed(() => fmtRuntime(props.item.runTimeTicks));
+/* Only a row that is one playable thing has a length of its own. A Series row's RunTimeTicks is an average
+   episode (measured: 25 分钟 on 破产姐妹, which holds six seasons) and the page this card opens reads
+   「12 集 · 4小时51分」, so the badge and the hero were two subjects wearing one shape. */
+const runtime = computed(() => (props.item.type === 'Series' || props.item.type === 'BoxSet' ? '' : fmtRuntime(props.item.runTimeTicks)));
 const seen = computed(() => seenLabel(props.item.userData, props.item.runTimeTicks));
 
 function open(): void {

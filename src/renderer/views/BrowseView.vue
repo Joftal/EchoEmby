@@ -537,7 +537,7 @@ onBeforeUnmount(() => {
       </div>
 
       <div v-else-if="isSearch && !term.trim() && shelves.length" class="shelves">
-        <RowScroller v-for="r in shelves" :key="r.key" :title="r.title" :items="r.items" @play="onPlay" />
+        <RowScroller v-for="r in shelves" :key="r.key" :title="r.title" :items="r.items" :count="false" @play="onPlay" />
       </div>
 
       <p v-else-if="kind === 'search'" class="empty">
