@@ -376,9 +376,6 @@ export class EmbyClient {
     return j?.ServerName || '';
   }
 
-  /** The raw folder list. Left uncached on purpose: the account editor calls it to prove a moved folder
-   *  still answers under the same token, and a cache keyed by account would hand back the old server's
-   *  answer. Everything that only wants to read the libraries goes through `libraryViews`. */
   /** What a cached library answer belongs to. The address and name are part of it because the account
    *  editor can move an account onto another server without changing its id, and the rail must not go on
    *  showing the old one's folders. */
@@ -386,6 +383,9 @@ export class EmbyClient {
     return `${this.account.accountId}|${this.account.baseUrl}|${this.account.username}`;
   }
 
+  /** The raw folder list. Left uncached on purpose: the account editor calls it to prove a moved folder
+   *  still answers under the same token, and a cache keyed by account would hand back the old server's
+   *  answer. Everything that only wants to read the libraries goes through `libraryViews`. */
   async views(): Promise<LibraryItem[]> {
     const j = await this.get<any>(`/Users/${this.account.userId}/Views`, { GroupByCollectionType: true });
     return (j.Items || []).map(mapItem);
@@ -395,24 +395,53 @@ export class EmbyClient {
     return sessionCached(`views|${this.libraryKey}`, () => this.views());
   }
 
-  /** The libraries worth putting on screen. Views answers with every folder the account may see, and an
-   *  empty one looks identical to a merely quiet one (measured: 播放列表 and 合集 answer empty on both
-   *  gateways), so each folder is asked the same question the browse page will ask and the ones that
-   *  answer with nothing are dropped. A failed probe keeps its library: only a proven-empty answer hides it.
-   *  Held for the session in the main process rather than per window — the lobby and the player window ask
-   *  the same thirteen questions of the same account, and the answer only changes when the server's does. */
-  async navViews(): Promise<LibraryItem[]> {
+  /** The libraries worth putting on screen, and how fresh each one is. One small ask per folder answers both:
+   *  Views hands back every folder the account may see and an empty one looks identical to a merely quiet one
+   *  (measured: 播放列表 and 合集 answer empty on both gateways), so each is asked the same question the browse
+   *  page will ask — and asking it sorted by `DateCreated` returns the folder's newest row in the very reply
+   *  that proves it is not empty, so ordering the lobby by freshness costs no round trip on top of what the
+   *  rail already waits for. `StartDate` cannot do that job (measured 2026-10-21: silently ignored — all 16
+   *  libraries answered a 7/30/90-day window with their whole `TotalRecordCount`), which leaves the newest
+   *  row's own date as the only freshness signal the server will give.
+   *  The type list is content rows only, measured the same day on nyamedia, and it is what makes that signal
+   *  honest: — `Episode` has to be in it, or the date means "when did this library last take a whole new show";
+   *  动漫 - 华语 (进集到 10-18) reads 04-13 from its newest Series row instead. — 合集/播放列表 have to stay out,
+   *  because a collection row can stamp newer than everything in the library: the newest row of both 电视 - 韩国
+   *  and 电视 - 欧美 is a 测试合集 dated 09-28 over real content from 01-19 and 09-10, and reading it would put
+   *  韩国 in a seat and take 欧美 out. Leaving them out costs nothing on the emptiness verdict — the same 15 of
+   *  16 folders answered non-empty either way, 播放列表 the only one that does not. Studios and Folders carry
+   *  ingest dates too (电影 - 用户上传 answered 10-18·Folder, 演唱会 12-29·Studio), so an unfiltered ask is worse.
+   *  A failed probe keeps its library: only a proven-empty answer hides it. Held for the session in the main
+   *  process rather than per window — the lobby and the player window ask the same questions of the same
+   *  account, and the answer only changes when the server's does. */
+  private probedViews(): Promise<{ views: LibraryItem[]; fresh: Map<string, number> }> {
     return sessionCached(`navViews|${this.libraryKey}`, async () => {
       const all = await this.libraryViews();
-      const filled = await Promise.all(
+      const probes = await Promise.all(
         all.map(v =>
-          this.items({ ParentId: v.id, IncludeItemTypes: 'Movie,Series,BoxSet,Playlist,Video', Recursive: true, Limit: 1 })
-            .then(x => x.length > 0)
-            .catch(() => true),
+          this.items({
+            ParentId: v.id,
+            IncludeItemTypes: 'Movie,Series,Episode,Video',
+            Recursive: true,
+            Limit: 1,
+            SortBy: 'DateCreated',
+            SortOrder: 'Descending',
+            Fields: 'DateCreated',
+          })
+            .then(x => ({ at: Date.parse(x[0]?.dateCreated || '') || 0, empty: !x.length }))
+            .catch(() => ({ at: 0, empty: false })),
         ),
       );
-      return all.filter((_, i) => filled[i]);
+      const fresh = new Map<string, number>();
+      all.forEach((v, i) => {
+        if (probes[i].at) fresh.set(v.id, probes[i].at);
+      });
+      return { views: all.filter((_, i) => !probes[i].empty), fresh };
     });
+  }
+
+  async navViews(): Promise<LibraryItem[]> {
+    return (await this.probedViews()).views;
   }
 
   /**
@@ -464,11 +493,15 @@ export class EmbyClient {
   }
 
   /** Latest answers with the series itself, so the episode position has to come from a parallel pass.
-   *  The pass is 400 rows because the badges are worth it: measured, the series a row shows sit as deep as
-   *  position 379 of that pull, so a shorter page would silently drop them. What it does not need is a
-   *  folder that cannot hold an episode at all — the three libraries this server labels movies each answered
-   *  with zero rows. Reading the type off the Views row costs no round trip, unlike waiting to see whether
-   *  the Latest row happened to hold a series. */
+   *  The pass is 1200 rows because the badges are worth it and a shorter window drops them silently: the
+   *  series a row shows sat as deep as position 379 of the pull on OkEmby (measured 2026-10-12) and as deep
+   *  as 981 on nyamedia's 电视 - 欧美, 1091 on its 动漫 - 华语 (measured 2026-10-21). One ask covers that
+   *  much — Limit=1200 came back in a single round trip (1200 rows of a 7790-episode library, 0.85 MB), so
+   *  there is no paging to join. Even so 1200 leaves 斗罗大陆 and 天官赐福 uncovered on nyamedia, and those
+   *  cards fall back to 季数 · 年份, which is the designed degradation rather than a miss.
+   *  What the pass does not need is a folder that cannot hold an episode at all — the libraries this server
+   *  labels movies each answered with zero rows. Reading the type off the Views row costs no round trip,
+   *  unlike waiting to see whether the Latest row happened to hold a series. */
   private async newestEpisodes(folder: LibraryItem): Promise<Map<string, LibraryItem>> {
     if (folder.collectionType === 'movies') return new Map();
     const eps = await this.items({
@@ -477,7 +510,7 @@ export class EmbyClient {
       IncludeItemTypes: 'Episode',
       SortBy: 'DateCreated',
       SortOrder: 'Descending',
-      Limit: 400,
+      Limit: 1200,
       Fields: 'SeriesId,IndexNumber,ParentIndexNumber',
     }).catch(() => []);
     const m = new Map<string, LibraryItem>();
@@ -509,16 +542,17 @@ export class EmbyClient {
   private stalled = (x: LibraryItem): boolean => !!x.userData?.played && !x.userData.positionMs;
 
   /** The 在看 row on its own. Closing the player changes which titles are in it and in what order, and
-   *  that is the only part of the lobby a stopped film can move — a 新加入 row is a library's ingest order
+   *  that is the only part of the lobby a stopped film can move — a 最新更新 row is a library's ingest order
    *  and does not care what was watched. Asked alone, it is two round trips in parallel instead of the
    *  fifteen the whole lobby costs. */
   async resumeRow(limit = 18): Promise<LibraryRow | null> {
     // The endpoint first because it knows where each title actually continues; the DatePlayed list behind it
     // because a title the server has no offset for is still something the viewer was in the middle of, and
-    // dropping it would take the show off the shelf they reach for.
+    // dropping it would take the show off the shelf they reach for. Either one alone is a row; neither is
+    // allowed to be the reason the lobby has nothing on it.
     const [points, recent] = await Promise.all([
       this.resumePoints(limit).catch(() => []),
-      this.items({ Recursive: true, MediaTypes: 'Video', SortBy: 'DatePlayed', SortOrder: 'Descending', Limit: limit, IsResumable: true }),
+      this.items({ Recursive: true, MediaTypes: 'Video', SortBy: 'DatePlayed', SortOrder: 'Descending', Limit: limit, IsResumable: true }).catch(() => []),
     ]);
     const seen = new Set<string>();
     // One card is one show, so an episode folds onto its series by name — the same rule the 在看 page's
@@ -534,11 +568,27 @@ export class EmbyClient {
   }
 
   async homeRows(): Promise<LibraryRow[]> {
-    // Asked side by side: the resume row is the slowest single answer on this page (measured: 1.4s against
-    // the 0.6s a library list takes), so making the rows wait for the rail's empty-folder probes would have
-    // pushed the whole lobby back by 0.45s. The raw list is the right ask here: a folder that turns out
-    // empty yields no row, which is what the filter at the end of this method already does.
-    const [views, resume] = await Promise.all([this.libraryViews(), this.resumeRow()]);
+    // The rows read the probed library list, not the raw one, because a slot spent on an empty folder is a
+    // stocked library that never appears: measured 2026-10-21 on nyamedia, Views puts 播放列表 in seat 1 and
+    // both probe shapes answer it with nothing, so the lobby drew 7 of its 8 slots off the raw list; the
+    // probed list fills all 8. The probes are not extra time on this page — the rail asks the same cached
+    // answer in the same tick, so the folder list is paid for once either way. It also stops an empty folder
+    // from burning a whole episode pass.
+    //
+    // The seats then go to the libraries that actually took something, newest first, rather than to whatever
+    // Views happened to list first: measured the same day, the server's own order kept 电影 - 韩国 (282 天没进
+    // 过东西), 电视 - 日本 (210 天) and 电影 - 欧美 (199 天) on screen while 新番计划 (当天) and 动漫 - 华语
+    // (2 天) sat outside the cut, and the eight seats became 新番计划、动漫 - 华语、电视 - 华语、电视 - 用户上传、
+    // 电视 - 欧美、电影 - 用户上传、电影 - 华语、番剧. Ties keep the server's order (the sort is stable). The
+    // rail is deliberately left in Views order — a library list should not move under the cursor because a
+    // film arrived.
+    //
+    // Nothing here is allowed to take the whole lobby down: the rail row and each row's own two asks catch
+    // for themselves, so one dead endpoint costs one row instead of the page.
+    const [probed, resume] = await Promise.all([this.probedViews(), this.resumeRow().catch(() => null)]);
+    const views = probed.views
+      .slice()
+      .sort((a, b) => (probed.fresh.get(b.id) ?? 0) - (probed.fresh.get(a.id) ?? 0));
     const rows: LibraryRow[] = [];
     if (resume) rows.push(resume);
     const latest = await Promise.all(
@@ -553,7 +603,7 @@ export class EmbyClient {
           const e = it.type === 'Series' ? newest.get(it.id) : undefined;
           if (e?.indexNumber != null) it.latestEpisode = { season: e.parentIndexNumber, episode: e.indexNumber };
         }
-        return { key: `latest-${v.id}`, title: `新加入 · ${v.name}`, items };
+        return { key: `latest-${v.id}`, title: `最新更新 · ${v.name}`, items };
       }),
     );
     rows.push(...latest.filter(r => r.items.length));
