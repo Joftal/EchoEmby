@@ -311,10 +311,3 @@ export async function fetchTrack(q: DanmakuQuery, trackId: string): Promise<Danm
   persist();
   return out;
 }
-
-/** The cached track only: the overlay asks this on open so a replay does not wait on the network, and a
- *  miss is not an error — it just means the menu has not been used yet. */
-export function cachedTrack(q: DanmakuQuery, trackId: string): DanmakuTrack | null {
-  const hit = load().tracks[`${q.itemId}:${trackId}`];
-  return hit && fresh(hit) ? hit.value : null;
-}
