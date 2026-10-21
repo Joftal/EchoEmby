@@ -411,6 +411,12 @@ export class EmbyClient {
    *  韩国 in a seat and take 欧美 out. Leaving them out costs nothing on the emptiness verdict — the same 15 of
    *  16 folders answered non-empty either way, 播放列表 the only one that does not. Studios and Folders carry
    *  ingest dates too (电影 - 用户上传 answered 10-18·Folder, 演唱会 12-29·Studio), so an unfiltered ask is worse.
+   *  The exclusion is only as good as the server's type filter. On OkEmby a library whose rows are all 合集
+   *  answers a BoxSet to `Movie,Series,Episode,Video`, to `Movie,Series,Episode`, and even to `Video` alone
+   *  (合集 · 2025-11-28), while the filter does hold where the library has real content (its 国产电视剧 asked
+   *  for `Movie` only answered no rows). So there a collection-only folder ranks by its own date; on both
+   *  hosts the eight seats the page drew were the eight newest libraries, checked against this same ask run
+   *  inside the app.
    *  A failed probe keeps its library: only a proven-empty answer hides it. Held for the session in the main
    *  process rather than per window — the lobby and the player window ask the same questions of the same
    *  account, and the answer only changes when the server's does. */
