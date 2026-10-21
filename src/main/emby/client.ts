@@ -403,13 +403,16 @@ export class EmbyClient {
    *  rail already waits for. `StartDate` cannot do that job (measured 2026-10-21: silently ignored — all 16
    *  libraries answered a 7/30/90-day window with their whole `TotalRecordCount`), which leaves the newest
    *  row's own date as the only freshness signal the server will give.
+   *  `Fields` overrides `items()`'s default field list rather than adding to it, so this is not the heavy
+   *  ask it looks like: measured 2026-10-21 on OkEmby, the whole rail answered 3.9 KB in 737 ms against the
+   *  9.6 KB and 1022 ms the wide pre-change probe cost, and the two time bands overlap.
    *  The type list is content rows only, measured the same day on nyamedia, and it is what makes that signal
    *  honest: — `Episode` has to be in it, or the date means "when did this library last take a whole new show";
    *  动漫 - 华语 (进集到 10-18) reads 04-13 from its newest Series row instead. — 合集/播放列表 have to stay out,
    *  because a collection row can stamp newer than everything in the library: the newest row of both 电视 - 韩国
    *  and 电视 - 欧美 is a 测试合集 dated 09-28 over real content from 01-19 and 09-10, and reading it would put
-   *  韩国 in a seat and take 欧美 out. Leaving them out costs nothing on the emptiness verdict — the same 15 of
-   *  16 folders answered non-empty either way, 播放列表 the only one that does not. Studios and Folders carry
+   *  韩国 in a seat and take 欧美 out. Leaving them out costs nothing on the emptiness verdict — the same 16 of
+   *  17 folders answered non-empty either way, 播放列表 the only one that does not. Studios and Folders carry
    *  ingest dates too (电影 - 用户上传 answered 10-18·Folder, 演唱会 12-29·Studio), so an unfiltered ask is worse.
    *  The exclusion is only as good as the server's type filter. On OkEmby a library whose rows are all 合集
    *  answers a BoxSet to `Movie,Series,Episode,Video`, to `Movie,Series,Episode`, and even to `Video` alone
