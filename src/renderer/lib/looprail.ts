@@ -58,6 +58,9 @@ export interface LoopRail {
 
 const rails = new WeakMap<HTMLElement, LoopRail>();
 
+/** The CSS px a layout can rest a card edge on: a grid of 1/80. Requests in between are not what lands. */
+const snap = (v: number): number => Math.round(v * 80) / 80;
+
 export function createLoopRail(
   track: HTMLElement,
   opts: { auto?: boolean; onChange?: (looped: boolean) => void; onShift?: (d: number) => void } = {},
@@ -84,6 +87,9 @@ class Rail implements LoopRail {
   private headK = 0;
   private tailK = 0;
   private p = 0;
+  /** The row's shape this file last aimed at, so a failed aim is tried once per shape and not on every
+   *  re-measure. See `align()`. */
+  private gapSig = '';
   private frozen = false;
   /** Where a glide in flight is heading. Read only while `frozen`: the row's live offset is a third of the
    *  way there, and re-anchoring that would stop the journey short of its destination. */
@@ -111,6 +117,11 @@ class Rail implements LoopRail {
     el.addEventListener('scroll', this.onScroll, { passive: true });
     el.addEventListener('scrollend', this.onEnd);
     el.addEventListener('click', this.onClick);
+    /* Nothing mutates when an entrance finishes, and until then the row's length cannot be trusted (see
+       `lapOf`) — so the card landing is itself the ask to measure again. Without it, a band whose last
+       re-measure was spent mid-flight keeps the spacing it came in with, and on the 演职员 band that is
+       half a device pixel short of a lap. */
+    el.addEventListener('animationend', this.onAnimEnd);
     this.ro = new ResizeObserver(() => this.queue());
     this.ro.observe(el);
     /* The copies are only worth having if they say what their source says. A poster's ★, its 「看到 15:00」
@@ -137,8 +148,10 @@ class Rail implements LoopRail {
     this.el.removeEventListener('scroll', this.onScroll);
     this.el.removeEventListener('scrollend', this.onEnd);
     this.el.removeEventListener('click', this.onClick);
+    this.el.removeEventListener('animationend', this.onAnimEnd);
     this.head.remove();
     this.tail.remove();
+    this.el.style.columnGap = '';
     rails.delete(this.el);
   }
 
@@ -165,6 +178,18 @@ class Rail implements LoopRail {
   /** Content-x of a card's left edge, in the track's own scrollable coordinates. */
   private x(n: HTMLElement): number {
     return n.getBoundingClientRect().left - this.el.getBoundingClientRect().left + this.el.scrollLeft;
+  }
+
+  /* One list-length, read off where the first copy actually sits. Mid-entrance that reading lies: the
+     keyframe scales the row's own cards while `harvest()` gives the copies no animation at all, so on a
+     300px band the first copy reports 6905.75 against the 6908 its own pitch says (measured, and it clears
+     by 4s). A row that has not stopped flying reports NaN, and its callers use `n` pitches instead of
+     aiming a spacing or moving a wrap by a length the row does not have. */
+  private lapOf(orig: HTMLElement[]): number {
+    const t0 = this.tail.firstElementChild as HTMLElement | null;
+    if (!t0) return NaN;
+    const l = this.x(t0) - this.x(orig[0]);
+    return Math.abs(l - orig.length * this.pitchOf(orig)) > 0.25 ? NaN : l;
   }
 
   private inside(n: Node): boolean {
@@ -256,10 +281,11 @@ class Rail implements LoopRail {
     const from = this.home;
     const gliding = this.frozen;
     const scroll = gliding ? this.want : el.scrollLeft;
-    this.p = p;
     this.copy(orig);
-    const t0 = this.tail.firstElementChild as HTMLElement | null;
-    this.period = t0 ? this.x(t0) - this.x(orig[0]) : orig.length * p;
+    this.align(orig);
+    this.p = this.pitchOf(orig);
+    const lap = this.lapOf(orig);
+    this.period = Number.isNaN(lap) ? orig.length * this.p : lap;
     this.home = this.x(orig[0]) - padL;
     this.looped = true;
     /* A caller that is still walking towards somewhere has that somewhere in the old coordinates. The
@@ -279,6 +305,56 @@ class Rail implements LoopRail {
     }
     if (!was) this.onChange?.(true);
     this.hydrate();
+  }
+
+  /* A wrap moves the row by exactly one `period`, and the compositor can only rest a scroll offset on the
+     device-pixel grid — so a period that is not a whole number of device pixels cannot be paid back. The row
+     lands the leftover off, and the cards on alternate sides of the seam jump a full device pixel apiece,
+     resampling their pictures: measured at 125% on the detail page, 演职员 disagreed with itself across its
+     own seam by 12.28% of the band and 剧照 by 8.35%, while 14 other rails were byte-identical.
+     The shortfall is therefore removed where it is created — spent across the row's own gaps, at most half a
+     device pixel divided by the number of cards (0.016px each on a 25-card band), which is why the spacing
+     does not visibly move. That is the smallest answer, and the layout cannot always hold it: card positions
+     are kept on a grid of 1/80 CSS px, and a 0.016px gap change does not land on it, leaving the row resting
+     0.11 of a device pixel off. Chasing that remainder was measured and is worse still — every re-measure
+     walked the gap by its own rounding error, in one direction, forever. So the second try is the coarser
+     answer the grid does hold exactly: a whole device pixel of pitch (0.4px of gap on that band). If neither
+     lands, the design spacing is left alone, and the row's shape is remembered so no re-measure starts the
+     chase again.
+     A row that has not stopped flying after its entrance is left out of all of this — see `lapOf`, which is
+     what keeps a phantom 1.425px of shortfall from being spent on the real gap. */
+  private align(orig: HTMLElement[]): void {
+    const el = this.el;
+    const dpr = window.devicePixelRatio || 1;
+    const n = orig.length;
+    /** How far one lap of this row is from a whole number of device pixels, in device pixels. */
+    const off = (): number => {
+      const l = this.lapOf(orig);
+      return Number.isNaN(l) ? 0 : l * dpr - Math.round(l * dpr);
+    };
+    // The gap and the pitch the row came in with. Both aims are measured from these, not from whatever the
+    // previous aim left on the row, or a change of display scale would aim the second time at the wrong lap.
+    // They are snapped because a request is not what lands: the layout grid keeps card edges on multiples of
+    // 1/80 CSS px and the CSSOM serialises a written length to six digits, so asking for 14.410246px leaves
+    // the row exactly where 14.4 has it (measured: pitch 334.40002 for both), and 13.999995026px comes back
+    // as 「14px」 over one grid step *under* the design 14px (pitch 333.98749 against 334).
+    const gap = snap(parseFloat(getComputedStyle(el).columnGap) || 0);
+    const pitch = snap(this.pitchOf(orig));
+    if (!gap) return;
+    const d = off();
+    /* Already whole — and saying nothing is what keeps this from feeding itself: a style write is a mutation
+       record even when the value did not change, and the observer would schedule the next measure forever. */
+    if (Math.abs(d) < 0.02) return;
+    const sig = `${dpr}|${n}|${(pitch - gap).toFixed(2)}`;
+    if (sig === this.gapSig) return;
+    this.gapSig = sig;
+    const aim = (g: number): number => {
+      el.style.columnGap = `${snap(g)}px`;
+      return off();
+    };
+    if (Math.abs(aim(gap - d / dpr / n)) >= 0.02 && Math.abs(aim(gap + (Math.round(pitch * dpr) - pitch * dpr) / dpr)) >= 0.02) {
+      el.style.columnGap = '';
+    }
   }
 
   private stop(): void {
@@ -378,6 +454,10 @@ class Rail implements LoopRail {
   private onEnd = (): void => {
     this.hydrate();
     if (this.auto) this.normalize(true);
+  };
+
+  private onAnimEnd = (): void => {
+    this.queue();
   };
 
   /* A clone has no component behind it, so nothing listens to it: the click is replayed on the card it was
