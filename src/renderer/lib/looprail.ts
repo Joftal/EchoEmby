@@ -58,8 +58,11 @@ export interface LoopRail {
 
 const rails = new WeakMap<HTMLElement, LoopRail>();
 
-export function createLoopRail(track: HTMLElement, opts: { auto?: boolean; onChange?: (looped: boolean) => void } = {}): LoopRail {
-  const r = new Rail(track, opts.auto !== false, opts.onChange);
+export function createLoopRail(
+  track: HTMLElement,
+  opts: { auto?: boolean; onChange?: (looped: boolean) => void; onShift?: (d: number) => void } = {},
+): LoopRail {
+  const r = new Rail(track, opts.auto !== false, opts.onChange, opts.onShift);
   rails.set(track, r);
   return r;
 }
@@ -91,7 +94,12 @@ class Rail implements LoopRail {
   private mo: MutationObserver | null = null;
   private io: IntersectionObserver | null = null;
 
-  constructor(private el: HTMLElement, private auto: boolean, private onChange?: (looped: boolean) => void) {
+  constructor(
+    private el: HTMLElement,
+    private auto: boolean,
+    private onChange?: (looped: boolean) => void,
+    private onShift?: (d: number) => void,
+  ) {
     // The copies are inserted and removed behind the viewport. Scroll anchoring would treat that as the
     // content moving and "helpfully" move the offset to compensate — which is the one thing that must
     // never happen to a position chosen by this file.
@@ -254,6 +262,12 @@ class Rail implements LoopRail {
     this.period = t0 ? this.x(t0) - this.x(orig[0]) : orig.length * p;
     this.home = this.x(orig[0]) - padL;
     this.looped = true;
+    /* A caller that is still walking towards somewhere has that somewhere in the old coordinates. The
+       copies just went in front of the row, so its target has to move by the same amount — otherwise the
+       caller stops one band short of the card it was asked to show (measured on the 灯箱 thumb rail: the
+       centring ask for 第 34 张 landed 1506px short, and the rail opened with the selected thumb off the
+       end of it, which read as 「没有选中当前卡片」). */
+    if (this.home !== from) this.onShift?.(this.home - from);
     const target = Math.max(0, Math.min(el.scrollWidth - el.clientWidth, scroll + (this.home - from)));
     /* A glide whose destination just moved has to be sent on its way again from where it actually is;
        writing the offset would cut it off. Measured on the player's 选集条, which is asked to centre on the
@@ -284,6 +298,7 @@ class Rail implements LoopRail {
     // with the row, or the next measure reads the leftover as a position the reader asked for.
     if (back) {
       const to = Math.max(0, this.el.scrollLeft - back);
+      this.onShift?.(to - this.el.scrollLeft);
       this.put(to);
     }
     if (was) this.onChange?.(false);
@@ -349,6 +364,7 @@ class Rail implements LoopRail {
     else if (s >= this.home + this.period - slack) d = -this.period;
     else return 0;
     this.put(s + d);
+    this.onShift?.(d);
     // Re-copying at the seam is also what hands a clone the art its source loaded while nobody was looking.
     this.copy(this.originals());
     return d;

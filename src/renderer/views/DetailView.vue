@@ -390,8 +390,8 @@ function followStrip(): void {
     return;
   }
   // The loop moves the rail across a seam by one list-length; the target has to be carried along with it
-  // or the follow loop spends the rest of the gesture chasing an offset the rail no longer has.
-  if (stripRail) stripWant += stripRail.normalize(true);
+  // or the follow loop chases an offset the rail no longer has. 「onShift」 in the watch below carries it.
+  if (stripRail) stripRail.normalize(true);
   // Asked of the rail, because a gesture that keeps adding to its target runs past where the copies end;
   // there it steps the rail and the target back by a whole list together rather than parking at the wall.
   const want = stripRail ? stripRail.place(stripWant, false) : Math.max(0, Math.min(el.scrollWidth - el.clientWidth, stripWant));
@@ -454,7 +454,7 @@ function onViewerKey(e: KeyboardEvent): void {
    `followStrip` walks to, and that is where the seam is crossed. */
 watch(strip, el => {
   stripRail?.destroy();
-  stripRail = el ? createLoopRail(el, { auto: false }) : null;
+  stripRail = el ? createLoopRail(el, { auto: false, onShift: d => { stripWant += d; } }) : null;
 });
 
 watch(viewer, i => {

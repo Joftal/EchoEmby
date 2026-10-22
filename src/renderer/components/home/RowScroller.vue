@@ -107,7 +107,7 @@ onMounted(() => {
   }
   const tr = track.value;
   if (tr) {
-    rail = createLoopRail(tr, { onChange: () => measure() });
+    rail = createLoopRail(tr, { onChange: () => measure(), onShift: d => { want += d; } });
     ro = new ResizeObserver(measure);
     ro.observe(tr);
     mo = new MutationObserver(measure);
