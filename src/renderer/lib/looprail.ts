@@ -16,6 +16,10 @@
 
 const CLONE = 'data-loop-clone';
 
+/** What a card hears when a copy of itself is on screen while the card is not. Its picture is gated on
+ *  being near, and a copy is near for the reader while being nowhere near the thing it was copied from. */
+export const LOOP_NEED = 'loop-need';
+
 /** How much of its own width an arrow press travels, and therefore how many copies a row has to keep on the
  *  side it is heading for. Shared so the engines step by it and this file sizes the copies against it. */
 export const RAIL_PRESS = 0.82;
@@ -82,6 +86,7 @@ class Rail implements LoopRail {
    *  way there, and re-anchoring that would stop the journey short of its destination. */
   private want = 0;
   private frame = 0;
+  private hFrame = 0;
   private ro: ResizeObserver | null = null;
   private mo: MutationObserver | null = null;
   private io: IntersectionObserver | null = null;
@@ -116,6 +121,8 @@ class Rail implements LoopRail {
   destroy(): void {
     if (this.frame) cancelAnimationFrame(this.frame);
     this.frame = 0;
+    if (this.hFrame) cancelAnimationFrame(this.hFrame);
+    this.hFrame = 0;
     this.ro?.disconnect();
     this.mo?.disconnect();
     this.io?.disconnect();
@@ -162,6 +169,38 @@ class Rail implements LoopRail {
       this.frame = 0;
       this.sync();
     });
+  }
+
+  private soon(): void {
+    if (this.hFrame) return;
+    this.hFrame = requestAnimationFrame(() => {
+      this.hFrame = 0;
+      this.hydrate();
+    });
+  }
+
+  /* A copy of a card whose picture nobody asked for is a grey box the reader can see. Two things keep it
+     that way: the card behind the copy withholds its art until its own IntersectionObserver says it is
+     near — and a copy parked in the left gutter, or one the loop has just slid into view, is near for the
+     reader while being nowhere near it — and the copy's own `img` is `loading="lazy"`, so a node sitting
+     outside the scrollport never fetches. Say so to both, for the copies that are actually wanted: the
+     rest stay cheap. */
+  private hydrate(): void {
+    const el = this.el;
+    if (!this.looped || !el.clientWidth) return;
+    const orig = this.originals();
+    const l = el.scrollLeft - this.p;
+    const r = el.scrollLeft + el.clientWidth + this.p;
+    for (const c of Array.from(this.head.children) as HTMLElement[]) this.need(c, l, r, orig);
+    for (const c of Array.from(this.tail.children) as HTMLElement[]) this.need(c, l, r, orig);
+  }
+
+  private need(clone: HTMLElement, l: number, r: number, orig: HTMLElement[]): void {
+    const x0 = this.x(clone);
+    if (x0 > r || x0 + clone.offsetWidth < l) return;
+    for (const img of Array.from(clone.querySelectorAll<HTMLImageElement>('img'))) img.loading = 'eager';
+    const src = orig[Number(clone.getAttribute(CLONE))];
+    if (src && !src.querySelector('img')) src.dispatchEvent(new Event(LOOP_NEED));
   }
 
   /** Move the row without animating it. `scroll-behavior: smooth` is on the track's own rule, so writing
@@ -225,6 +264,7 @@ class Rail implements LoopRail {
       else this.put(target);
     }
     if (!was) this.onChange?.(true);
+    this.hydrate();
   }
 
   private stop(): void {
@@ -242,7 +282,10 @@ class Rail implements LoopRail {
     this.tail.replaceChildren();
     // The copies in front of the first card were holding the row that many pixels along; take them away
     // with the row, or the next measure reads the leftover as a position the reader asked for.
-    if (back) this.put(Math.max(0, this.el.scrollLeft - back));
+    if (back) {
+      const to = Math.max(0, this.el.scrollLeft - back);
+      this.put(to);
+    }
     if (was) this.onChange?.(false);
   }
 
@@ -312,10 +355,12 @@ class Rail implements LoopRail {
   }
 
   private onScroll = (): void => {
+    this.soon();
     if (this.auto) this.normalize();
   };
 
   private onEnd = (): void => {
+    this.hydrate();
     if (this.auto) this.normalize(true);
   };
 

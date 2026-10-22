@@ -7,6 +7,7 @@ import { begin } from '../../lib/handoff';
 import { episodeName, episodePosition, fmtRuntime, seenLabel } from '../../lib/format';
 import { mergeGenres } from '../../lib/genres';
 import { useTmdb } from '../../lib/scores';
+import { LOOP_NEED } from '../../lib/looprail';
 
 const props = withDefaults(defineProps<{ item: LibraryItem; index?: number; matchedGenres?: string[] }>(), {
   index: 0,
@@ -33,6 +34,8 @@ const src = computed(() => {
 const near = ref(false);
 let io: IntersectionObserver | null = null;
 onMounted(() => {
+  // See MediaCard: a copy of this card can be on screen while the card itself is nowhere near it.
+  root.value?.addEventListener(LOOP_NEED, () => { near.value = true; }, { once: true });
   if (!window.IntersectionObserver || !root.value) {
     near.value = true;
     return;

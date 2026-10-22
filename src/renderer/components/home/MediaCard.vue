@@ -6,6 +6,7 @@ import { useAppStore } from '../../stores/app';
 import { begin } from '../../lib/handoff';
 import { episodeName, episodePosition, fmtRuntime, seenLabel } from '../../lib/format';
 import { useTmdb } from '../../lib/scores';
+import { LOOP_NEED } from '../../lib/looprail';
 
 const props = withDefaults(
   defineProps<{ item: LibraryItem; variant?: 'poster' | 'still'; width?: number; index?: number }>(),
@@ -33,6 +34,10 @@ const src = computed(() => {
 const near = ref(false);
 let io: IntersectionObserver | null = null;
 onMounted(() => {
+  /* A looping row keeps copies of its far cards at either end, and a copy is on screen while the card it was
+     copied from is nowhere near it. The row says so when the copy is the one the reader can see; until it
+     does, this card withholds the picture the copy is standing in for. */
+  root.value?.addEventListener(LOOP_NEED, () => { near.value = true; }, { once: true });
   if (!window.IntersectionObserver || !root.value) {
     near.value = true;
     return;
