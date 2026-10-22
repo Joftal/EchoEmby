@@ -45,8 +45,9 @@ const FAMILY: Record<string, string[]> = Object.entries(ALIAS).reduce((acc, [raw
 
 /** Mapped and deduplicated: one item can carry both spellings of the same genre. `prefer` (the Chinese labels
  *  a page is currently filtered by) is pulled to the front so a card answering a 分类 filter always names the
- *  genre it was matched on, even where the server's own array put it fifth of six. */
-export const genreLabels = (names?: string[], prefer: string[] = []): string[] => {
+ *  genre it was matched on, even where the server's own array put it fifth of six. Every surface that prints a
+ *  genre line now goes through `mergeGenres`, so this is that function's fold rather than an entry point. */
+const genreLabels = (names?: string[], prefer: string[] = []): string[] => {
   const folded = [...new Set((names || []).map(genreLabel))];
   if (!prefer.length) return folded;
   const top = prefer.filter(p => folded.includes(p));

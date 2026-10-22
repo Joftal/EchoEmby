@@ -12,8 +12,9 @@ import HeroPlay from '../components/HeroPlay.vue';
 import logoTmdb from '../assets/logos/tmdb.svg';
 import { libraryWorks, useRelated, REVEAL_MS, type WorkKind, type WorkSeed } from '../lib/related';
 import { embyCached } from '../lib/embycache';
+import { mergeGenres } from '../lib/genres';
 import { beginPlay, workSeedFor } from '../lib/handoff';
-import { accountName, episodeHead, fmtDate, fmtRuntime, seenLabel, seasonTitle } from '../lib/format';
+import { accountName, episodeHead, fmtDate, fmtMinutes, fmtRuntime, seenLabel, seasonTitle } from '../lib/format';
 import { resetPageScroll } from '../lib/scroll';
 import { useAppStore } from '../stores/app';
 import { vReveal } from '../lib/reveal';
@@ -171,9 +172,12 @@ function pickSeason(v: string | string[]): void {
 }
 
 const overviewText = computed(() => meta.value?.overviewZh || meta.value?.overviewOther || (fallback.value ? libItem.value?.overview || '' : ''));
-/** 分类 is TMDB's list when it answered; on the server's own record the row carries its own (measured:
- *  动画 | 喜剧 on 百变的七仓同学), which is the same fact stated by the machine holding the file. */
-const shownGenres = computed<string[]>(() => meta.value?.genres || (fallback.value ? libItem.value?.genres || [] : []));
+/** 分类 is TMDB's list with the server's own labels appended (measured: 动画 | 喜剧 on 百变的七仓同学), which
+ *  is the same fact stated by the machine holding the file. Either way it goes through the one alias table
+ *  the rest of the app folds with, so this page and the detail page cannot spell the same genre two ways
+ *  (measured here: TMDB answers Sci-Fi & Fantasy in English for some of these works, and 详情页 turned that
+ *  into 科幻奇幻 while this page printed it raw). */
+const shownGenres = computed<string[]>(() => mergeGenres(meta.value?.genres, fallback.value ? libItem.value?.genres : []));
 const crew = computed(() => {
   const src = kind.value === 'tv' ? seasonCast.value : meta.value?.cast || null;
   const rows: { id: string; name: string; sub: string; face: string }[] = [];
@@ -189,6 +193,14 @@ const crew = computed(() => {
   }
   return rows.slice(0, 30);
 });
+
+/* TMDB files a face for a credit it sometimes has no picture for any more, and the initial under it is
+   already the other half of that test — so a face that will not decode only has to retire its URL. */
+const faceDead = ref<Record<string, true>>({});
+const faceOf = (p: { face: string }): string => (p.face && !faceDead.value[p.face] ? p.face : '');
+const onFaceFail = (p: { face: string }): void => {
+  if (p.face) faceDead.value = { ...faceDead.value, [p.face]: true };
+};
 
 /** The server's row for the season on screen, when any of this work's rows holds it. The season number is
  *  the join, and it is one this page can make and the detail page cannot: the list here is TMDB's, so a
@@ -265,6 +277,10 @@ const metaLine = computed(() => {
   return [String(year.value || ''), kind.value === 'tv' ? '' : m.runtime ? `${m.runtime} 分钟` : ''].filter(Boolean).join(' · ');
 });
 
+/* A still that will not decode has to step down to the letter rather than leave a bare 16:9 box: this page
+   holds no second picture for an episode, so the one rung it has is the placeholder the `v-else` draws. */
+const imgDead = ref<Record<string, true>>({});
+const liveImg = (key: string, url: string): string => (url && !imgDead.value[key] ? url : '');
 const eps = computed<EpView[]>(() => {
   const n = Number(seasonPick.value);
   if (!seasonPick.value) return [];
@@ -276,9 +292,9 @@ const eps = computed<EpView[]>(() => {
         key: e.id,
         head: episodeHead({ episode: e.indexNumber, season: n, seriesName: name.value }, r?.nZh, r?.nOther, e.name),
         ov: r?.ovZh || r?.ovOther || e.overview || '',
-        img: stillUrl(r?.p),
-        date: fmtDate(e.premiereDate),
-        len: fmtRuntime(e.runTimeTicks),
+        img: liveImg(e.id, stillUrl(r?.p)),
+        date: fmtDate(e.premiereDate) || fmtDate(r?.air),
+        len: fmtRuntime(e.runTimeTicks) || fmtMinutes(r?.rt),
         seen: seenLabel(e.userData, e.runTimeTicks),
         played: Math.min(100, e.userData?.playedPercentage || 0),
         to: `/detail/${e.id}`,
@@ -294,9 +310,9 @@ const eps = computed<EpView[]>(() => {
         key: `t${k}`,
         head: episodeHead({ episode: k, season: n, seriesName: name.value }, r?.nZh, r?.nOther),
         ov: r?.ovZh || r?.ovOther || '',
-        img: stillUrl(r?.p),
-        date: '',
-        len: '',
+        img: liveImg(`t${k}`, stillUrl(r?.p)),
+        date: fmtDate(r?.air),
+        len: fmtMinutes(r?.rt),
         seen: '',
         played: 0,
         to: '',
@@ -611,7 +627,7 @@ function open(to: string, autoplay = false): void {
           @click="e.to && open(e.to, true)"
         >
           <div class="ethumb">
-            <img v-reveal v-if="e.img" :src="e.img" alt="" loading="lazy" decoding="async" />
+            <img v-reveal v-if="e.img" :src="e.img" alt="" loading="lazy" decoding="async" @error="imgDead[e.key] = true" />
             <span v-else class="ph">{{ e.head.slice(0, 1) }}</span>
             <span v-if="e.to" class="disc" role="presentation">
               <svg viewBox="0 0 24 24" width="18" height="18"><path d="M8 5l12 7-12 7z" fill="currentColor" /></svg>
@@ -630,7 +646,7 @@ function open(to: string, autoplay = false): void {
       <HScroller v-if="crew.length" class="block" title="演职员" :count="crew.length">
         <div v-for="p in crew" :key="p.id" class="person">
           <div class="face">
-            <img v-reveal v-if="p.face" :src="p.face" alt="" loading="lazy" />
+            <img v-reveal v-if="faceOf(p)" :src="faceOf(p)" alt="" loading="lazy" @error="onFaceFail(p)" />
             <span v-else class="ini">{{ p.name.slice(0, 1) }}</span>
           </div>
           <p class="pn">{{ p.name }}</p>

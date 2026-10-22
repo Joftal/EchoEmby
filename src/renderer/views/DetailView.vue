@@ -14,9 +14,9 @@ import HeroSkeleton from '../components/HeroSkeleton.vue';
 import { tmdbKind as kindOf, trustSeason, useScores } from '../lib/scores';
 import { usePlayerStore } from '../stores/player';
 import { useAppStore } from '../stores/app';
-import { accountName, episodeHead, fmtDate, fmtDateTime, fmtRuntime, seenLabel, seasonTitle } from '../lib/format';
+import { accountName, episodeHead, fmtDate, fmtDateTime, fmtMinutes, fmtRuntime, seenLabel, seasonTitle } from '../lib/format';
 import { PLAYABLE, PLAYABLE_PAGE, resumeTarget, seasonTarget } from '../lib/resume';
-import { genreLabels } from '../lib/genres';
+import { mergeGenres } from '../lib/genres';
 import { resetPageScroll } from '../lib/scroll';
 import { embyCached } from '../lib/embycache';
 import { libraryWorks, useRelated, type WorkSeed } from '../lib/related';
@@ -185,20 +185,47 @@ const wantRail = computed(
 const wantTech = computed(() => pageType.value === 'Movie' && !source.value);
 
 /** image.tmdb.org answers directly on this machine (the API host needs the system proxy). */
-const stillRow = (ep: number | undefined): TmdbEpisodeRow | undefined => (ep == null ? undefined : stills.value[ep]);
-const stillUrl = (ep: number | undefined): string => {
-  const p = stillRow(ep)?.p;
-  return p ? `https://image.tmdb.org/t/p/w500${p}` : '';
+/* Whether TMDB's row for episode number N is *this* card's episode. The season-level count pairing answers
+   coarse: it refuses a show still airing, whose 3 files against TMDB's 13 is a partial download rather than
+   a mispairing (measured on PSYREN 第 1 季 — 3/13 = 0.23 against the 0.67 line, which cost all three cards
+   their outside picture even though TMDB bills a still for each of them). So a refusal is not final: two
+   sides that agree on when this one episode aired have said something stronger than two counts. */
+const countsPaired = computed(() => !!trustRow(seasonNumber.value, seasonRow.value?.childCount));
+/** The server's own date is a timestamp with a zone, TMDB's a plain `YYYY-MM-DD`, and this gateway writes
+ *  its season dates a day early — so the claim being tested is the calendar day, with one day of slack. */
+const DAY_MS = 86400000;
+const sameEpisodeDate = (server?: string, tmdb?: string): boolean => {
+  if (!server || !tmdb) return false;
+  const a = Date.parse(server);
+  const b = Date.parse(tmdb);
+  return Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= DAY_MS;
 };
+const stillRow = (ep: number | undefined, airDate?: string): TmdbEpisodeRow | undefined => {
+  if (ep == null) return undefined;
+  const r = stills.value[ep];
+  if (!r || countsPaired.value) return r;
+  return sameEpisodeDate(airDate, r.air) ? r : undefined;
+};
+/** A card built from TMDB's own row needs no pairing test — the picture and the card are the same episode
+    by construction — so it takes the path straight from the row. */
+const tmdbStillUrl = (p?: string): string => (p ? `https://image.tmdb.org/t/p/w500${p}` : '');
+const stillUrl = (ep: number | undefined, airDate?: string): string => tmdbStillUrl(stillRow(ep, airDate)?.p);
 /** The episode's own paragraph, in the order every text surface here uses: TMDB in Chinese, then TMDB in
  *  whatever else it filed, then the server's line. The server carries no overview for 475 of the
  *  library's 600 sampled episodes, and TMDB's line for each of them arrives inside the season reply the
  *  pictures were already being asked for. */
 const epOverview = (e: LibraryItem): string => {
-  const r = stillRow(e.indexNumber);
+  const r = stillRow(e.indexNumber, e.premiereDate);
   return r?.ovZh || r?.ovOther || e.overview || '';
 };
 const posterUrl = (p?: string): string => (p ? `https://image.tmdb.org/t/p/w342${p}` : '');
+/** The server's own stamp first, then the date TMDB bills this episode for — the field is already in hand,
+ *  and a card that said nothing for want of a `PremiereDate` has a real one to say. Only a paired row may
+ *  speak, so a season whose numbering the count test refused cannot borrow another season's calendar. */
+const epDate = (e: LibraryItem): string => fmtDate(e.premiereDate) || fmtDate(stillRow(e.indexNumber, e.premiereDate)?.air);
+/** The same shape for the length: the file's own running time, else what TMDB bills the episode (76% of
+ *  rows carry one, measured over 204). */
+const epLen = (e: LibraryItem): string => fmtRuntime(e.runTimeTicks) || fmtMinutes(stillRow(e.indexNumber, e.premiereDate)?.rt);
 const backdropUrl = (p: string): string => `https://image.tmdb.org/t/p/w780${p}`;
 /** The band draws each head at 110px, which is 137.5 device px at this window; w185 is the smallest
  *  tier above that, and the largest one TMDB documents for a profile crop. */
@@ -442,6 +469,19 @@ watch(
   { immediate: true },
 );
 
+/* A credit's face is the one picture on this page that arrives from a place which can answer with nothing:
+   the gateway mints a URL for the person's tag and sometimes will not render it. The initial is already the
+   other half of the same test, so a face that will not decode only has to retire its URL. */
+const faceDead = ref<Record<string, true>>({});
+const faceOf = (p: CrewRow): string => {
+  const url = p.face || faces.value[p.id] || '';
+  return url && !faceDead.value[url] ? url : '';
+};
+const onFaceFail = (p: CrewRow): void => {
+  const url = p.face || faces.value[p.id] || '';
+  if (url) faceDead.value = { ...faceDead.value, [url]: true };
+};
+
 const epArt = ref<Record<string, string>>({});
 watch(
   episodes,
@@ -548,7 +588,7 @@ watch([episodeN, resumeIndex, () => epiBand.value], async () => {
  *  position the card already prints: measured over 3681 rows, 645 are 「第 57 集」 and 63 more are
  *  「ゆるキャン△ - S01E06」, while the rest keep their own title. */
 const epTitle = (e: LibraryItem): string => {
-  const r = stillRow(e.indexNumber);
+  const r = stillRow(e.indexNumber, e.premiereDate);
   return episodeHead(
     { episode: e.indexNumber, season: e.parentIndexNumber ?? seasonNumber.value, seriesName: e.seriesName || work.value?.name },
     r?.nZh,
@@ -576,16 +616,26 @@ interface BandRow {
   played: number;
   ov: string;
 }
+const artDead = ref<Record<string, true>>({});
+/** A card's picture is a ladder, and a rung that will not decode has to step down rather than leave an
+ *  empty frame: the gateway mints a URL for an episode's own Primary it cannot always render (measured: it
+ *  answers 500 for some), and the same card has a still of its own on TMDB behind it. Keyed by the URL, so
+ *  the second rung is tried, and the letter only shows once every candidate has failed. */
+const pickArt = (key: string, urls: string[]): string => urls.find(u => u && !artDead.value[`${key}|${u}`]) || '';
+const onArtFail = (r: BandRow): void => {
+  if (!r.art) return;
+  artDead.value = { ...artDead.value, [`${r.key}|${r.art}`]: true };
+};
 const band = computed<BandRow[]>(() => {
   if (seasonRow.value) {
     return episodes.value.map(e => ({
       key: e.id,
       id: e.id,
-      art: epArt.value[e.id] || stillUrl(e.indexNumber),
+      art: pickArt(e.id, [epArt.value[e.id] || '', stillUrl(e.indexNumber, e.premiereDate)]),
       ph: (e.name || '?').slice(0, 1),
       title: epTitle(e),
-      date: fmtDate(e.premiereDate),
-      len: fmtRuntime(e.runTimeTicks),
+      date: epDate(e),
+      len: epLen(e),
       seen: epSeen(e),
       played: epPlayed(e),
       ov: epOverview(e),
@@ -599,12 +649,11 @@ const band = computed<BandRow[]>(() => {
       return {
         key: `t${k}`,
         id: '',
-        art: stillUrl(k),
+        art: pickArt(`t${k}`, [tmdbStillUrl(r?.p)]),
         ph: (r?.nZh || r?.nOther || '?').slice(0, 1),
         title: episodeHead({ episode: k, season: seasonNumber.value, seriesName: work.value?.name }, r?.nZh, r?.nOther),
-        date: '',
-        // TMDB bills no running time per episode, so the card prints nothing rather than the work's.
-        len: '',
+        date: fmtDate(r?.air),
+        len: fmtMinutes(r?.rt),
         seen: '',
         played: 0,
         ov: r?.ovZh || r?.ovOther || '',
@@ -618,7 +667,10 @@ const band = computed<BandRow[]>(() => {
  *  what is missing while the answer is still on its way is the same lie as a blank stretch of page. */
 const noBand = computed(() => seasonN.value >= 0 && !band.value.length && !wantRail.value && stillsSettled.value);
 
-const genres = computed(() => genreLabels(work.value?.genres));
+/* The 分类 block is about the work, not about this server's tagging of it, so it reads TMDB first and the
+   gateway's own labels after. Measured here: 32 of this library's 400 Series/Movie rows bill no genre at all
+   (暗杀教室：365天的时间 among them), and the block used to disappear with them. */
+const genres = computed(() => mergeGenres(scores.value.tmdb?.genres, work.value?.genres));
 const premiered = computed(() => fmtDate(item.value?.premiereDate) || String(item.value?.productionYear || ''));
 
 /** One numbered season of this work, and where its files would be. `season` is null for the seasons this
@@ -703,16 +755,19 @@ watch(castKey, key => {
   });
 });
 
-/* The stills ride the same gate as the art, the date, the synopsis and the credits, and for the same
-   reason: asked off the server's raw season number, a pairing `trustRow` refuses (800 Meters' 1 against
-   TMDB's 3) would still dress this season's episode cards with another season's pictures. Keyed the same
-   way and held the same way, because `loadEpisodes` clears the map on every switch and a switch back has
-   to repaint from what is in hand rather than wait out a second ask. */
+/* The ask is not gated on the season pairing, but every reader of its rows is. A count test cannot tell a
+   mispaired season from a show that is still airing — PSYREN's 3 files against TMDB's 13 refused the season
+   and cost all three cards a picture TMDB has for each of them — so the reply is fetched whenever the work
+   has a TMDB id and a season number, and `stillRow` then decides per episode, on that episode's own air
+   date, whether a row may dress the card. A pairing that is genuinely wrong (800 Meters' 1 against TMDB's
+   3) fails the date test too and paints what it painted before. What this costs is one season reply per
+   refused pairing, cached for 14 days. Held keyed and repainted from the key, because `loadEpisodes` clears
+   the map on every switch and a switch back must not wait out a second ask. */
 const stillsAsked = new Set<string>();
 const stillsByKey = new Map<string, TmdbStills>();
 const stillsKey = (): string => {
   const id = String(work.value?.providers?.tmdb || '');
-  return tmdbSeason.value && seasonNumber.value != null && /^\d{1,8}$/.test(id) ? `${seasonNumber.value}|${id}` : '';
+  return seasonNumber.value != null && /^\d{1,8}$/.test(id) ? `${seasonNumber.value}|${id}` : '';
 };
 watch(stillsKey, key => {
   if (!key) return;
@@ -1208,7 +1263,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
           </template>
           <button v-for="r in band" :key="r.key" class="epi" :class="{ off: !r.id }" :disabled="!r.id" @click="play(r.id, false)">
             <div class="ethumb">
-              <img v-reveal v-if="r.art" :src="r.art" alt="" loading="lazy" decoding="async" />
+              <img v-reveal v-if="r.art" :src="r.art" alt="" loading="lazy" decoding="async" @error="onArtFail(r)" />
               <span v-else class="ph">{{ r.ph }}</span>
               <span class="disc" role="presentation"><svg viewBox="0 0 24 24" width="18" height="18"><path d="M8 5l12 7-12 7z" fill="currentColor" /></svg></span>
               <span v-if="r.seen" class="echip">{{ r.seen }}</span>
@@ -1289,7 +1344,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
         <HScroller v-if="crew.length" title="演职员" :count="crew.length" class="block">
           <div v-for="p in crew" :key="p.id" class="person">
             <div class="face">
-              <img v-reveal v-if="p.face || faces[p.id]" :src="p.face || faces[p.id]" alt="" loading="lazy" />
+              <img v-reveal v-if="faceOf(p)" :src="faceOf(p)" alt="" loading="lazy" @error="onFaceFail(p)" />
               <span v-else class="ini">{{ p.name.slice(0, 1) }}</span>
             </div>
             <p class="pn">{{ p.name }}</p>
