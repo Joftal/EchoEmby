@@ -300,8 +300,8 @@ export function useRelated(get: () => WorkSeed | null | undefined): ComputedRef<
     if (card.poster) return;
     void useAppStore()
       .itemArt(row, 342)
-      .then(u => {
-        if (mine === run && u) card.poster = u;
+      .then(rungs => {
+        if (mine === run && rungs.length) card.poster = rungs[0];
       });
   }
 

@@ -19,7 +19,8 @@ const seasons = ref<LibraryItem[]>([]);
 const episodes = ref<LibraryItem[]>([]);
 const active = ref('');
 const loading = ref(false);
-const art = ref<Record<string, string>>({});
+const art = ref<Record<string, string[]>>({});
+const artDead = ref<Record<string, true>>({});
 /* TMDB's title for each episode, off the same per-season reply the frames come from. The chips above the
    strip already name the season, so this only ever adds what the episode is called — and it is what puts a
    Chinese 集名 on a row the server filed as 「ゆるキャン△ - S01E06」. */
@@ -67,17 +68,23 @@ async function loadEpisodes(sid: string): Promise<void> {
   );
   if (r.ok) episodes.value = r.data || [];
   for (const e of episodes.value) {
-    if (art.value[e.id] === undefined) void app.itemArt(e, 320, true).then(url => (art.value[e.id] = url));
+    if (art.value[e.id] === undefined) void app.itemArt(e, 320, true).then(urls => (art.value[e.id] = urls));
     if (names.value[e.id] === undefined) void app.episodeTitle(e).then(n => (names.value[e.id] = n));
   }
   await centerOnPlaying();
 }
 
-/** The gateway mints a URL for a tag it cannot always render - measured: an episode's own Primary answers
- *  500 on this server - so a broken frame has to step down to the number instead of leaving an empty box.
- *  Clearing the entry is enough: the placeholder is the `v-else` of the same test. */
+/** The frame this cell shows: the best picture the browser has not already watched fail. */
+const artOf = (ep: LibraryItem): string => (art.value[ep.id] || []).find(u => !artDead.value[u]) || '';
+
+/* The gateway mints a URL for a tag it cannot always render — measured: an episode's own Primary answers 500
+   on this server — and behind that card sit TMDB's still of the episode and the series backdrop. A picture
+   that will not decode therefore steps down one rung, and the number is only what is left when the ladder
+   has run out. */
 function onArtFail(ep: LibraryItem): void {
-  art.value[ep.id] = '';
+  const cur = artOf(ep);
+  if (!cur) return;
+  artDead.value = { ...artDead.value, [cur]: true };
 }
 
 /** A hundred episodes that open on 第 1 集 while 第 104 集 is on screen ask the user to hunt for the cell
@@ -136,7 +143,7 @@ const titleOf = (ep: LibraryItem): string =>
     <div v-else ref="strip" class="pl-strip">
       <button v-for="ep in episodes" :key="ep.id" class="pl-cell" :class="{ on: ep.id === itemId }" @click="choose(ep.id)">
         <span class="art">
-          <img v-reveal v-if="art[ep.id]" :src="art[ep.id]" :alt="ep.name" loading="lazy" @error="onArtFail(ep)" />
+          <img v-reveal v-if="artOf(ep)" :src="artOf(ep)" :alt="ep.name" loading="lazy" @error="onArtFail(ep)" />
           <template v-else>{{ ep.indexNumber ?? '' }}</template>
         </span>
         <span class="cap">

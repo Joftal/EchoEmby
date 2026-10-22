@@ -300,12 +300,21 @@ export const useAppStore = defineStore('app', () => {
    *  (measured on that page: 21 of those 48; the 27 misses are 物语系列, whose seasons this server numbers
    *  11-13 while TMDB stops at 5), and the series above them always has a backdrop and a poster, which this
    *  gateway serves without ever needing a tag. So a 16:9 frame asks for its own still and falls back to the
-   *  series backdrop, a 2:3 frame takes the series poster, and the letter placeholder is the last resort. */
-  async function itemArt(item: LibraryItem, width: number, wide = false): Promise<string> {
-    if (item.primaryImageTag) return imageUrl(item, width);
-    if (item.type !== 'Episode' || !item.parentId) return '';
-    if (wide) return (await episodeStill(item)) || backdropUrl({ id: item.parentId }, width);
-    return imageUrl({ id: item.parentId }, width);
+   *  series backdrop, a 2:3 frame takes the series poster, and the letter placeholder is the last resort.
+   *
+   *  Every rung is returned, not just the best one, because the best one is a URL the gateway can mint and
+   *  then fail to render — measured: an episode's own Primary answers 500 while the card still has TMDB's
+   *  still behind it. A card that sees its picture refuse to decode has to be able to step down without
+   *  asking again. */
+  async function itemArt(item: LibraryItem, width: number, wide = false): Promise<string[]> {
+    const rungs: string[] = [];
+    if (item.primaryImageTag) rungs.push(await imageUrl(item, width));
+    if (item.type === 'Episode' && item.parentId) {
+      const still = wide ? await episodeStill(item) : '';
+      if (still) rungs.push(still);
+      rungs.push(wide ? await backdropUrl({ id: item.parentId }, width) : await imageUrl({ id: item.parentId }, width));
+    }
+    return [...new Set(rungs.filter(Boolean))];
   }
 
   /* ---------------------------------------------------------- writes that come back

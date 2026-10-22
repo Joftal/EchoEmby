@@ -5,7 +5,7 @@ import type { LibraryItem } from '../../../shared/types';
 import { useAppStore } from '../../stores/app';
 import { begin } from '../../lib/handoff';
 import { episodeName, episodePosition, fmtRuntime, seenLabel } from '../../lib/format';
-import { genreLabels } from '../../lib/genres';
+import { mergeGenres } from '../../lib/genres';
 import { useTmdb } from '../../lib/scores';
 
 const props = withDefaults(defineProps<{ item: LibraryItem; index?: number; matchedGenres?: string[] }>(), {
@@ -16,10 +16,18 @@ const props = withDefaults(defineProps<{ item: LibraryItem; index?: number; matc
 const store = useAppStore();
 const router = useRouter();
 const root = ref<HTMLElement | null>(null);
-const src = ref('');
+const rungs = ref<string[]>([]);
+const dead = ref<Record<string, true>>({});
 const loaded = ref(false);
 const failed = ref(false);
 const tries = ref(0);
+/** The best picture this card has not already watched fail. TMDB's own poster is the last rung and costs no
+ *  ask of its own — it rides the same reply the ★ badge reads — so a row whose picture will not decode still
+ *  ends up with a picture rather than a letter. */
+const src = computed(() => {
+  const extra = tmdb.value.meta?.poster ? `https://image.tmdb.org/t/p/w500${tmdb.value.meta.poster}` : '';
+  return [...rungs.value, extra].find(u => u && !dead.value[u]) || '';
+});
 
 /** The gateway 500s on a burst, so a list only asks for the art it can see. */
 const near = ref(false);
@@ -46,7 +54,9 @@ onBeforeUnmount(() => {
   io = null;
 });
 
-const url = computed(() => (src.value && tries.value ? `${src.value}&_r=${tries.value}` : src.value));
+const url = computed(() =>
+  src.value && tries.value ? `${src.value}${src.value.includes('?') ? '&' : '?'}_r=${tries.value}` : src.value,
+);
 
 watch(
   () => [props.item.id, near.value] as const,
@@ -54,18 +64,27 @@ watch(
     if (!near.value) return;
     loaded.value = false;
     tries.value = 0;
-    src.value = await store.itemArt(props.item, 190);
-    failed.value = !src.value;
+    dead.value = {};
+    rungs.value = await store.itemArt(props.item, 190);
+    failed.value = !rungs.value.length;
   },
   { immediate: true },
 );
 
+/* Two different faults arrive as the same error event: the gateway flaking on a burst, which one more try
+   clears, and the gateway minting a URL for a tag it cannot render, which no retry clears and the next rung
+   does. So try the picture once more, then step down to the stand-in behind it, and only fall to the letter
+   when the ladder has run out. */
 function onErr(): void {
-  if (tries.value >= 2) {
-    failed.value = true;
+  const cur = src.value;
+  if (!cur) return;
+  if (tries.value === 0) {
+    tries.value = 1;
     return;
   }
-  tries.value += 1;
+  dead.value = { ...dead.value, [cur]: true };
+  tries.value = 0;
+  failed.value = !src.value;
 }
 
 const target = computed(() => (props.item.type === 'Episode' ? props.item.parentId : props.item.id));
@@ -127,11 +146,15 @@ const rating = computed(() => {
   const v = meta?.voteAverage || (ready ? fallback : 0);
   return v > 0 ? v.toFixed(1) : '';
 });
+/* The year reads the server first and TMDB only where the server has nothing; 分类 is a fact about the work
+   rather than about this row, so it takes both lists — TMDB's order, then whatever this server calls a genre
+   that TMDB never named. Measured on 待看: rows that carry no ProductionYear and rows on a shelf nobody ever
+   tagged. Nothing new is asked: this is the same reply the rating and the paragraph on this row ride. */
 const meta = computed(() =>
   [
     props.item.seriesName && props.item.seriesName !== props.item.name ? props.item.seriesName : '',
-    props.item.productionYear ? String(props.item.productionYear) : '',
-    genreLabels(props.item.genres, props.matchedGenres).slice(0, 3).join(' / '),
+    String(props.item.productionYear || tmdb.value.meta?.year || ''),
+    mergeGenres(tmdb.value.meta?.genres, props.item.genres, props.matchedGenres, 3).join(' / '),
   ]
     .filter(Boolean)
     .join('  ·  '),

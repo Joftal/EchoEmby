@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import type { RelatedCard } from '../../lib/related';
 import { begin, beginWork } from '../../lib/handoff';
@@ -24,6 +24,16 @@ const title = computed(() => (props.cards.every(c => c.source === 'pool') ? '同
 
 const router = useRouter();
 
+/* The poster is the one field on this card that comes from a place that can refuse to answer it: TMDB never
+   pictured some of these works, and the server row hydrated in their place is a URL this gateway sometimes
+   500s. The letter is already the other half of the same test, so a picture that will not decode only has to
+   retire its URL. */
+const noPoster = ref<Record<string, true>>({});
+const posterOf = (c: RelatedCard): string => (c.poster && !noPoster.value[c.poster] ? c.poster : '');
+function onPosterFail(c: RelatedCard): void {
+  if (c.poster) noPoster.value = { ...noPoster.value, [c.poster]: true };
+}
+
 /** The handoff is what lets the page arrive painted. For a library card it carries the row itself, so the
  *  hero has its name, its rating and its synopsis on the first frame; for a work the server does not hold
  *  there is no row, and the plate alone is worth handing over — same picture, same 2:3 box. Such a card is
@@ -47,7 +57,7 @@ function peek(card: RelatedCard): void {
   <HScroller v-if="cards.length" class="block" :title="title" :count="cards.length">
     <button v-for="c in cards" :key="c.key" type="button" class="sim" @pointerenter.passive="peek(c)" @click="press(c, $event)">
       <div class="sposter">
-        <img v-reveal v-if="c.poster" :src="c.poster" alt="" loading="lazy" decoding="async" />
+        <img v-reveal v-if="posterOf(c)" :src="posterOf(c)" alt="" loading="lazy" decoding="async" @error="onPosterFail(c)" />
         <span v-else class="ph">{{ c.name.slice(0, 1) }}</span>
         <span v-if="c.item && c.server" class="have">{{ c.server }}</span>
       </div>

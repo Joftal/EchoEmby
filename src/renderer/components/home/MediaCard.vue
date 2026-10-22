@@ -16,10 +16,18 @@ const emit = defineEmits<{ (e: 'play', item: LibraryItem): void }>();
 const store = useAppStore();
 const router = useRouter();
 const root = ref<HTMLElement | null>(null);
-const src = ref('');
+const rungs = ref<string[]>([]);
+const dead = ref<Record<string, true>>({});
 const loaded = ref(false);
 const failed = ref(false);
 const tries = ref(0);
+/** The best picture this card has not already watched fail. TMDB's own poster is the last rung and costs no
+ *  ask of its own — it rides the same reply the ★ badge reads — so a work whose picture will not decode still
+ *  ends up with a picture rather than a letter. */
+const src = computed(() => {
+  const extra = tmdb.value.meta?.poster ? `https://image.tmdb.org/t/p/w500${tmdb.value.meta.poster}` : '';
+  return [...rungs.value, extra].find(u => u && !dead.value[u]) || '';
+});
 
 /** The gateway 500s on a burst, so a grid only asks for the art it can see. */
 const near = ref(false);
@@ -58,19 +66,28 @@ watch(
     if (!near.value) return;
     loaded.value = false;
     tries.value = 0;
+    dead.value = {};
     const still = props.variant === 'still';
-    src.value = await store.itemArt(props.item, still ? 520 : props.width * 2, still);
-    failed.value = !src.value;
+    rungs.value = await store.itemArt(props.item, still ? 520 : props.width * 2, still);
+    failed.value = !rungs.value.length;
   },
   { immediate: true },
 );
 
+/* Two different faults arrive as the same error event: the gateway flaking on a burst, which one more try
+   clears, and the gateway minting a URL for a tag it cannot render, which no retry clears and the next rung
+   does. So try the picture once more, then step down to the stand-in behind it, and only fall to the letter
+   when the ladder has run out. */
 function onErr(): void {
-  if (tries.value >= 2) {
-    failed.value = true;
+  const cur = src.value;
+  if (!cur) return;
+  if (tries.value === 0) {
+    tries.value = 1;
     return;
   }
-  tries.value += 1;
+  dead.value = { ...dead.value, [cur]: true };
+  tries.value = 0;
+  failed.value = !src.value;
 }
 
 /* TMDB's name for this episode, asked on the same `near` gate the art already rides and out of the same
@@ -133,7 +150,7 @@ const metaLine = computed(() => {
   const i = props.item;
   if (props.variant !== 'still') {
     // An episode position is the useful half of a series caption; the premiere year pushes it into ellipsis.
-    const year = i.latestEpisode ? undefined : i.productionYear;
+    const year = i.latestEpisode ? undefined : i.productionYear || tmdb.value.meta?.year;
     return [sub.value, year].filter(Boolean).join(' · ');
   }
   if (i.seriesName && i.indexNumber != null) {

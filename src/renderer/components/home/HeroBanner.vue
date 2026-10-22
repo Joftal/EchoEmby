@@ -2,7 +2,7 @@
 import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue';
 import type { LibraryItem } from '../../../shared/types';
 import { accountName, fmtDate, fmtElapsed, ticksToMs } from '../../lib/format';
-import { genreLabels } from '../../lib/genres';
+import { mergeGenres } from '../../lib/genres';
 import { PLAYABLE, resumeTarget } from '../../lib/resume';
 import { useScores } from '../../lib/scores';
 import HeroPlay from '../HeroPlay.vue';
@@ -67,8 +67,16 @@ const plate = ref<HTMLImageElement | null>(null);
  *  the show's nor one episode's (measured: 模范出租车 answers 1小时4分 for a first season that runs 17小时1分),
  *  so the slide leaves it out the way the detail page's line does. */
 const runtime = computed(() => (playable.value ? fmtElapsed(ticksToMs(current.value?.runTimeTicks)) : ''));
-const genres = computed(() => genreLabels(current.value?.genres).slice(0, 3).join(' '));
-const date = computed(() => fmtDate(current.value?.premiereDate) || String(current.value?.productionYear || ''));
+/* 分类 is about the work rather than about this row, so it takes both lists: TMDB's order, then whatever this
+   server calls a genre that TMDB never named. A shelf the scraper left untagged still gets its labels —
+   measured: 32 of 400 Series/Movie rows bill none — and the merged line costs no request, because it is the
+   same reply the synopsis two lines above already rides. */
+const genres = computed(() => mergeGenres(scores.value.tmdb?.genres, current.value?.genres, [], 3).join(' '));
+/* The year reads the server first and TMDB only where the server has nothing: measured on this library's
+   rows, a Series sometimes bills a PremiereDate and no ProductionYear. */
+const date = computed(
+  () => fmtDate(current.value?.premiereDate) || String(current.value?.productionYear || '') || String(scores.value.tmdb?.year || ''),
+);
 /** The slot beside the genres answers 「what is this」, so it carries the shape the server named. A Series
  *  used to read 「精选推荐」 there — a sentence about the carousel, not the title — and on a host whose
  *  shelves are all shows that is every slide the hero has. */
