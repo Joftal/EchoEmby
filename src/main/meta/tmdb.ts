@@ -317,10 +317,13 @@ async function fetchMeta(kind: Kind, tmdbId: string, token: string, key: string)
     cast: kind === 'movie' ? creditPack(json.credits) : { act: [], dir: [], write: [] },
   };
   const ov = typeof json.overview === 'string' ? json.overview.trim() : '';
-  /* Both halves of the synopsis ladder are written every time, the non-Chinese one even when empty, so a
-     title TMDB has no text for stays cached instead of being re-asked on every open. */
+  /* Exactly one rung of the synopsis ladder is written. It used to write the Chinese one conditionally and the
+     other one always, which put the same string in both rungs whenever TMDB answered in Chinese (measured:
+     1149 of the 1149 entries then on disk held one synopsis twice), so `overviewZh || overviewOther` read as
+     a two-step ladder with one step. Which rung is filled is not a freshness test — `schema` is the only one
+     of those — so leaving the other absent costs nothing, and a title TMDB has no text for writes neither. */
   if (ov && hasHan(ov)) out.overviewZh = ov;
-  out.overviewOther = ov;
+  else if (ov) out.overviewOther = ov;
   const v = num(json.vote_average);
   /* Only a rating somebody actually cast counts: TMDB answers 0 votes and an empty average for a title
      nobody rated. `vote_count` is read as that gate and then dropped — no surface shows the number. */
