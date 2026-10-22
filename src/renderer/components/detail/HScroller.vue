@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { createLoopRail, RAIL_PRESS, type LoopRail } from '../../lib/looprail';
 
 /** A horizontal band that switches like the home rows: a track with edge arrows that fade in on
- *  hover and hide themselves at either end. The cards come in through the slot, so the caller decides
+ *  hover and carry on past either end. The cards come in through the slot, so the caller decides
  *  whether a band holds poster cards, cast heads or stills. */
 const props = withDefaults(defineProps<{ title?: string; count?: number }>(), { title: '', count: 0 });
 
 const track = ref<HTMLElement | null>(null);
 const atStart = ref(true);
 const atEnd = ref(true);
+const looped = ref(false);
+let rail: LoopRail | null = null;
 
 /** Where the last press meant to leave the band. A press landing on a running glide has to build on this rather
  *  than on the frame the animation happens to be passing, otherwise each new glide cancels the previous one and
@@ -21,8 +24,12 @@ function measure(): void {
   // Skip a track with no laid-out box: both reads are 0 and `0 + 0 >= 0 - 2` satisfies "at end", which parks the
   // arrows off with nothing measured. The lobby proved the case — the same guard took 5 stuck rows at mount to 0.
   if (!el || !el.clientWidth) return;
-  atStart.value = el.scrollLeft <= 2;
-  atEnd.value = el.scrollLeft + el.clientWidth >= el.scrollWidth - 2;
+  const r = rail;
+  looped.value = !!r?.looped;
+  // A band that loops has no ends to report, and an arrow that goes nowhere is the one thing a loop
+  // cannot leave behind.
+  atStart.value = r?.looped ? false : el.scrollLeft <= 2;
+  atEnd.value = r?.looped ? false : el.scrollLeft + el.clientWidth >= el.scrollWidth - 2;
 }
 
 /** Any scroll that ends is the truth about where the band sits, so a wheel or a fling that lands between two
@@ -30,29 +37,29 @@ function measure(): void {
 function settle(): void {
   const el = track.value;
   if (!el) return;
+  // Step over a copy before reading where the band landed: the offset the glide stopped at is a
+  // position the reader was never shown, and the next press would build its target on it.
+  rail?.normalize(true);
   want = el.scrollLeft;
   gliding = false;
 }
 
-/** One card's own width plus the gap, read off two adjacent cards. A share of the viewport would be the wrong
- *  unit: it lands partway into a card, and nothing re-aligns the row any more. */
-function pitch(): number {
-  const el = track.value;
-  if (!el || el.children.length < 1) return 0;
-  const kids = el.children;
-  if (kids.length > 1) return kids[1].getBoundingClientRect().left - kids[0].getBoundingClientRect().left;
-  return kids[0].getBoundingClientRect().width + (parseFloat(getComputedStyle(el).columnGap) || 0);
-}
-
 function nudge(dir: number): void {
   const el = track.value;
-  const p = pitch();
+  // One card's own width plus the gap, read off two adjacent cards. A share of the viewport would be
+  // the wrong unit: it lands partway into a card, and nothing re-aligns the band any more.
+  const r = rail;
+  const p = r?.pitch() || 0;
   if (!el || p <= 0) return;
-  const cards = Math.max(1, Math.round((el.clientWidth * 0.82) / p));
+  const cards = Math.max(1, Math.round((el.clientWidth * RAIL_PRESS) / p));
+  // The rail turns the ask into somewhere the band can actually be: the same card on the card grid,
+  // and one whole band earlier when the press walks past the end of its copies — clamping there used to
+  // park the band between two cards.
   const to = (gliding ? want : el.scrollLeft) + dir * cards * p;
-  want = Math.min(Math.max(0, Math.round(to / p) * p), el.scrollWidth - el.clientWidth);
+  want = r ? r.place(to) : Math.max(0, Math.min(Math.round(to / p) * p, el.scrollWidth - el.clientWidth));
   gliding = true;
-  el.scrollTo({ left: want, behavior: 'smooth' });
+  if (r) r.glideTo(want);
+  else el.scrollTo({ left: want, behavior: 'smooth' });
 }
 
 /** Pull one card into view, and leave the band alone when the card can already be read. The caller decides
@@ -65,7 +72,9 @@ function nudge(dir: number): void {
  *  measure yet, which is the caller's cue to ask again once the band exists. */
 function focusCard(i: number): boolean {
   const el = track.value;
-  const card = el?.children[i] as HTMLElement | undefined;
+  // Counted among the band's own cards: the copies a looping band keeps at either end are children of
+  // the track too, and an index into `children` would hand back the wrong episode.
+  const card = rail ? rail.cardAt(i) : (el?.children[i] as HTMLElement | undefined);
   if (!el || !el.clientWidth || !card) return false;
   const b = el.getBoundingClientRect();
   const r = card.getBoundingClientRect();
@@ -74,9 +83,12 @@ function focusCard(i: number): boolean {
   const viewR = b.right - (parseFloat(cs.paddingRight) || 0);
   if (r.left >= viewL + 2 && r.right <= viewR - 2) return true;
   const to = el.scrollLeft + (r.left + r.width / 2 - (viewL + viewR) / 2);
-  want = Math.max(0, Math.min(el.scrollWidth - el.clientWidth, Math.round(to)));
+  // Asked of the rail, so a card the copies hold at the far end is reached by the copy the band can show.
+  // Not snapped: this ask is a centring position, not a press's whole-card step.
+  want = rail ? rail.place(to, false) : Math.max(0, Math.min(el.scrollWidth - el.clientWidth, Math.round(to)));
   gliding = true;
-  el.scrollTo({ left: want, behavior: 'smooth' });
+  if (rail) rail.glideTo(want);
+  else el.scrollTo({ left: want, behavior: 'smooth' });
   return true;
 }
 
@@ -93,6 +105,7 @@ onMounted(() => {
   measure();
   const el = track.value;
   if (!el) return;
+  rail = createLoopRail(el, { onChange: () => measure() });
   ro = new ResizeObserver(measure);
   ro.observe(el);
   mo = new MutationObserver(measure);
@@ -101,6 +114,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   ro?.disconnect();
   mo?.disconnect();
+  rail?.destroy();
+  rail = null;
 });
 </script>
 
@@ -113,13 +128,13 @@ onBeforeUnmount(() => {
       </slot>
     </header>
     <div class="wrap">
-      <button class="edge left" :class="{ off: atStart }" aria-label="向左" @click="nudge(-1)">
+      <button class="edge left" :class="{ off: !looped && atStart }" aria-label="向左" @click="nudge(-1)">
         <svg viewBox="0 0 24 24" width="18" height="18"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" /></svg>
       </button>
       <div ref="track" class="track" @scroll.passive="measure" @scrollend="settle">
         <slot />
       </div>
-      <button class="edge right" :class="{ off: atEnd }" aria-label="向右" @click="nudge(1)">
+      <button class="edge right" :class="{ off: !looped && atEnd }" aria-label="向右" @click="nudge(1)">
         <svg viewBox="0 0 24 24" width="18" height="18"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" /></svg>
       </button>
     </div>

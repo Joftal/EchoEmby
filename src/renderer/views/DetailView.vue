@@ -18,6 +18,7 @@ import { accountName, episodeHead, fmtDate, fmtDateTime, fmtMinutes, fmtRuntime,
 import { PLAYABLE, PLAYABLE_PAGE, resumeTarget, seasonTarget } from '../lib/resume';
 import { mergeGenres } from '../lib/genres';
 import { resetPageScroll } from '../lib/scroll';
+import { createLoopRail, type LoopRail } from '../lib/looprail';
 import { embyCached } from '../lib/embycache';
 import { libraryWorks, useRelated, type WorkSeed } from '../lib/related';
 import { seedFor, seedItemFor, seedTypeFor, takeAutoplay } from '../lib/handoff';
@@ -239,6 +240,9 @@ const viewer = ref<number | null>(null);
 const strip = ref<HTMLElement | null>(null);
 const stage = ref<HTMLElement | null>(null);
 const rail = ref<HTMLElement | null>(null);
+/** The thumb rail loops like every other band in the app. Its own `rail` ref is the photo strip inside the
+ *  stage, which is a different thing entirely and slides one frame at a time, so this one carries the name. */
+let stripRail: LoopRail | null = null;
 /** A jump further than the mounted window has no frames to slide through, so it has to cut. */
 const cut = ref(false);
 
@@ -385,7 +389,12 @@ function followStrip(): void {
     stripRun = false;
     return;
   }
-  const want = Math.max(0, Math.min(el.scrollWidth - el.clientWidth, stripWant));
+  // The loop moves the rail across a seam by one list-length; the target has to be carried along with it
+  // or the follow loop spends the rest of the gesture chasing an offset the rail no longer has.
+  if (stripRail) stripWant += stripRail.normalize(true);
+  // Asked of the rail, because a gesture that keeps adding to its target runs past where the copies end;
+  // there it steps the rail and the target back by a whole list together rather than parking at the wall.
+  const want = stripRail ? stripRail.place(stripWant, false) : Math.max(0, Math.min(el.scrollWidth - el.clientWidth, stripWant));
   const before = el.scrollLeft;
   const gap = want - before;
   if (Math.abs(gap) < 0.7) {
@@ -420,7 +429,9 @@ function onStripWheel(e: WheelEvent): void {
  *  notches add to the jump instead. */
 function centerStrip(i: number): void {
   const el = strip.value;
-  const thumb = el?.children[i] as HTMLElement | undefined;
+  // Counted among the rail's own thumbs: the copies a looping rail keeps at either end are children of it
+  // too, so `children[i]` would centre the wrong picture.
+  const thumb = (stripRail ? stripRail.cardAt(i) : el?.children[i]) as HTMLElement | undefined;
   if (!el || !thumb) return;
   // Both boxes are read in the same frame, so this is the distance from wherever the rail currently sits —
   // which is what a target the wheel is still allowed to add to has to be.
@@ -438,6 +449,14 @@ function onViewerKey(e: KeyboardEvent): void {
   else if (e.key === 'ArrowRight') stepViewer(1);
 }
 
+/* The rail only exists while the viewer is open, so the loop is built and torn down with it. `auto` is
+   off because nothing moves this rail on its own: the wheel and the centring both write a target that
+   `followStrip` walks to, and that is where the seam is crossed. */
+watch(strip, el => {
+  stripRail?.destroy();
+  stripRail = el ? createLoopRail(el, { auto: false }) : null;
+});
+
 watch(viewer, i => {
   if (i == null) return;
   // The rail slides two frames in from each side before anyone looks at them, so pull them in while this frame
@@ -454,6 +473,8 @@ watch(viewer, i => {
 onMounted(() => window.addEventListener('keydown', onViewerKey, true));
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onViewerKey, true);
+  stripRail?.destroy();
+  stripRail = null;
   stopStrip();
 });
 

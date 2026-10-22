@@ -5,6 +5,7 @@ import { useAppStore } from '../../stores/app';
 import { episodeName, episodePosition, fmtRuntime, seasonTitle } from '../../lib/format';
 import { trustSeason } from '../../lib/scores';
 import { embyCached } from '../../lib/embycache';
+import { createLoopRail, type LoopRail } from '../../lib/looprail';
 import { vReveal } from '../../lib/reveal';
 import type { LibraryItem, TmdbSeasonRow } from '../../../shared/types';
 
@@ -26,6 +27,13 @@ const artDead = ref<Record<string, true>>({});
    Chinese 集名 on a row the server filed as 「ゆるキャン△ - S01E06」. */
 const names = ref<Record<string, string>>({});
 const strip = ref<HTMLElement | null>(null);
+/** The strip is behind 载入中…, so it comes and goes with the fetch and the loop is built with it. */
+let rail: LoopRail | null = null;
+
+watch(strip, el => {
+  rail?.destroy();
+  rail = el ? createLoopRail(el) : null;
+});
 
 /** The panel opens on the season being played, so the list never starts on 第 1 季 while 第 3 季 is on screen. */
 async function loadSeasons(): Promise<void> {
@@ -97,12 +105,18 @@ function onArtFail(ep: LibraryItem): void {
 async function centerOnPlaying(): Promise<void> {
   await nextTick();
   const el = strip.value;
-  const cell = el?.querySelector('.pl-cell.on');
+  // Among the strip's own cells: a looping strip keeps copies of its first and last episodes at either
+  // end, and the one wearing 「on」 has to be the real row, not the picture of it.
+  const cells: HTMLElement[] = rail ? rail.originals() : Array.from(el?.children ?? []) as HTMLElement[];
+  const cell = cells.find(c => c.classList.contains('on'));
   if (!el || !cell) return;
   const b = el.getBoundingClientRect(), c = cell.getBoundingClientRect();
   // A jump of eight screens' worth of cells read as the panel being replaced rather than scrolled; this is
   // the same move a wheel over the strip makes.
-  el.scrollTo({ left: el.scrollLeft + c.left + c.width / 2 - (b.left + b.width / 2), behavior: 'smooth' });
+  const to = el.scrollLeft + c.left + c.width / 2 - (b.left + b.width / 2);
+  // Asked of the rail, because centring the last cells of a long season asks for a place past its copies.
+  if (rail) rail.glideTo(rail.place(to, false));
+  else el.scrollTo({ left: to, behavior: 'smooth' });
 }
 
 /** immediate: the session is already loaded by the time this menu mounts, so a watcher that only fires on

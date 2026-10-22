@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 import type { LibraryItem } from '../../../shared/types';
 import MediaCard from './MediaCard.vue';
+import { createLoopRail, RAIL_PRESS, type LoopRail } from '../../lib/looprail';
 
 /* `count` is the number beside the title, and it only means anything when the rail is the whole answer.
    A shelf cut to fit the page would otherwise print its own length where the reader reads a category
@@ -16,6 +17,8 @@ const root = ref<HTMLElement | null>(null);
 const track = ref<HTMLElement | null>(null);
 const atStart = ref(true);
 const atEnd = ref(true);
+const looped = ref(false);
+let rail: LoopRail | null = null;
 let observer: IntersectionObserver | null = null;
 
 /** Where the last press meant to leave the row. A press landing on a running glide builds on this rather than on
@@ -30,8 +33,12 @@ function measure(): void {
   // `content-visibility: auto` row below the fold is still skipped, and reading it there finds clientWidth 0,
   // which satisfies "at end" and switched the right arrow off on five lobby rows at mount (measured).
   if (!el || !el.clientWidth) return;
-  atStart.value = el.scrollLeft <= 2;
-  atEnd.value = el.scrollLeft + el.clientWidth >= el.scrollWidth - 2;
+  const r = rail;
+  looped.value = !!r?.looped;
+  // A row that loops has no ends to report, and an arrow that goes nowhere is the one thing a loop
+  // cannot leave behind.
+  atStart.value = r?.looped ? false : el.scrollLeft <= 2;
+  atEnd.value = r?.looped ? false : el.scrollLeft + el.clientWidth >= el.scrollWidth - 2;
 }
 
 /** Any scroll that ends is the truth about where the row sits, so a wheel or a fling that lands between two cards
@@ -39,29 +46,29 @@ function measure(): void {
 function settle(): void {
   const el = track.value;
   if (!el) return;
+  // Step over a copy before reading where the row landed: the offset the glide stopped at is a
+  // position the reader was never shown, and the next press would build its target on it.
+  rail?.normalize(true);
   want = el.scrollLeft;
   gliding = false;
 }
 
-/** One card's own width plus the gap, read off two adjacent cards. A share of the viewport would be the wrong
- *  unit: it lands partway into a card, and nothing re-anchors the row any more. */
-function pitch(): number {
-  const el = track.value;
-  if (!el || el.children.length < 1) return 0;
-  const kids = el.children;
-  if (kids.length > 1) return kids[1].getBoundingClientRect().left - kids[0].getBoundingClientRect().left;
-  return kids[0].getBoundingClientRect().width + (parseFloat(getComputedStyle(el).columnGap) || 0);
-}
-
 function nudge(dir: number): void {
   const el = track.value;
-  const p = pitch();
+  // One card's width plus the gap, read off two adjacent cards. A share of the viewport would be the
+  // wrong unit: it lands partway into a card, and nothing re-anchors the row any more.
+  const r = rail;
+  const p = r?.pitch() || 0;
   if (!el || p <= 0) return;
-  const cards = Math.max(1, Math.round((el.clientWidth * 0.82) / p));
+  const cards = Math.max(1, Math.round((el.clientWidth * RAIL_PRESS) / p));
+  // The rail turns the ask into somewhere the row can actually be: the same card on the card grid,
+  // and one whole band earlier when the press walks past the end of its copies — clamping there used to
+  // park the row between two posters.
   const to = (gliding ? want : el.scrollLeft) + dir * cards * p;
-  want = Math.min(Math.max(0, Math.round(to / p) * p), el.scrollWidth - el.clientWidth);
+  want = r ? r.place(to) : Math.max(0, Math.min(Math.round(to / p) * p, el.scrollWidth - el.clientWidth));
   gliding = true;
-  el.scrollTo({ left: want, behavior: 'smooth' });
+  if (r) r.glideTo(want);
+  else el.scrollTo({ left: want, behavior: 'smooth' });
 }
 
 /** The arrows centre on the poster band, not on the card: MediaCard's second label line is `v-if`'d,
@@ -100,6 +107,7 @@ onMounted(() => {
   }
   const tr = track.value;
   if (tr) {
+    rail = createLoopRail(tr, { onChange: () => measure() });
     ro = new ResizeObserver(measure);
     ro.observe(tr);
     mo = new MutationObserver(measure);
@@ -111,6 +119,8 @@ onBeforeUnmount(() => {
   observer?.disconnect();
   ro?.disconnect();
   mo?.disconnect();
+  rail?.destroy();
+  rail = null;
 });
 </script>
 
@@ -122,7 +132,7 @@ onBeforeUnmount(() => {
     </header>
 
     <div class="wrap">
-      <button class="edge left" :class="{ off: atStart }" aria-label="向左" @click="nudge(-1)">
+      <button class="edge left" :class="{ off: !looped && atStart }" aria-label="向左" @click="nudge(-1)">
         <svg viewBox="0 0 24 24" width="18" height="18"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" /></svg>
       </button>
       <div ref="track" class="track" @scroll.passive="measure" @scrollend="settle">
@@ -136,7 +146,7 @@ onBeforeUnmount(() => {
           @play="emit('play', $event)"
         />
       </div>
-      <button class="edge right" :class="{ off: atEnd }" aria-label="向右" @click="nudge(1)">
+      <button class="edge right" :class="{ off: !looped && atEnd }" aria-label="向右" @click="nudge(1)">
         <svg viewBox="0 0 24 24" width="18" height="18"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" /></svg>
       </button>
     </div>
