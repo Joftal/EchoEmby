@@ -308,6 +308,16 @@ export interface TmdbEpisodeRow {
   /** The same title in whatever language TMDB actually files it in — the work's own for most of this
    *  library's non-Asian titles — kept for the last rung of the ladder. */
   nOther?: string;
+  /** The date TMDB bills this episode for, `YYYY-MM-DD`, empty when it bills none. Held because it is the
+   *  one field that can tell this episode from the episode another season also numbers 2: the season-level
+   *  pairing refuses a show whose counts disagree (a still-airing 新番 with 3 files against TMDB's 13), and
+   *  two dates for the same episode number is the stronger claim either way. */
+  air?: string;
+  /** Minutes TMDB bills for this episode, absent when it bills none. Kept because the server's own row is
+   *  frequently the emptier of the two: measured over 204 episode rows from 12 seasons, TMDB answers a
+   *  runtime for 76% of them (median 25), which is what lets a card whose file the server has not got
+   *  still say how long it runs. */
+  rt?: number;
 }
 
 /** The season's episodes, keyed by TMDB's episode numbers (1-based). An episode with neither art nor text

@@ -42,9 +42,11 @@ type RelatedEntry = { value: TmdbRelated[]; fetchedAt: number };
 interface Store {
   /** key = `${kind}:${tmdbId}` */
   meta: Record<string, MetaEntry>;
-  /** key = `tv3:${tmdbId}/${season}`; the `3` is the episode rows' own shape — before `2` a row was a bare
-   *  picture path with no synopsis, and before `3` it carried no episode title. A shape test at read time
-   *  would be longer than a refetch. */
+  /** key = `tv5:${tmdbId}/${season}`; the `5` is the episode rows' own shape — before `2` a row was a bare
+   *  picture path with no synopsis, before `3` it carried no episode title, before `4` no air date and
+   *  before `5` no running time. A shape test at read time would be longer than a refetch: the old rows
+   *  simply never carry those fields, so the per-episode pairing that reads one would silently never fire
+   *  on a season fetched before it existed. */
   stills: Record<string, StillsEntry>;
   /** key = `c2:tv:${tmdbId}/${season}`; the season's own credit list, trimmed to what the band shows. The `2`
    *  marks the list trimmed by the single writer predicate: entries from before it carry the whole Writing
@@ -80,6 +82,17 @@ const load = (): Store => {
     for (const [k, v] of Object.entries(legacy.similar)) if (k.startsWith('r2:')) next.related[k] = v;
     delete legacy.similar;
     pruned = true;
+  }
+  /* Rows older than the current shape marker are dropped rather than read: `tv3:` predates the episode air
+     date and `tv4:` predates its running time, and those two fields are what the per-episode pairing and
+     the empty-slot fallbacks read, so an old row can never satisfy them. Dropping costs one refetch per
+     season the user opens again and takes the dead weight out of the file — a row's synopsis alone is 479
+     of its 546 bytes. */
+  for (const k of Object.keys(next.stills)) {
+    if (!k.startsWith('tv5:')) {
+      delete next.stills[k];
+      pruned = true;
+    }
   }
   store = next;
   if (pruned) persist();
@@ -371,18 +384,18 @@ const sameSeason = (a: TmdbStills, b: TmdbStills): boolean => {
   return ka.every((k) => {
     const x = a[+k];
     const y = b[+k];
-    return !!y && x.p === y.p && x.ovZh === y.ovZh && x.ovOther === y.ovOther && x.nZh === y.nZh && x.nOther === y.nOther;
+    return !!y && x.p === y.p && x.ovZh === y.ovZh && x.ovOther === y.ovOther && x.nZh === y.nZh && x.nOther === y.nOther && x.air === y.air && x.rt === y.rt;
   });
 };
 
-/** Returns what TMDB bills for one season's episodes — each episode's still, its own title and its own
- *  line; an empty map (still `answered`) is a normal reply, and null means this season was not asked, is
- *  not on TMDB, or is waiting out a recorded miss. */
+/** Returns what TMDB bills for one season's episodes — each episode's still, its own title, line, air date
+ *  and running time; an empty map (still `answered`) is a normal reply, and null means this season was not
+ *  asked, is not on TMDB, or is waiting out a recorded miss. */
 export async function tmdbSeasonStills(tmdbId: string, season: number): Promise<TmdbStills | null> {
   if (!/^\d{1,8}$/.test(tmdbId) || !Number.isInteger(season) || season < 0 || season > 500) return null;
   const token = tmdbToken();
   if (!token) return null;
-  const key = `tv3:${tmdbId}/${season}`;
+  const key = `tv5:${tmdbId}/${season}`;
   const s = load();
   const hit = s.stills[key];
   if (hit && Date.now() - hit.fetchedAt < ('missing' in hit ? MISS_TTL : STILLS_TTL)) {
@@ -420,12 +433,41 @@ export async function tmdbSeasonStills(tmdbId: string, season: number): Promise<
        210 rows cached now came back in Chinese; the one that did not is 「Big Boss」, so the other half has
        already spoken once, for a title this library would otherwise have printed as a bare number. */
     const nm = typeof ep?.name === 'string' ? ep.name.trim() : '';
+    /* The date costs 18 bytes a row and is the only field on this row that can identify the episode rather
+       than describe it, so it is kept even when TMDB has neither a picture nor a line for the episode. */
+    const air = typeof ep?.air_date === 'string' ? ep.air_date.trim() : '';
+    /* Thrown away until now on a written belief that TMDB does not bill a length per episode; it does, for
+       155 of the 204 rows measured across 12 seasons, and it is the only length a card has when the server
+       holds no file for that episode. Four bytes a row. */
+    const rt = num(ep?.runtime);
     const row: TmdbEpisodeRow = { p };
     if (ov && hasHan(ov)) row.ovZh = ov;
     else if (ov) row.ovOther = ov;
     if (nm && hasHan(nm)) row.nZh = nm;
     else if (nm) row.nOther = nm;
-    if (p || ov || nm) next[n] = row;
+    if (air) row.air = air;
+    if (rt && rt > 0) row.rt = Math.round(rt);
+    if (p || ov || nm || air || rt) next[n] = row;
+  }
+  /* `language=zh-CN` answers an episode's line only where TMDB has one in Chinese or falls back to the work's
+     own language, and it answers nothing for a large minority of rows: measured on the four thinnest seasons
+     in this library's cache, 48 of 88 rows came back with no line and 29 of those have one in English
+     (Cowboy Bebop's 第 1 季: 0 of 23 in Chinese, 23 of 23 in English). So ask the same season once more in
+     en-US, and only for a reply that would otherwise store an empty line, and fill just those. One extra
+     request per season that needs it, cached with the rest for 14 days. */
+  if (Object.values(next).some(r => !r.ovZh && !r.ovOther)) {
+    const en = await fetchJson<any>(
+      `https://api.themoviedb.org/3/tv/${tmdbId}/season/${season}?language=en-US`,
+      token,
+    );
+    for (const ep of en.json?.episodes || []) {
+      const n = num(ep?.episode_number);
+      const line = typeof ep?.overview === 'string' ? ep.overview.trim() : '';
+      const row = n === undefined ? undefined : next[n];
+      if (!row || !line || row.ovZh || row.ovOther) continue;
+      if (hasHan(line)) row.ovZh = line;
+      else row.ovOther = line;
+    }
   }
   const prev: TmdbStills | undefined = hit && !('missing' in hit) ? hit.value : undefined;
   // Do not rewrite the file if nothing changed — the file is shared with the meta map.

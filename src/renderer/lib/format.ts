@@ -148,11 +148,18 @@ export const fmtElapsed = (ms: number): string => {
   return mins >= 60 ? `${Math.floor(mins / 60)} 小时 ${mins % 60} 分` : `${mins} 分钟`;
 };
 
+/** 「45分钟」 / 「1小时30分」 from whole minutes. The server bills a file in ticks and TMDB bills an episode
+ *  in minutes, and a card must be able to print either without two spellings of the same length. */
+export const fmtMinutes = (mins?: number): string => {
+  const m = Math.round(Number(mins) || 0);
+  if (!m) return '';
+  return m >= 60 ? `${Math.floor(m / 60)}小时${m % 60}分` : `${m}分钟`;
+};
+
 export const fmtRuntime = (ticks?: number): string => {
   const ms = ticksToMs(ticks);
   if (!ms) return '';
-  const mins = Math.round(ms / 60000);
-  return mins >= 60 ? `${Math.floor(mins / 60)}小时${mins % 60}分` : `${mins}分钟`;
+  return fmtMinutes(Math.round(ms / 60000));
 };
 
 export const fmtDate = (iso?: string): string => {
