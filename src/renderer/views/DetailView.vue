@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import type { LibraryItem, MediaStreamInfo, PlaybackSource, TmdbCreditRow, TmdbCredits, TmdbEpisodeRow, TmdbSeasonRow, TmdbStills } from '../../shared/types';
+import type { LibraryItem, TmdbCreditRow, TmdbCredits, TmdbEpisodeRow, TmdbSeasonRow, TmdbStills } from '../../shared/types';
 import HScroller from '../components/detail/HScroller.vue';
 import FilterSelect from '../components/browse/FilterSelect.vue';
 import BlockPh from '../components/detail/BlockPh.vue';
+import TechCard from '../components/detail/TechCard.vue';
 import RelatedStrip from '../components/detail/RelatedStrip.vue';
 import ScoreStrip from '../components/ScoreStrip.vue';
 import HeroPlay from '../components/HeroPlay.vue';
@@ -14,7 +15,7 @@ import HeroSkeleton from '../components/HeroSkeleton.vue';
 import { tmdbKind as kindOf, trustSeason, useScores } from '../lib/scores';
 import { usePlayerStore } from '../stores/player';
 import { useAppStore } from '../stores/app';
-import { accountName, episodeHead, fmtDate, fmtDateTime, fmtMinutes, fmtRuntime, seenLabel, seasonTitle } from '../lib/format';
+import { accountName, episodeHead, fmtDate, fmtMinutes, fmtRuntime, seenLabel, seasonTitle } from '../lib/format';
 import { PLAYABLE, PLAYABLE_PAGE, resumeTarget, seasonTarget } from '../lib/resume';
 import { mergeGenres } from '../lib/genres';
 import { resetPageScroll } from '../lib/scroll';
@@ -167,23 +168,16 @@ const workOverview = computed(
   () => scores.value.tmdb?.overviewZh || scores.value.tmdb?.overviewOther || item.value?.overview || '',
 );
 
-const source = computed<PlaybackSource | undefined>(() => item.value?.sources?.[0]);
-const vstream = computed(() => source.value?.video);
-const astream = computed<MediaStreamInfo | undefined>(() => {
-  const a = source.value?.audio || [];
-  return a.find(x => x.isDefault) || a[0];
-});
-
 /** What this page will be, from the server's item when there is one and from the clicked card when there
  *  is not yet — an Episode card opens its Season, and that is enough to know a rail is coming. */
 const pageType = computed(() => item.value?.type || seedTypeFor(props.id));
-/** The two arrivals tall enough to be felt: the season rail (370px, and the last thing to land) and the
- *  file's technical block (487px). Both sit above other blocks, so each one pushed the rest of the page
- *  down while the reader was already looking at it. Their heights are claimed here and filled in place. */
+/** The arrival tall enough to be felt: the season rail lands at 370px on a page the reader is already
+ *  looking at, and everything under it jumped down when it came in. The room is claimed here and filled
+ *  in place. The file's technical block used to need the same treatment; it no longer stands in for a
+ *  real block at all, so BlockPh knows only the rail (see that component). */
 const wantRail = computed(
   () => (pageType.value === 'Series' || pageType.value === 'Season') && !episodes.value.length && !!seasonRow.value,
 );
-const wantTech = computed(() => pageType.value === 'Movie' && !source.value);
 
 /** image.tmdb.org answers directly on this machine (the API host needs the system proxy). */
 /* Whether TMDB's row for episode number N is *this* card's episode. The season-level count pairing answers
@@ -442,6 +436,13 @@ function centerStrip(i: number): void {
   if (!stripFrame) stripFrame = requestAnimationFrame(followStrip);
 }
 function onViewerKey(e: KeyboardEvent): void {
+  if (techPop.value) {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      closeTech();
+    }
+    return;
+  }
   if (viewer.value == null) return;
   if (e.key === 'Escape' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') e.stopPropagation();
   if (e.key === 'Escape') closeViewer();
@@ -556,6 +557,47 @@ const playTarget = computed<LibraryItem | null>(
  *  gating it on `playTarget` would let it pop in when a show's season list lands and slide 收藏 along. */
 const pagePlays = computed(() => PLAYABLE_PAGE.includes(pageType.value));
 const playableId = computed(() => playTarget.value?.id || '');
+/* The file this page describes inline: a page with no episode row has exactly one file to speak of, and
+   it is the row the page is built from. On a show the files are named one card at a time instead, by the
+   dots at each card's corner. */
+const techInline = computed<LibraryItem | null>(() =>
+  isSeries.value || isSeason.value || !item.value?.sources?.length ? null : item.value,
+);
+/* What that button opens. A card's own row carries no MediaSources — measured 2026-10-22 on both
+   gateways: the season listing answers none on every episode row, while the item endpoint answers one per
+   episode (6.0KB/0.77s on OkEmby, 23.0KB/0.79s on nyamedia) — so the ask goes out when the reader asks
+   for it, and the 10-minute cache every other ask uses makes a second look at that episode instant. */
+const techPop = ref<{ id: string; title: string; item: LibraryItem | null; dead: boolean } | null>(null);
+/* The 轨道 bar is the one block a placeholder cannot read off the ask: measured on 31 episodes, 21 answer with
+   that band and 10 — every web rip of 罚罪 — answer with none, and a bar drawn for a block that never arrives
+   moves the whole sheet 43px when the file lands. A season is one release, so the page keeps the shape the
+   last answer came in and paints the next placeholder like it. The season's own id is the key, because this
+   view is not rebuilt when the reader jumps to another title: a guess left over from 罚罪 must not silence
+   the band on an anime, and an unknown season keeps drawing it — which is the answer two seasons in three. */
+const bandSeen = ref<{ key: string; band: boolean } | null>(null);
+const bandGuess = computed(() => {
+  const seen = bandSeen.value;
+  if (!seen || seen.key !== (seasonAt.value?.season?.id || '')) return true;
+  return seen.band;
+});
+
+async function openTech(r: BandRow): Promise<void> {
+  techPop.value = { id: r.id, title: r.title, item: null, dead: false };
+  const res = await embyCached('item', r.id, () => window.echoemby.emby.item(r.id));
+  const pop = techPop.value;
+  // Closed, or replaced by another card while this was out: that answer belongs to a dialog nobody is
+  // reading, and writing it here would paint episode 7's numbers under episode 12's name.
+  if (!pop || pop.id !== r.id) return;
+  const row = res.ok ? res.data : null;
+  pop.item = row?.sources?.length ? row : null;
+  pop.dead = !pop.item;
+  const src = pop.item?.sources?.[0];
+  if (src) bandSeen.value = { key: seasonAt.value?.season?.id || '', band: src.audio.length > 1 || (src.subtitle?.length ?? 0) > 0 };
+}
+
+function closeTech(): void {
+  techPop.value = null;
+}
 /** Whether the season on screen is one this server holds nothing for. Only answers that cannot be taken
  *  back count, because a promise retracted a frame later is the same lie in reverse: a TMDB-only season
  *  row is only made once the season list has answered, and a server row carrying `ChildCount: 0` is the
@@ -1198,10 +1240,6 @@ async function toggleFav() {
 }
 
 const LEVEL_WORD = ['无', '极少', '轻微', '中等', '较多', '严重'];
-const fmtMbps = (n?: number): string => (n ? `${(n / 1e6).toFixed(1)} Mbps` : '');
-const fmtGB = (n?: number): string => (n ? `${(n / 1e9).toFixed(2)} GB` : '');
-const fmtRes = (v?: MediaStreamInfo): string => (v?.width && v?.height ? `${v.width}×${v.height}` : '');
-const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? String(n) : '');
 </script>
 
 <template>
@@ -1245,7 +1283,7 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
 
     <template v-if="!item && !error">
       <div class="flow">
-        <BlockPh v-if="wantRail" kind="rail" />
+        <BlockPh v-if="wantRail" />
         <div v-for="n in 2" :key="n" class="block skb">
           <div class="skhd"></div>
           <div class="skrow"><div v-for="m in 5" :key="m" class="skcd"></div></div>
@@ -1282,85 +1320,38 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
               </span>
             </div>
           </template>
-          <button v-for="r in band" :key="r.key" class="epi" :class="{ off: !r.id }" :disabled="!r.id" @click="play(r.id, false)">
-            <div class="ethumb">
-              <img v-reveal v-if="r.art" :src="r.art" alt="" loading="lazy" decoding="async" @error="onArtFail(r)" />
-              <span v-else class="ph">{{ r.ph }}</span>
-              <span class="disc" role="presentation"><svg viewBox="0 0 24 24" width="18" height="18"><path d="M8 5l12 7-12 7z" fill="currentColor" /></svg></span>
-              <span v-if="r.seen" class="echip">{{ r.seen }}</span>
-              <div v-if="r.played > 0" class="eprog"><i :style="{ width: r.played + '%' }"></i></div>
-            </div>
-            <div class="einfo">
-              <LoopTitle class="etitle" :text="r.title" />
-              <p v-if="r.date || r.len" class="emeta">
-                <span v-if="r.date">{{ r.date }}</span>
-                <span>{{ r.len }}</span>
-              </p>
-              <p v-if="r.ov" class="eov">{{ r.ov }}</p>
-            </div>
-          </button>
+          <div v-for="r in band" :key="r.key" class="epi-wrap">
+            <button class="epi" :class="{ off: !r.id }" :disabled="!r.id" @click="play(r.id, false)">
+              <div class="ethumb">
+                <img v-reveal v-if="r.art" :src="r.art" alt="" loading="lazy" decoding="async" @error="onArtFail(r)" />
+                <span v-else class="ph">{{ r.ph }}</span>
+                <span class="disc" role="presentation"><svg viewBox="0 0 24 24" width="18" height="18"><path d="M8 5l12 7-12 7z" fill="currentColor" /></svg></span>
+                <span v-if="r.seen" class="echip">{{ r.seen }}</span>
+                <div v-if="r.played > 0" class="eprog"><i :style="{ width: r.played + '%' }"></i></div>
+              </div>
+              <div class="einfo">
+                <LoopTitle class="etitle" :text="r.title" />
+                <p v-if="r.date || r.len" class="emeta">
+                  <span v-if="r.date">{{ r.date }}</span>
+                  <span>{{ r.len }}</span>
+                </p>
+                <p v-if="r.ov" class="eov">{{ r.ov }}</p>
+              </div>
+            </button>
+            <button v-if="r.id" type="button" class="res" aria-label="播放资源" @click="openTech(r)"><i></i><i></i><i></i></button>
+          </div>
           <!-- Two empties, and only one of them gets a sentence here: a season this server holds nothing
                for is answered by the hero's own 「当前服务器无资源」, which is where the reader was about to
                act. What is left to say is the anomaly the button cannot see — a row that promised episodes
                and then answered with none. -->
           <p v-if="noBand && !seasonAbsent" class="noband">这台服务器在这一季没有文件，分集也列不出来。</p>
         </HScroller>
-        <BlockPh v-else-if="wantRail" kind="rail" />
+        <BlockPh v-else-if="wantRail" />
 
-        <section v-if="source" class="block">
+        <section v-if="techInline" class="block">
           <h2>播放资源</h2>
-          <div class="src">
-            <div class="srccard">
-              <p class="sc-top">{{ vstream?.range || 'SDR' }}</p>
-              <p class="sc-meta"><span>{{ fmtGB(source.sizeBytes) }}</span><span>{{ fmtMbps(source.bitRate) }}</span></p>
-              <p class="sc-foot"><span class="dot"></span>{{ source.container }}<span class="ok">✓</span></p>
-            </div>
-          </div>
-
-          <div class="tech">
-            <div v-if="vstream" class="tcard">
-              <h3>视频</h3>
-              <dl>
-                <template v-for="row in [
-                  ['标题', vstream.displayTitle || vstream.title],
-                  ['分辨率', fmtRes(vstream)],
-                  ['色彩范围', vstream.range],
-                  ['文件大小', fmtGB(source.sizeBytes)],
-                  ['码率', fmtMbps(source.bitRate)],
-                  ['帧率', vstream.fps ? vstream.fps.toFixed(1) : ''],
-                  ['编码', vstream.codec?.toUpperCase()],
-                  ['位深', vstream.bitDepth ? vstream.bitDepth + ' 位' : ''],
-                  ['色度', vstream.chroma],
-                ] as Array<[string, string]>" :key="row[0]">
-                  <template v-if="row[1]"><dt>{{ row[0] }}</dt><dd>{{ row[1] }}</dd></template>
-                </template>
-              </dl>
-            </div>
-            <div v-if="astream" class="tcard">
-              <h3>音频</h3>
-              <dl>
-                <template v-for="row in [
-                  ['标题', astream.title || astream.displayTitle],
-                  ['语言', astream.lang],
-                  ['编码', astream.codec?.toUpperCase()],
-                  ['声道数', fmtCh(astream.channels)],
-                  ['码率', fmtMbps(astream.bitRate)],
-                  ['采样率', astream.sampleRate ? String(astream.sampleRate) : ''],
-                ] as Array<[string, string]>" :key="row[0]">
-                  <template v-if="row[1]"><dt>{{ row[0] }}</dt><dd>{{ row[1] }}</dd></template>
-                </template>
-                <template v-if="(source.audio.length > 1)">
-                  <dt>音轨</dt><dd>共 {{ source.audio.length }} 条</dd>
-                </template>
-                <template v-if="source.subtitle.length">
-                  <dt>字幕</dt><dd>{{ source.subtitle.map(s => s.lang || '?').join(' / ') }}</dd>
-                </template>
-              </dl>
-            </div>
-          </div>
-          <p v-if="item.dateCreated" class="added">入库时间　{{ fmtDateTime(item.dateCreated) }}</p>
+          <TechCard :item="techInline" />
         </section>
-        <BlockPh v-else-if="wantTech" kind="tech" />
 
         <HScroller v-if="crew.length" title="演职员" :count="crew.length" class="block">
           <div v-for="p in crew" :key="p.id" class="person">
@@ -1428,6 +1419,32 @@ const fmtCh = (n?: number): string => (n === 6 ? '5.1' : n === 8 ? '7.1' : n ? S
             </div>
             <p class="lb-count">{{ (viewer ?? 0) + 1 }} / {{ backdrops.length }}</p>
           </footer>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <Teleport to="body">
+      <Transition name="techpop">
+        <div v-if="techPop" class="tech-pop" role="dialog" aria-modal="true" aria-label="播放资源" @click.self="closeTech">
+          <section class="tp-card">
+            <header class="tp-head">
+              <div>
+                <h2>播放资源</h2>
+                <p class="tp-title">{{ techPop.title }}</p>
+              </div>
+              <button type="button" class="tp-x" aria-label="关闭" @click="closeTech">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6.5 6.5 17.5 17.5M17.5 6.5 6.5 17.5" /></svg>
+              </button>
+            </header>
+            <TechCard v-if="techPop.item" :item="techPop.item" />
+            <p v-else-if="techPop.dead" class="tp-msg">这台服务器读不出这一集的文件参数。</p>
+            <div v-else class="tp-load" aria-hidden="true">
+              <i class="strip"></i>
+              <div class="cols"><i class="video"></i><i class="audio"></i></div>
+              <i v-if="bandGuess" class="band"></i>
+              <div class="foot"><i class="name"></i><i class="date"></i></div>
+            </div>
+          </section>
         </div>
       </Transition>
     </Teleport>
@@ -1755,36 +1772,127 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
   overflow: hidden;
 }
 
-.src { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
-.srccard {
-  width: 210px;
-  padding: 14px 16px;
-  border-radius: var(--radius);
-  background: var(--bg-elev);
-  border: 1px solid var(--line);
-  box-shadow: var(--shadow-sm);
+/* The card and its corner button are siblings, because the whole card *is* the play button and a button
+   cannot hold another one: the wrapper is what the rail counts and clones, and it is the positioned box
+   the badge hangs off. */
+.epi-wrap {
+  position: relative;
+  flex: none;
+  width: 280px;
 }
-.sc-top { margin: 0 0 8px; font-size: 15px; font-weight: 700; color: var(--text); }
-.sc-meta { margin: 0 0 10px; display: flex; gap: 14px; font-size: 13px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
-.sc-foot { margin: 0; display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; color: var(--text); }
-.sc-foot .dot { width: 8px; height: 8px; border-radius: 50%; background: #3fbf7f; }
-.sc-foot .ok { margin-left: auto; color: #3fbf7f; }
+.epi-wrap .epi { width: 100%; }
+/* The menu dots, drawn rather than typed: three 3px circles in the frame's top-right corner, which is the
+   only corner free — the 「看到 …」 chip holds the bottom-left and the play disc the middle. Drawn because a
+   ⋮ glyph centres differently in every font, and this mark has to read as a control at 26px.
+   It appears on the card the pointer is on and nowhere else: with a permanent badge on all 293 cards the
+   rail wore a button in its corner like a sticker, and the corner is where the picture's own detail is.
+   Hidden means unclickable, so a press there is still 播放 — the card underneath is the play target either
+   way, and the keyboard reaches the dots through :focus-within without a pointer. */
+.epi-wrap:hover .res,
+.epi-wrap:focus-within .res { opacity: 1; pointer-events: auto; }
+.res {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-badge);
+  background: rgba(16, 16, 22, 0.74);
+  backdrop-filter: blur(8px);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--hov) var(--ease), background var(--hov) var(--ease);
+}
+.res i { width: 3px; height: 3px; border-radius: 50%; background: #fff; }
+.res:hover { background: rgba(16, 16, 22, 0.92); }
+.res:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 
-.tech { display: flex; gap: 16px; flex-wrap: wrap; }
-.tcard {
-  flex: 1 1 260px;
-  max-width: 380px;
-  padding: 16px 18px;
-  border-radius: var(--radius);
+/* — the dialog one of those buttons opens — */
+.tech-pop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: grid;
+  place-items: center;
+  padding: 32px 24px;
+  background: rgba(8, 8, 12, 0.55);
+  backdrop-filter: blur(14px);
+  cursor: zoom-out;
+}
+/* 880px, because the sheet inside wants its two columns side by side: below 776px of content they stack,
+   and a dialog that stacks what the page itself showed across is a worse copy of the same table. */
+.tp-card {
+  width: min(880px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  padding: 20px 22px 22px;
+  border-radius: calc(var(--radius) + 4px);
   background: var(--bg-elev);
   border: 1px solid var(--line);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow);
+  cursor: default;
 }
-.tcard h3 { margin: 0 0 12px; font-size: 14px; font-weight: 650; color: var(--text); }
-.tcard dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 7px 16px; }
-.tcard dt { font-size: 13px; color: var(--text-dim); }
-.tcard dd { margin: 0; font-size: 13px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
-.added { margin: 18px 0 0; font-size: 13px; color: var(--text-dim); }
+.tp-head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 16px; }
+.tp-head h2 { margin: 0; font-size: 17px; font-weight: 700; color: var(--text); }
+/* The card's own headline: which episode this file belongs to, so the numbers cannot be read as the
+   season's. It is the same string the card under the dialog shows, not a second spelling of it. */
+.tp-title { margin: 4px 0 0; font-size: 13px; color: var(--text-dim); }
+.tp-x {
+  margin-left: auto;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 0;
+  background: var(--chip);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background var(--hov) var(--ease), color var(--hov) var(--ease);
+}
+.tp-x:hover { background: var(--chip-hi); color: var(--text); }
+.tp-msg { margin: 0; padding: 30px 0; font-size: 13px; color: var(--text-dim); text-align: center; }
+/* The ask is a second long, so the dialog opens on the shape of the answer rather than on a spinner:
+   every block below is one the sheet really has. */
+/* Measured against the sheet on two kinds of file: the strip is 834.4×50 wherever the episode
+   has a source, the columns come in at 409.2 wide with a 16 gutter and, on every one of the 31 episodes
+   sampled, 214.2 tall over 266.5, and the foot is a name that ellipsises beside a date pinned to the right
+   edge. Those boxes are drawn here, so the rows do not move when the data arrives.
+   The 轨道 band is the one block a placeholder cannot know about — 20/20 episodes of 罚罪 have no subtitles at
+   all, 11/11 of the anime sampled do — and it is drawn anyway at the 86.7 its single-line form measured,
+   because the alternative was a sheet that grows by a third of itself in front of the reader. */
+.tp-load { display: flex; flex-direction: column; gap: 16px; }
+.tp-load i { display: block; border-radius: var(--radius); background: var(--shimmer); background-size: var(--sk-tile) 100%; animation: sh 1.3s linear infinite; }
+.tp-load .strip { height: 50px; }
+.tp-load .cols { display: flex; gap: 16px; align-items: flex-start; }
+.tp-load .cols i { flex: 1 1 0; }
+.tp-load .video { height: 214.2px; }
+.tp-load .audio { height: 266.5px; }
+.tp-load .band { height: 86.7px; }
+.tp-load .foot { display: flex; justify-content: space-between; gap: 18px; }
+.tp-load .foot i { height: 20.1px; border-radius: 6px; }
+.tp-load .name { flex: 1 1 auto; min-width: 0; }
+.tp-load .date { flex: none; width: 186px; }
+.techpop-enter-active,
+.techpop-leave-active { transition: opacity 0.16s var(--ease); }
+.techpop-enter-from,
+.techpop-leave-to { opacity: 0; }
+/* Only the card travels, 8px, and it travels in pixels: a dialog that scales on the way in reads as a
+   different window opening rather than this page lifting a sheet over itself. */
+.techpop-enter-active .tp-card,
+.techpop-leave-active .tp-card { transition: transform 0.16s var(--ease-out); }
+.techpop-enter-from .tp-card,
+.techpop-leave-to .tp-card { transform: translate3d(0, 8px, 0); }
 
 .person { width: 84px; flex: none; }
 .face {
