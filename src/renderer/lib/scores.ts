@@ -160,7 +160,7 @@ function askTmdb(item: LibraryItem): void {
 
 /** The work a row's outside data lives on. An Episode's own provider ids point at the episode and no source
  *  here has an episode page, so the row is answered from the Series above it — one ask per show, because
- *  `embyCached` folds the twenty-four 待看 rows of 名侦探柯南 into the one series id they all name. */
+ *  `embyCached` folds the twenty-four episode rows of 名侦探柯南 into the one series id they all name. */
 async function workOf(item: LibraryItem): Promise<LibraryItem | null> {
   if (tmdbKind(item)) return item;
   if (item.type !== 'Episode') return null;
@@ -197,7 +197,7 @@ export function useScores(get: () => LibraryItem | null | undefined): ComputedRe
 export interface TmdbSlot {
   meta: TmdbMeta | null;
   /** The number to print when the work has no TMDB rating: the work's own, and only if it has none, the
-   *  row's. An episode row's server rating is a per-episode figure (measured on 待看: 3 of the 8 rows a
+   *  row's. An episode row's server rating is a per-episode figure (measured over 48 rows: 3 of the 8 a
    *  badge can stand on disagree with the series above them, e.g. 9.5 against the series' 7.0), and the
    *  badge beside a poster is read as the title's score, so it may fall back to that one alone. */
   fallback: number;

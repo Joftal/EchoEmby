@@ -9,7 +9,7 @@ import { mergeGenres } from '../../lib/genres';
 import { useTmdb } from '../../lib/scores';
 import { LOOP_NEED } from '../../lib/looprail';
 
-/* Two densities of the same horizontal card. `row` is the catalogue row 待看 and 收藏 want: a poster, the
+/* Two densities of the same horizontal card. `row` is the catalogue row 收藏 wants: a poster, the
    paragraph, and the badges a title carries. `queue` is 在看's: a 16:9 frame to read the stop against,
    where the episode sits, and how big the season around it is — no paragraph, because on this
    page one show is one card and the sentence under it is the answer to a question nobody is asking. */
@@ -107,7 +107,7 @@ function onErr(): void {
 const target = computed(() => (props.item.type === 'Episode' ? props.item.parentId : props.item.id));
 /* Synopsis and age rating come from the same ladder the detail page and the lobby hero use — TMDB in
    Chinese, then TMDB's other line, then the server — and this row was the only surface left out of it. Measured on
-   待看: 26 of 48 rows had no overview at all and 32 carried no rating, while the server has an OfficialRating
+   a 48-row list: 26 of its rows had no overview at all and 32 carried no rating, while the server has an OfficialRating
    for only 13-18 of 25 sampled titles. The ask rides the `near` gate above rather than the row's own mount,
    so a page only reaches for the titles somebody can actually see, and it asks TMDB alone: IMDb, Trakt and
    Bangumi would be six round trips per row for two lines of text this card cannot draw. */
@@ -167,7 +167,7 @@ const rating = computed(() => {
 });
 /* The year reads the server first and TMDB only where the server has nothing; 分类 is a fact about the work
    rather than about this row, so it takes both lists — TMDB's order, then whatever this server calls a genre
-   that TMDB never named. Measured on 待看: rows that carry no ProductionYear and rows on a shelf nobody ever
+   that TMDB never named. Measured on a 48-row list: rows with no ProductionYear and rows on a shelf nobody ever
    tagged. Nothing new is asked: this is the same reply the rating and the paragraph on this row ride. */
 const meta = computed(() =>
   [

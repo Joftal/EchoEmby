@@ -351,11 +351,10 @@ export const useAppStore = defineStore('app', () => {
     else rows.value.unshift(r.data);
   }
 
-  /** The last stop the server accepted. Write-back covers every copy this app holds, but two browse
-   *  lists answer from the server instead — 在看 orders titles by when they were last opened, 待看 is
-   *  literally 「not played yet」 — and their rows are not in the shared cache, so nothing patches them.
-   *  They re-read on this: a replaced object fires the watcher even when the same episode stops twice at
-   *  the same number. */
+  /** The last stop the server accepted. Write-back covers every copy this app holds, but one browse
+   *  list answers from the server instead — 在看 orders titles by when they were last opened — and its
+   *  rows are not in the shared cache, so nothing patches them. It re-reads on this: a replaced object
+   *  fires the watcher even when the same episode stops twice at the same number. */
   const lastStop = ref<WatchedRecord | null>(null);
 
   async function rememberPlayback(w: WatchedRecord): Promise<void> {

@@ -18,7 +18,7 @@ const player = usePlayerStore();
 const route = useRoute();
 const router = useRouter();
 
-type Kind = 'resume' | 'unwatched' | 'favorites' | 'search' | 'view';
+type Kind = 'resume' | 'favorites' | 'search' | 'view';
 
 /** A search is ordered by hand over whatever we hold, so its first page has to be worth ordering. */
 const PAGE = 48;
@@ -30,7 +30,7 @@ const RESUME_PAGE = 200;
 
 const kind = computed<Kind>(() => {
   const k = String(route.query.kind || '');
-  if (k === 'resume' || k === 'unwatched' || k === 'favorites' || k === 'search') return k;
+  if (k === 'resume' || k === 'favorites' || k === 'search') return k;
   return 'view';
 });
 const viewId = computed(() => String(route.query.view || ''));
@@ -41,16 +41,15 @@ const term = ref(String(route.query.q || ''));
 
 const titles: Record<Exclude<Kind, 'view'>, string> = {
   resume: '在看',
-  unwatched: '待看',
   favorites: '收藏',
   search: '搜索',
 };
 const title = computed(() => (kind.value === 'view' ? decodeURIComponent(String(route.query.name || '')) || '资源库' : titles[kind.value]));
 /** 在看 is a playback queue, not a shelf: nothing about it wants narrowing. */
 const showBar = computed(() => kind.value !== 'resume');
-/** The three lists are horizontal cards, two or three across; a search and a library window are posters. */
+/** The two lists are horizontal cards, two or three across; a search and a library window are posters. */
 const layout = computed<'list' | 'grid'>(() =>
-  kind.value === 'resume' || kind.value === 'unwatched' || kind.value === 'favorites' ? 'list' : 'grid',
+  kind.value === 'resume' || kind.value === 'favorites' ? 'list' : 'grid',
 );
 /** 在看 drops the paragraph for a frame, a count and a bar, so it gets its own density of the same card. */
 const rowVariant = computed<'row' | 'queue'>(() => (kind.value === 'resume' ? 'queue' : 'row'));
@@ -90,11 +89,6 @@ function params(startIndex: number): Record<string, string | number | boolean> {
   // 在看 no longer sends this — `askRows` below answers the page from the lobby's row — but the shape stays
   // as the page's identity: `lastKey` compares it to decide whether a chip change is a new ask.
   if (kind.value === 'resume') return { Recursive: true, MediaTypes: 'Video', IsResumable: true, SortBy: 'DatePlayed', SortOrder: 'Descending', ...page };
-  // `MediaTypes=Video` cannot carry a genre: measured on this gateway, adding Genres to it answers HTTP 500
-  // for every label, while the same window asked by item type is byte-identical to it (48 of 48 rows, same
-  // order, on both accounts) and does take Genres. 待看 has a 分类 dropdown, so it asks by type; 在看 has none
-  // and keeps the media type, so it never sends the pair that breaks.
-  if (kind.value === 'unwatched') return { Recursive: true, IncludeItemTypes: 'Movie,Episode,Video', Filters: 'IsUnplayed', ...f, ...s, ...page };
   // Measured: this server answers an IsFavorite query with nothing at all unless it is told which
   // kinds to look for, so 收藏 carries its own default list rather than relying on the server's.
   if (kind.value === 'favorites') return { Recursive: true, Filters: 'IsFavorite', IncludeItemTypes: 'Movie,Series,Episode,Video,BoxSet,Playlist', ...f, ...s, ...page };
@@ -446,10 +440,10 @@ function onFilters(next: Filters): void {
   void router.replace({ path: '/browse', query: { ...rest, ...toQuery(next) } });
 }
 
-/** The rail's 在看/待看/收藏 and each library window are ONE instance of this page, so nothing is torn down
+/** The rail's 在看/收藏 and each library window are ONE instance of this page, so nothing is torn down
  *  between them and the reader's place in the list they were reading survives as a place in the list they
- *  never asked for: measured, 待看 scrolled to 1200 landed on 收藏 at 197 — that is just the shorter page
- *  clamping the old offset, not a reset. */
+ *  never asked for: measured, a 1200-row list scrolled to its end landed on 收藏 at 197 — that is just the
+ *  shorter page clamping the old offset, not a reset. */
 const pageEl = ref<HTMLElement | null>(null);
 watch(
   () => route.fullPath,
@@ -465,14 +459,13 @@ watch(
 );
 
 /** Closing the player moves rows that no write-back can reach: 在看 re-orders by when a title was last
- *  opened (and gains one that was never in it), 待看 loses the item that just finished. Both are the
- *  server's answer, not a copy of one, so they are re-asked — and only a finished item changes 待看,
- *  so a pause-and-close on a half-watched one asks for nothing. */
+ *  opened, and gains one that was never in it. That is the server's answer, not a copy of one, so the
+ *  page is re-asked — and only for 在看: a pause-and-close writes the stop onto every other list's row. */
 watch(
   () => store.lastStop,
   w => {
     if (!w) return;
-    if (kind.value === 'resume' || (kind.value === 'unwatched' && w.played)) void sync();
+    if (kind.value === 'resume') void sync();
     // 搜索 and a library window hold their own rows too, and a film in one of them wears the same 看到
     // chip. A stop moves neither list's order, so the number is written onto the row instead of re-asked.
     else for (const it of items.value) if (it.id === w.itemId) applyStop(it, w);
@@ -814,13 +807,13 @@ h1 {
   aspect-ratio: auto;
   height: 186px;
   border-radius: var(--r-tile);
-  /* The row drawn from the inside rather than as one slab. What a real 待看 row is while it fills in: a
+  /* The row drawn from the inside rather than as one slab. What a real list row is while it fills in: a
      panel holding a 92-wide thumb (the only part of it that shimmers, because that is the only part of it
      that has an image to wait for) and four text rows — the title, the meta line, the synopsis, the badge
      row. Measured off the real card: head 23, +5 meta 20, +9 and 20.8 a line for three, +11 badges 26 =
      156.4 against this tile's own 156 of content.
-     The height keeps the tall shape because 待看 puts two rows on a grid line and the line takes the taller
-     of the pair (26 of 48 rows measure 168, 22 measure 184-186, so the pitch the grid really answers for is
+     The height keeps the tall shape because a list puts two rows on a grid line and the line takes the
+     taller of the pair (measured over 48 rows: 26 at 168, 22 at 184-186, so the pitch the grid answers for is
      the tall one) — and a thumb stretched to the line is what the short row shows there too. */
   display: flex;
   gap: 14px;

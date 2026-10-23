@@ -23,7 +23,6 @@ interface NavItem {
 const ICONS = {
   home: ['M4 11 12 4.4 20 11', 'M6.6 9.4V19a1.6 1.6 0 0 0 1.6 1.6h7.6A1.6 1.6 0 0 0 17.4 19V9.4'],
   play: ['M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16Z', 'M10.4 9.1 15.2 12l-4.8 2.9z'],
-  list: ['M8.5 6.5H20', 'M8.5 12H20', 'M8.5 17.5H20', 'M4.4 6.5h.02', 'M4.4 12h.02', 'M4.4 17.5h.02'],
   heart: ['M12 19.6S5.2 15.2 5.2 10.7A3.9 3.9 0 0 1 12 8.3a3.9 3.9 0 0 1 6.8 2.4c0 4.5-6.8 8.9-6.8 8.9Z'],
   layers: ['M4 8.4 12 4.2l8 4.2-8 4.2z', 'M4 8.4v7.2L12 19.8l8-4.2v-7.2'],
   search: ['M11 4.6a6.4 6.4 0 1 0 0 12.8 6.4 6.4 0 0 0 0-12.8Z', 'M19.4 19.4 15.6 15.6'],
@@ -37,7 +36,6 @@ const ICONS = {
 const discover: NavItem[] = [{ key: 'home', label: '首页', to: '/', paths: ICONS.home }];
 const mine: NavItem[] = [
   { key: 'kresume', label: '在看', to: '/browse?kind=resume', paths: ICONS.play },
-  { key: 'kunwatched', label: '待看', to: '/browse?kind=unwatched', paths: ICONS.list },
   { key: 'kfavorites', label: '收藏', to: '/browse?kind=favorites', paths: ICONS.heart },
 ];
 
