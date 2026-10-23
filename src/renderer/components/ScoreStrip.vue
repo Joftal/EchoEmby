@@ -15,13 +15,16 @@ import logoBangumi from '../assets/logos/bangumi.png';
 /* Every mark here is the work's own number: the card face, the lobby slide and this row all answer for the
  *  same subject, so a title never wears two figures. A season's rating is not this row's business and the
  *  detail page prints it next to the season it belongs to. */
-/* `card` is the same marks on a light plate rather than over art: dark ink, no age badge, and the 10-point
-   sources first, which is the order the reference reads in. */
+/* `card` is the same marks on a light plate rather than over art: dark ink and no age badge. */
 const props = withDefaults(defineProps<{ item: LibraryItem; card?: boolean }>(), { card: false });
 
 /** No `csm`: it answers only the age badge this variant does not draw, and asking it per row would be one
  *  reverse-lookup of a Chinese ratings site for every card on the page for nothing. */
 const CARD_SOURCES: (keyof Scores)[] = ['rt', 'imdb', 'trakt', 'bgm', 'tmdb'];
+/** One order on every surface that prints scores: the two percentages lead, then the 10-point numbers.
+ *  The plate used to lead with the 10-point numbers and close on the percentages, so the same work wore
+ *  its marks in two different orders two centimetres apart; the user fixed this one as correct. */
+const ORDER = ['tomato', 'corn', 'imdb', 'tmdb', 'trakt', 'bgm'];
 const scores = useScores(() => props.item, props.card ? CARD_SOURCES : undefined);
 /** TMDB first, the server second: measured on this library the server's `OfficialRating` is present on
  *  only 13-18 of 25 sampled titles, while TMDB's `content_ratings` answers for nearly all of them. */
@@ -78,12 +81,7 @@ const marks = computed<Mark[]>(() => {
   const bgm = scores.value.bgm;
   if (bgm && bgm.season == null)
     out.push({ k: 'bgm', logo: logoBangumi, text: bgm.score.toFixed(1), hint: `Bangumi《${bgm.name}》`, url: `https://bgm.tv/subject/${bgm.subjectId}` });
-  /* Over art the two percentages lead, which is the order the lobby hero was read in; on a plate the
-     reference leads with the 10-point numbers and closes on the tomato and the popcorn. */
-  const order = props.card
-    ? ['imdb', 'tmdb', 'trakt', 'bgm', 'tomato', 'corn']
-    : ['tomato', 'corn', 'imdb', 'tmdb', 'trakt', 'bgm'];
-  return out.sort((a, b) => order.indexOf(a.k) - order.indexOf(b.k));
+  return out.sort((a, b) => ORDER.indexOf(a.k) - ORDER.indexOf(b.k));
 });
 
 /** The row is ordered by source, not by arrival, and the sources answer one at a time — so a Trakt number
