@@ -4,15 +4,29 @@ import { useRouter } from 'vue-router';
 import type { LibraryItem } from '../../../shared/types';
 import { useAppStore } from '../../stores/app';
 import { begin } from '../../lib/handoff';
-import { episodeName, episodePosition, fmtRuntime, seenLabel } from '../../lib/format';
+import { episodeName, episodePosition, fmtRuntime, seenLabel, watchedRatio } from '../../lib/format';
 import { mergeGenres } from '../../lib/genres';
 import { useTmdb } from '../../lib/scores';
 import { LOOP_NEED } from '../../lib/looprail';
 
-const props = withDefaults(defineProps<{ item: LibraryItem; index?: number; matchedGenres?: string[] }>(), {
-  index: 0,
-  matchedGenres: () => [],
-});
+/* Two densities of the same horizontal card. `row` is the catalogue row 待看 and 收藏 want: a poster, the
+   paragraph, and the badges a title carries. `queue` is 在看's: a 16:9 frame to read the stop against,
+   where the episode sits, and how big the season around it is — no paragraph, because on this
+   page one show is one card and the sentence under it is the answer to a question nobody is asking. */
+const props = withDefaults(
+  defineProps<{
+    item: LibraryItem;
+    index?: number;
+    matchedGenres?: string[];
+    variant?: 'row' | 'queue';
+    /** The season row behind an episode card, which is the only place 本季 N 集 can come from. */
+    season?: { total?: number } | null;
+  }>(),
+  { index: 0, matchedGenres: () => [], variant: 'row', season: null },
+);
+const emit = defineEmits<{ (e: 'play', item: LibraryItem): void }>();
+
+const queue = computed(() => props.variant === 'queue');
 
 const store = useAppStore();
 const router = useRouter();
@@ -62,13 +76,13 @@ const url = computed(() =>
 );
 
 watch(
-  () => [props.item.id, near.value] as const,
+  () => [props.item.id, props.variant, near.value] as const,
   async () => {
     if (!near.value) return;
     loaded.value = false;
     tries.value = 0;
     dead.value = {};
-    rungs.value = await store.itemArt(props.item, 190);
+    rungs.value = await store.itemArt(props.item, queue.value ? 360 : 190, queue.value);
     failed.value = !rungs.value.length;
   },
   { immediate: true },
@@ -116,7 +130,9 @@ watch(
       tmName.value = '';
     }
     ovFor = i.id;
-    const [o, n] = await Promise.all([store.episodeOverview(i), store.episodeTitle(i)]);
+    // The queue card draws no paragraph, so it does not take one — the season reply is shared either way,
+    // and asking for a line this card cannot show is how a dead field survives a redesign.
+    const [o, n] = await Promise.all([queue.value ? '' : store.episodeOverview(i), store.episodeTitle(i)]);
     if (props.item.id !== i.id) return;
     tmOv.value = o;
     tmName.value = n;
@@ -168,6 +184,40 @@ const meta = computed(() =>
 const runtime = computed(() => (props.item.type === 'Series' || props.item.type === 'BoxSet' ? '' : fmtRuntime(props.item.runTimeTicks)));
 const seen = computed(() => seenLabel(props.item.userData, props.item.runTimeTicks));
 
+/* ---- the queue card's own lines -------------------------------------------------------------
+   Three, and each answers a different question, because this page folds a show's whole episode run
+   into the one card you would resume: what am I watching (title), where did I stop (position + the
+   episode's name), how big is the run I am inside (the count line — the stop itself is on the frame). */
+const queueTitle = computed(() => {
+  const i = props.item;
+  if (i.type !== 'Episode') return i.name;
+  return i.seriesName || headline.value || episodePosition(i.parentIndexNumber, i.indexNumber) || i.name;
+});
+const queueWhere = computed(() => {
+  const i = props.item;
+  if (i.type === 'Episode') {
+    const pos = episodePosition(i.parentIndexNumber, i.indexNumber);
+    const t = episodeName({ episode: i.indexNumber, season: i.parentIndexNumber, seriesName: i.seriesName || '' }, tmName.value, i.name);
+    return `${pos}${t ? ` · ${t}` : ''}` || i.name;
+  }
+  const year = String(i.productionYear || tmdb.value.meta?.year || '');
+  const g = mergeGenres(tmdb.value.meta?.genres, i.genres, props.matchedGenres, 2).join(' / ');
+  return [year, g].filter(Boolean).join(' · ');
+});
+/* The bar is this episode's own stop, drawn on the frame exactly the way the 继续观看 row draws it, because
+   that is the only fraction these gateways answer with per row: measured over the 94 cards folded from 200
+   在看 rows, an offset lands on 15 of them and a season's total on 57 — and a place in a season is a count of
+   rows, not a length. So the frame carries how far into *this* episode the viewer got, and 本季 N 集 below
+   stays the one line that describes the season. The runtime left this line for the same reason: 24分钟 under
+   本季 3 集 reads as how long a season is, while it is one episode's length — which the 「看到」 plate on the
+   frame and the bar above it already say better. */
+const barPct = computed(() => Math.round(watchedRatio(props.item.userData, props.item.runTimeTicks) * 100));
+const queueCount = computed(() => {
+  const bits = [props.season?.total ? `本季 ${props.season.total} 集` : ''].filter(Boolean);
+  if (rating.value) bits.push(`★ ${rating.value}`);
+  return bits.join(' · ');
+});
+
 function open(): void {
   if (!target.value) return;
   begin(root.value?.querySelector<HTMLImageElement>('img.show'), target.value, props.item);
@@ -176,27 +226,48 @@ function open(): void {
 </script>
 
 <template>
-  <article ref="root" class="lcard" :style="{ '--i': index }" tabindex="0" @click="open" @keydown.enter="open">
+  <article ref="root" class="lcard" :class="{ queue }" :style="{ '--i': index }" tabindex="0" @click="open" @keydown.enter="open">
     <div class="thumb">
       <Transition name="art-skel">
         <div v-if="!loaded && !failed" class="skeleton"></div>
       </Transition>
       <img v-if="url && !failed" :src="url" alt="" :class="{ show: loaded }" loading="lazy" decoding="async" @load="loaded = true" @error="onErr" />
       <span v-if="failed" class="ph">{{ (item.seriesName || item.name).slice(0, 1) }}</span>
+
+      <!-- The bottom-edge hairline the 继续观看 row paints, from the same class in base.css and the same number
+           the 「看到」 plate prints, so the stop is read against the picture it was stopped on. -->
+      <div v-if="queue && barPct > 0" class="frame-prog"><i :style="{ width: barPct + '%' }"></i></div>
+
+      <!-- The reference puts the resume control on the frame itself: a play mark and the stop, or the play
+           mark alone where this server kept no offset. It is always on screen, which is the point — the
+           hover-only disc it replaces was reachable on every card but *visible* on none of them until the
+           pointer arrived, and on this page it is the whole reason the page exists. -->
+      <button v-if="queue" class="resume" :title="seen ? '从这里继续播放' : '开始播放'" @click.stop="emit('play', item)">
+        <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true"><path d="M8 5l12 7-12 7z" fill="currentColor" /></svg>
+        {{ seen || '播放' }}
+      </button>
     </div>
 
     <div class="body">
       <div class="head">
-        <h3>{{ headline }}</h3>
+        <h3>{{ queue ? queueTitle : headline }}</h3>
         <span v-if="item.studio" class="studio">{{ item.studio }}</span>
       </div>
-      <p v-if="meta" class="meta">{{ meta }}</p>
-      <p class="ov">{{ overview || '暂无简介。' }}</p>
-      <div class="badges">
-        <span v-if="seen" class="b seen">{{ seen }}</span>
-        <span v-if="rating" class="b rate">★ {{ rating }}</span>
-        <span v-if="cert" class="b cert">{{ cert }}</span>
-        <span v-if="runtime" class="b time">{{ runtime }}</span>
+
+      <p v-if="queue" class="where">{{ queueWhere }}</p>
+      <template v-else>
+        <p v-if="meta" class="meta">{{ meta }}</p>
+        <p class="ov">{{ overview || '暂无简介。' }}</p>
+        <div class="badges">
+          <span v-if="seen" class="b seen">{{ seen }}</span>
+          <span v-if="rating" class="b rate">★ {{ rating }}</span>
+          <span v-if="cert" class="b cert">{{ cert }}</span>
+          <span v-if="runtime" class="b time">{{ runtime }}</span>
+        </div>
+      </template>
+
+      <div v-if="queue" class="foot">
+        <p v-if="queueCount" class="count">{{ queueCount }}</p>
       </div>
     </div>
   </article>
@@ -366,5 +437,79 @@ h3 {
 .seen {
   color: var(--accent);
   background: var(--accent-soft);
+}
+
+/* ---- queue density -------------------------------------------------------------
+   Measured off the reference: a 428x106 panel whose frame is 141 wide (a third of it, 16:9), a 16px title
+   sharing its baseline row with the studio at the right edge, and the count pinned to the bottom of the text
+   column rather than stacked under the title. The progress line is not from the reference — it reads the stop
+   off the frame's bottom edge instead, because the reference's bar counts episodes and this account cannot
+   answer that. Scaled to a two-across card here, the frame lands at 178px, the size the art asks for at 360. */
+.queue {
+  gap: 14px;
+}
+.queue .thumb {
+  /* A third of the panel, the way the reference has it (141 of 428), rather than a fixed plate the text
+     column has to work around: at two across this lands on 178px, and at three the frame steps down with
+     the card instead of eating the count line. */
+  width: clamp(150px, 35%, 178px);
+  aspect-ratio: 16 / 9;
+}
+.queue .body {
+  display: flex;
+  flex-direction: column;
+}
+.queue .head h3 {
+  font-size: 15.5px;
+}
+.where {
+  margin: 5px 0 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+.foot {
+  margin-top: auto;
+}
+.count {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+.resume {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--r-badge);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+  background: rgba(16, 16, 22, 0.74);
+  backdrop-filter: blur(8px);
+  cursor: pointer;
+  transition: background var(--hov) var(--ease), transform var(--hov) var(--ease-out);
+}
+.resume:hover {
+  background: var(--ink);
+}
+.resume:active {
+  transform: scale(0.96);
+  transition-duration: 0.12s;
 }
 </style>

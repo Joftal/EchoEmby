@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router';
 import type { LibraryItem } from '../../../shared/types';
 import { useAppStore } from '../../stores/app';
 import { begin } from '../../lib/handoff';
-import { episodeName, episodePosition, fmtRuntime, seenLabel } from '../../lib/format';
+import { episodeName, episodePosition, fmtRuntime, seenLabel, watchedRatio } from '../../lib/format';
 import { useTmdb } from '../../lib/scores';
 import { LOOP_NEED } from '../../lib/looprail';
 
@@ -115,7 +115,7 @@ watch(
 );
 
 const target = computed(() => (props.item.type === 'Episode' ? props.item.parentId : props.item.id));
-const played = computed(() => Math.min(100, props.item.userData?.playedPercentage || 0));
+const played = computed(() => Math.round(watchedRatio(props.item.userData, props.item.runTimeTicks) * 100));
 /* The number on this card has to be the number on the page it opens, or one title wears two of them: TMDB
    first, the server only once TMDB has answered and has nothing to say, and neither while the answer is
    still owed. That third state is the whole point — printing the server's 8.9 and then switching to TMDB's
@@ -200,7 +200,7 @@ function open(): void {
       <!-- The progress read-out belongs to the item, not to one card shape: 在看, 首页行, 资源库 and 收藏
            all answer the same question — how far did I get. -->
       <span v-if="watchedLabel" class="chip">{{ watchedLabel }}</span>
-      <div v-if="played > 0" class="prog"><i :style="{ width: played + '%' }"></i></div>
+      <div v-if="played > 0" class="frame-prog"><i :style="{ width: played + '%' }"></i></div>
 
       <template v-if="variant === 'still'">
         <span class="disc" role="presentation" @click.stop="emit('play', item)">
@@ -333,25 +333,6 @@ img.show {
 .card:hover .rate {
   opacity: 1;
   transform: none;
-}
-
-/* Bottom-edge hairline: the reference marks progress on the still itself. */
-.prog {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 3px;
-  background: rgba(255, 255, 255, 0.32);
-  overflow: hidden;
-}
-.prog i {
-  display: block;
-  height: 100%;
-  background: #fff;
-  box-shadow: 0 0 0 1px rgba(18, 18, 26, 0.08);
-  transform-origin: left;
-  transition: width 0.9s var(--ease-out);
 }
 
 .chip {

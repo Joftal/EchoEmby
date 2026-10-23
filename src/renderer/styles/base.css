@@ -425,6 +425,27 @@ summary,
   opacity: 1;
 }
 
+/* The watched fraction drawn on the bottom edge of a 16:9 frame — the 继续观看 card on the lobby row and
+   the 在看 queue card are the same object read the same way, so the line is defined once and both point at
+   it. Global for the same reason as `.art-skel-*`: a scoped copy in each card is two rules that drift. */
+.frame-prog {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.32);
+  overflow: hidden;
+}
+.frame-prog i {
+  display: block;
+  height: 100%;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(18, 18, 26, 0.08);
+  transform-origin: left;
+  transition: width 0.9s var(--ease-out);
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     transition-duration: 0.01ms !important;

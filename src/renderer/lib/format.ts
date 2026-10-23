@@ -22,6 +22,17 @@ export const stoppedAtMs = (u?: { playedPercentage?: number; positionMs?: number
   return ms >= 1000 ? ms : 0;
 };
 
+/** How far through a row the viewer got, as 0..1, off whichever of the two fields this server answered
+ *  with. The percentage is the sparse one — measured over 200 raw 在看 rows it appears on 3, while 15 of
+ *  this page's 94 folded rows carry an offset — so the offset over the row's own runtime is the number a
+ *  bar should read, and the percentage only stands in for the rows this fork answers that way instead. */
+export const watchedRatio = (u?: { playedPercentage?: number; positionMs?: number }, runTimeTicks?: number): number => {
+  const ms = stoppedAtMs(u, runTimeTicks);
+  const full = ticksToMs(runTimeTicks);
+  if (ms > 0 && full > 0) return Math.min(1, ms / full);
+  return Math.min(1, (u?.playedPercentage || 0) / 100);
+};
+
 /** The progress read-out, 「看到 27:06」 — the one wording every surface that answers how far a viewer got
  *  prints, off the one number above. The hero's button used to count whole minutes off the position while
  *  the card's chip multiplied a rounded percentage by the runtime, so the same episode said 「已播 29 分钟」
