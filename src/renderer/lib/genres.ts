@@ -43,27 +43,18 @@ const FAMILY: Record<string, string[]> = Object.entries(ALIAS).reduce((acc, [raw
   return acc;
 }, {} as Record<string, string[]>);
 
-/** Mapped and deduplicated: one item can carry both spellings of the same genre. `prefer` (the Chinese labels
- *  a page is currently filtered by) is pulled to the front so a card answering a 分类 filter always names the
- *  genre it was matched on, even where the server's own array put it fifth of six. Every surface that prints a
- *  genre line now goes through `mergeGenres`, so this is that function's fold rather than an entry point. */
-const genreLabels = (names?: string[], prefer: string[] = []): string[] => {
-  const folded = [...new Set((names || []).map(genreLabel))];
-  if (!prefer.length) return folded;
-  const top = prefer.filter(p => folded.includes(p));
-  return [...top, ...folded.filter(g => !top.includes(g))];
-};
+/** Mapped and deduplicated: one item can carry both spellings of the same genre. Every surface that prints
+ *  a genre line goes through `mergeGenres`, so this is that function's fold rather than an entry point. */
+const genreLabels = (names?: string[]): string[] => [...new Set((names || []).map(genreLabel))];
 
 /** One card's genre line, out of both sources. TMDB's order leads because that list is about the work; the
  *  server's own labels follow it rather than being replaced by it. Measured on the 242 rows both sides tag:
  *  40 reword, none lose a slot, 12 gain one — but a card only prints three, so on 12 rows a label the server
  *  billed is pushed past that cap by a TMDB one (宝石之国 loses 悬疑 to 动作冒险). Two costs come with the merge
  *  and are the reason it is capped: a plain flip instead would empty a slot outright on 6 rows, and a label
- *  TMDB alone names cannot be found by the 分类 filter, which is asked server-side (20 of 373 printed rows).
- *  `prefer` keeps its meaning from `genreLabels`: the labels a browse filter matched stay in front, so a card
- *  answering a 筛选 never leads with something else. */
-export const mergeGenres = (tmdb: string[] | undefined, server: string[] | undefined, prefer: string[] = [], cap?: number): string[] => {
-  const merged = genreLabels([...(tmdb || []), ...(server || [])], prefer);
+ *  TMDB alone names cannot be found by the 分类 filter, which is asked server-side (20 of 373 printed rows). */
+export const mergeGenres = (tmdb: string[] | undefined, server: string[] | undefined, cap?: number): string[] => {
+  const merged = genreLabels([...(tmdb || []), ...(server || [])]);
   return cap ? merged.slice(0, cap) : merged;
 };
 

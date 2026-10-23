@@ -6,7 +6,7 @@ import MediaCard from '../components/home/MediaCard.vue';
 import ListCard from '../components/home/ListCard.vue';
 import RowScroller from '../components/home/RowScroller.vue';
 import FilterBar from '../components/browse/FilterBar.vue';
-import { defaultSort, filterParams, fromQuery, isFiltered, localSort, sortParams, toQuery, type Filters } from '../lib/filters';
+import { defaultSort, emptyFilters, filterParams, fromQuery, isFiltered, localSort, sortParams, toQuery, type Filters } from '../lib/filters';
 import { embyCached } from '../lib/embycache';
 import { resetPageScroll } from '../lib/scroll';
 import { PLAYABLE, applyStop } from '../lib/resume';
@@ -36,7 +36,12 @@ const kind = computed<Kind>(() => {
 const viewId = computed(() => String(route.query.view || ''));
 const isSearch = computed(() => kind.value === 'search');
 const pageSize = computed(() => (isSearch.value ? SEARCH_PAGE : kind.value === 'resume' ? RESUME_PAGE : PAGE));
-const filters = ref<Filters>(fromQuery(route.query, defaultSort(isSearch.value)));
+/** 收藏 wears no filter bar, so it must not read the URL's filter keys either: an address left over from
+ *  a filtered 搜索 or a library window would quietly narrow the list, with nothing on screen saying so and
+ *  no 清空筛选 left to undo it. The sort stays the default one, which is what the page already wore. */
+const readFilters = (): Filters =>
+  kind.value === 'favorites' ? emptyFilters(defaultSort(isSearch.value)) : fromQuery(route.query, defaultSort(isSearch.value));
+const filters = ref<Filters>(readFilters());
 const term = ref(String(route.query.q || ''));
 
 const titles: Record<Exclude<Kind, 'view'>, string> = {
@@ -45,8 +50,10 @@ const titles: Record<Exclude<Kind, 'view'>, string> = {
   search: '搜索',
 };
 const title = computed(() => (kind.value === 'view' ? decodeURIComponent(String(route.query.name || '')) || '资源库' : titles[kind.value]));
-/** 在看 is a playback queue, not a shelf: nothing about it wants narrowing. */
-const showBar = computed(() => kind.value !== 'resume');
+/** 在看 is a playback queue and 收藏 is the list of titles already chosen: neither is a pool to narrow.
+ *  The bar stays on 搜索 and on a library window, where the whole catalogue is on screen and a condition
+ *  is the only way to get at one part of it. */
+const showBar = computed(() => kind.value === 'search' || kind.value === 'view');
 /** The two lists are horizontal cards, two or three across; a search and a library window are posters. */
 const layout = computed<'list' | 'grid'>(() =>
   kind.value === 'resume' || kind.value === 'favorites' ? 'list' : 'grid',
@@ -91,7 +98,7 @@ function params(startIndex: number): Record<string, string | number | boolean> {
   if (kind.value === 'resume') return { Recursive: true, MediaTypes: 'Video', IsResumable: true, SortBy: 'DatePlayed', SortOrder: 'Descending', ...page };
   // Measured: this server answers an IsFavorite query with nothing at all unless it is told which
   // kinds to look for, so 收藏 carries its own default list rather than relying on the server's.
-  if (kind.value === 'favorites') return { Recursive: true, Filters: 'IsFavorite', IncludeItemTypes: 'Movie,Series,Episode,Video,BoxSet,Playlist', ...f, ...s, ...page };
+  if (kind.value === 'favorites') return { Recursive: true, Filters: 'IsFavorite', IncludeItemTypes: 'Movie,Series,Episode,Video,BoxSet,Playlist', ...s, ...page };
   // Without this the search answers with Folder, Studio and Person rows: 「"骗骗"喜欢你」 showed up
   // twice because the library's container folder and the movie inside it are two different items.
   // The list has to be comma-joined here too — asked as `A|B` this server ignores it outright.
@@ -450,7 +457,7 @@ watch(
   () => {
     if (route.name !== 'browse') return;
     if (kind.value === 'search') term.value = String(route.query.q || '');
-    filters.value = fromQuery(route.query, defaultSort(isSearch.value));
+    filters.value = readFilters();
     // Picking a sort on a search only re-orders the window we hold; the query is unchanged.
     if (JSON.stringify(params(0)) === lastKey) return;
     resetPageScroll(pageEl.value);
@@ -578,7 +585,6 @@ onBeforeUnmount(() => {
             :key="`${it.id}-${i}`"
             :item="it"
             :index="i % 12"
-            :matched-genres="filters.genres"
             :variant="rowVariant"
             :season="seasonOf(it)"
             @play="onPlay"

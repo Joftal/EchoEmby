@@ -71,7 +71,7 @@ const runtime = computed(() => (playable.value ? fmtElapsed(ticksToMs(current.va
    server calls a genre that TMDB never named. A shelf the scraper left untagged still gets its labels —
    measured: 32 of 400 Series/Movie rows bill none — and the merged line costs no request, because it is the
    same reply the synopsis two lines above already rides. */
-const genres = computed(() => mergeGenres(scores.value.tmdb?.genres, current.value?.genres, [], 3).join(' '));
+const genres = computed(() => mergeGenres(scores.value.tmdb?.genres, current.value?.genres, 3).join(' '));
 /* The year reads the server first and TMDB only where the server has nothing: measured on this library's
    rows, a Series sometimes bills a PremiereDate and no ProductionYear. */
 const date = computed(

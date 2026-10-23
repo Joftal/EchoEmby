@@ -17,12 +17,11 @@ const props = withDefaults(
   defineProps<{
     item: LibraryItem;
     index?: number;
-    matchedGenres?: string[];
     variant?: 'row' | 'queue';
     /** The season row behind an episode card, which is the only place 本季 N 集 can come from. */
     season?: { total?: number } | null;
   }>(),
-  { index: 0, matchedGenres: () => [], variant: 'row', season: null },
+  { index: 0, variant: 'row', season: null },
 );
 const emit = defineEmits<{ (e: 'play', item: LibraryItem): void }>();
 
@@ -173,7 +172,7 @@ const meta = computed(() =>
   [
     props.item.seriesName && props.item.seriesName !== props.item.name ? props.item.seriesName : '',
     String(props.item.productionYear || tmdb.value.meta?.year || ''),
-    mergeGenres(tmdb.value.meta?.genres, props.item.genres, props.matchedGenres, 3).join(' / '),
+    mergeGenres(tmdb.value.meta?.genres, props.item.genres, 3).join(' / '),
   ]
     .filter(Boolean)
     .join('  ·  '),
@@ -201,7 +200,7 @@ const queueWhere = computed(() => {
     return `${pos}${t ? ` · ${t}` : ''}` || i.name;
   }
   const year = String(i.productionYear || tmdb.value.meta?.year || '');
-  const g = mergeGenres(tmdb.value.meta?.genres, i.genres, props.matchedGenres, 2).join(' / ');
+  const g = mergeGenres(tmdb.value.meta?.genres, i.genres, 2).join(' / ');
   return [year, g].filter(Boolean).join(' · ');
 });
 /* The bar is this episode's own stop, drawn on the frame exactly the way the 继续观看 row draws it, because
