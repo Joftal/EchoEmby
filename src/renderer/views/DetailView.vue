@@ -1235,7 +1235,11 @@ async function toggleFav() {
   const it = work.value;
   if (!it || favBusy.value) return;
   favBusy.value = true;
-  await app.setFavorite(it.id, !fav.value);
+  const on = !fav.value;
+  // The press answers for itself: the write-back only lands when the server has filed it, and that
+  // round trip measured 300-600ms on this gateway — long enough for the heart to look untouched.
+  it.userData = { ...it.userData, isFavorite: on };
+  if (!(await app.setFavorite(it.id, on))) it.userData = { ...it.userData, isFavorite: !on };
   favBusy.value = false;
 }
 
@@ -1273,7 +1277,7 @@ const LEVEL_WORD = ['无', '极少', '轻微', '中等', '较多', '严重'];
             <div class="actions">
               <HeroPlay v-if="pagePlays" :target="resume" :busy="player.busy" :server="serverName" :none="noResource" @play="play()" />
               <button class="iconb" :class="{ on: fav }" :disabled="favBusy" :title="fav ? '已收藏' : '收藏'" @click="toggleFav">
-                <svg viewBox="0 0 24 24" width="20" height="20"><path :d="fav ? 'M12 21l-1.5-1.3C5.4 15 2 11.9 2 8.2 2 5.4 4.2 3.2 7 3.2c1.6 0 3.1.7 4 1.9.9-1.2 2.4-1.9 4-1.9 2.8 0 5 2.2 5 5 0 3.7-3.4 6.8-8.5 11.5L12 21z' : 'M12 21l-1.5-1.3C5.4 15 2 11.9 2 8.2 2 5.4 4.2 3.2 7 3.2c1.6 0 3.1.7 4 1.9.9-1.2 2.4-1.9 4-1.9 2.8 0 5 2.2 5 5 0 3.7-3.4 6.8-8.5 11.5L12 21zM7 5.2c-1.7 0-3 1.3-3 3 0 3 3 5.9 8 10.2 5-4.3 8-7.2 8-10.2 0-1.7-1.3-3-3-3-1.3 0-2.5.8-3 2h-4c-.5-1.2-1.7-2-3-2z'" fill="currentColor" /></svg>
+                <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 20.8C10.3 18.5 2.6 14.4 2.6 8.9 2.6 5.7 4.9 3.5 7.8 3.5 9.8 3.5 11.1 5.2 12 7 12.9 5.2 14.2 3.5 16.2 3.5 19.1 3.5 21.4 5.7 21.4 8.9 21.4 14.4 13.7 18.5 12 20.8Z" fill="currentColor" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" /></svg>
               </button>
             </div>
           </div>
@@ -1618,6 +1622,13 @@ const LEVEL_WORD = ['无', '极少', '轻微', '中等', '较多', '严重'];
   transition: color var(--hov) var(--ease), background var(--hov) var(--ease), transform var(--hov) var(--ease-out);
 }
 .iconb:hover { transform: translateY(-1px); background: rgba(255, 255, 255, 0.26); }
+.iconb:disabled { opacity: 0.62; cursor: default; }
+/* One contour, stroked while off and filled while on, so the silhouette the eye compares across a press
+   never moves. Its ink stays symmetric about x=12 because that is the point the plate centres on — the two
+   paths this button used to swap between were not, and neither matched the other. `fill-opacity` rather
+   than `fill: none` because only the first interpolates: the heart takes on colour instead of snapping. */
+.iconb path { fill-opacity: 0; transition: fill-opacity var(--hov) var(--ease); }
+.iconb.on path { fill-opacity: 1; }
 .iconb.on { color: #ff5a6a; }
 
 /* Mirrors the lobby's .flow: the bands clip their art here (under the rail) while the plain blocks
