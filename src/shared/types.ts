@@ -359,6 +359,7 @@ export interface MediaStreamInfo {
   fps?: number;
   bitRate?: number;
   channels?: number;
+  channelLayout?: string; // stereo / 5.1 / 5.1(side) — the count alone cannot say which
   sampleRate?: number;
   profile?: string;
   isDefault?: boolean;

@@ -139,6 +139,7 @@ const mapStreams = (raw: any): MediaStreamInfo[] =>
     fps: v.NominalFrameRate || v.AverageFrameRate,
     bitRate: v.BitRate,
     channels: v.Channels,
+    channelLayout: v.ChannelLayout,
     sampleRate: v.SampleRate,
     profile: v.Profile,
     isDefault: v.IsDefault,
