@@ -39,6 +39,29 @@ export const episodePosition = (season?: number | null, episode?: number | null)
   return season != null ? `第 ${season} 季 · 第 ${episode} 集` : `第 ${episode} 集`;
 };
 
+/** Emby names a track's language with an ISO-639-2 code (`jpn`, `chi`, `und`), which is not a thing a viewer
+ *  reads. The player's track menu has spelled these out from the start; the 播放资源 block printed the raw
+ *  code beside it, so one track wore two names on two surfaces. The list below is the set these two gateways
+ *  actually answer with (measured over 60 files: kor·chi·jpn·und·eng·spa·fre·ger·ita·pol·por·rus·tha·ind·
+ *  may·fil·ara·bul·cze·hun·swe·dut·fin·rum·gre·hin·tur·nob·dan), and a code that is not here prints as
+ *  itself rather than as a guess. */
+const LANGS: Record<string, string> = {
+  zho: '中文', chi: '中文', chs: '中文（简）', zht: '中文（繁）', cht: '中文（繁）', zh: '中文', yue: '粤语',
+  eng: '英文', en: '英文', jpn: '日文', kor: '韩文', fre: '法文', fra: '法文', ger: '德文', deu: '德文',
+  spa: '西文', ita: '意文', rus: '俄文', por: '葡文', tha: '泰文', vie: '越南文', und: '无语言',
+  ind: '印尼文', may: '马来文', fil: '菲律宾文', ara: '阿拉伯文', bul: '保加利亚文', cze: '捷克文',
+  hun: '匈牙利文', swe: '瑞典文', dut: '荷兰文', fin: '芬兰文', rum: '罗马尼亚文', gre: '希腊文',
+  hin: '印地文', tur: '土耳其文', nob: '挪威文', dan: '丹麦文', pol: '波兰文',
+};
+
+export const langName = (code?: string): string => {
+  if (!code) return '';
+  const key = code.toLowerCase();
+  if (key.startsWith('zh-hant')) return '中文（繁）';
+  if (key.startsWith('zh-hans')) return '中文（简）';
+  return LANGS[key] || code;
+};
+
 /** Half the episodes on this server have no title of their own and come named 「第 2 集」, 「27」 or
  *  「Episode 3」 - which the position in front of them already says. `episodeTail` is the surface rule;
  *  this is the one it finishes on. */

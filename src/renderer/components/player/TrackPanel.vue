@@ -4,6 +4,7 @@ import SubPopover from './SubPopover.vue';
 import SubRow from './SubRow.vue';
 import StepRow from './StepRow.vue';
 import { usePlayerStore } from '../../stores/player';
+import { langName } from '../../lib/format';
 import type { PlayerTrack, TrackSelection } from '../../../shared/types';
 
 /** Body only: the card that holds this belongs to SheetLayer, and so does its title. */
@@ -22,18 +23,6 @@ const rowLabel = (t: PlayerTrack): string => {
   const lang = langName(t.lang);
   const head = named && named !== String(t.ordinal) ? named : lang || `轨道 ${t.ordinal}`;
   return `${t.ordinal}. ${head}${t.forced ? '（强制）' : ''}`;
-};
-
-const LANGS: Record<string, string> = {
-  zho: '中文', chi: '中文', chs: '中文（简）', zht: '中文（繁）', zh: '中文', yue: '粤语', eng: '英文', en: '英文', jpn: '日文', kor: '韩文', fre: '法文', fra: '法文', ger: '德文', deu: '德文', spa: '西文', ita: '意文', rus: '俄文', por: '葡文', tha: '泰文', vie: '越南文', und: '无语言',
-};
-
-const langName = (code?: string): string => {
-  if (!code) return '';
-  const key = code.toLowerCase();
-  if (key.startsWith('zh-hant') || key === 'cht') return '中文（繁）';
-  if (key.startsWith('zh-hans') || key === 'chs') return '中文（简）';
-  return LANGS[key] || code;
 };
 
 const meta = (t: PlayerTrack): string => [t.selected ? '正在用' : '', t.codec ? t.codec.toUpperCase() : ''].filter(Boolean).join(' · ');
