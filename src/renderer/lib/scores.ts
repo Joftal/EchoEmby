@@ -123,25 +123,29 @@ function put<K extends keyof Scores>(id: string, key: K, ask: () => Promise<IpcR
   attempt(TRIES);
 }
 
-/** Every source the score strip can draw, each one skipped if an earlier reader already asked for it. */
-function load(item: LibraryItem): void {
+/** Every source the score strip can draw, each one skipped if an earlier reader already asked for it.
+ *  `pick` narrows that to what the caller actually prints: a card row wears no age badge, and asking CSM
+ *  for a title it has nowhere to put is one scrape of a ratings site per row for nothing. */
+const ALL_SOURCES: (keyof Scores)[] = ['rt', 'imdb', 'trakt', 'tmdb', 'csm', 'bgm'];
+function load(item: LibraryItem, pick: (keyof Scores)[] = ALL_SOURCES): void {
   const id = item.id;
+  const wants = (k: keyof Scores): boolean => pick.includes(k);
   const imdb = item.providers?.imdb || '';
   const kind = tmdbKind(item);
   if (imdb) {
-    put(id, 'rt', () => window.echoemby.meta.rt(imdb));
-    put(id, 'imdb', () => window.echoemby.meta.imdb(imdb));
-    if (kind) put(id, 'trakt', () => window.echoemby.meta.trakt({ kind, imdb }));
+    if (wants('rt')) put(id, 'rt', () => window.echoemby.meta.rt(imdb));
+    if (wants('imdb')) put(id, 'imdb', () => window.echoemby.meta.imdb(imdb));
+    if (kind && wants('trakt')) put(id, 'trakt', () => window.echoemby.meta.trakt({ kind, imdb }));
   }
-  askTmdb(item);
+  if (wants('tmdb')) askTmdb(item);
   // CSM reverse-looks-up by title slug, so it wants the Latin original title when there is one.
   // Neither title-keyed source is asked for a Season row: its name is 「第一季」, a position rather than a
   // title, and the page that needs the answer is the series above it, which asks for itself.
   const csmTitle = item.originalTitle || item.name;
-  if (kind && item.type !== 'Season' && csmTitle) put(id, 'csm', () => window.echoemby.meta.csm({ kind, title: csmTitle }));
+  if (kind && item.type !== 'Season' && csmTitle && wants('csm')) put(id, 'csm', () => window.echoemby.meta.csm({ kind, title: csmTitle }));
   // Bangumi is the opposite half: its search only reaches CJK names, and that is where the anime and
   // domestic-drama titles this server holds are actually reviewed.
-  if (kind && item.type !== 'Season' && item.name) put(id, 'bgm', () => window.echoemby.meta.bangumi(item.name));
+  if (kind && item.type !== 'Season' && item.name && wants('bgm')) put(id, 'bgm', () => window.echoemby.meta.bangumi(item.name));
 }
 
 /** TMDB answers for a work, never for an episode row, and only when the server actually carries its id. */
@@ -174,14 +178,18 @@ async function workOf(item: LibraryItem): Promise<LibraryItem | null> {
   }
 }
 
-/** Scores for whatever item the getter currently returns; a new item swaps the whole set at once. */
-export function useScores(get: () => LibraryItem | null | undefined): ComputedRef<Scores> {
+/** Scores for whatever item the getter currently returns; a new item swaps the whole set at once.
+ *  `pick` narrows the ask to the sources the caller actually draws — see `load`. */
+export function useScores(
+  get: () => LibraryItem | null | undefined,
+  pick?: (keyof Scores)[]
+): ComputedRef<Scores> {
   const id = computed(() => get()?.id || '');
   watch(
     id,
     () => {
       const it = get();
-      if (it) load(it);
+      if (it) load(it, pick);
     },
     { immediate: true },
   );
@@ -195,6 +203,11 @@ export function useScores(get: () => LibraryItem | null | undefined): ComputedRe
  *  resolved upward first, and the answer is read off the work's own key, so twenty-four episodes of one
  *  show cost one TMDB trip and share its answer with that show's detail page. */
 export interface TmdbSlot {
+  /** The work this row's outside data lives on: the row itself for a Movie or Series, the Series above it
+   *  for an Episode, and null while that lookup is still owed — or forever, for a row with no work above it
+   *  (a BoxSet, a Playlist). Anything asking for more than TMDB needs this, because a row's own provider
+   *  ids point at the episode rather than at a page any other source has. */
+  work: LibraryItem | null;
   meta: TmdbMeta | null;
   /** The number to print when the work has no TMDB rating: the work's own, and only if it has none, the
    *  row's. An episode row's server rating is a per-episode figure (measured over 48 rows: 3 of the 8 a
@@ -212,6 +225,7 @@ export interface TmdbSlot {
 export function useTmdb(get: () => LibraryItem | null | undefined): ComputedRef<TmdbSlot> {
   const id = computed(() => get()?.id || '');
   const workId = ref('');
+  const work = ref<LibraryItem | null>(null);
   const deadEnd = ref(false);
   const fallback = ref(0);
   watch(
@@ -219,11 +233,13 @@ export function useTmdb(get: () => LibraryItem | null | undefined): ComputedRef<
     async () => {
       const it = get();
       workId.value = '';
+      work.value = null;
       deadEnd.value = false;
       fallback.value = 0;
       if (!it) return;
       const w = await workOf(it);
       if (get()?.id !== it.id) return;
+      work.value = w;
       fallback.value = Number(w?.communityRating) || Number(it.communityRating) || 0;
       if (!w || !tmdbAskable(w)) {
         deadEnd.value = true;
@@ -236,7 +252,7 @@ export function useTmdb(get: () => LibraryItem | null | undefined): ComputedRef<
   );
   return computed(() =>
     workId.value
-      ? { meta: cache[workId.value]?.tmdb || null, ready: !!settled[`${workId.value}|tmdb`], fallback: fallback.value }
-      : { meta: null, ready: deadEnd.value, fallback: fallback.value },
+      ? { work: work.value, meta: cache[workId.value]?.tmdb || null, ready: !!settled[`${workId.value}|tmdb`], fallback: fallback.value }
+      : { work: work.value, meta: null, ready: deadEnd.value, fallback: fallback.value },
   );
 }

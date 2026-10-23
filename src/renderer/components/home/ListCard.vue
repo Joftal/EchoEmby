@@ -4,8 +4,9 @@ import { useRouter } from 'vue-router';
 import type { LibraryItem } from '../../../shared/types';
 import { useAppStore } from '../../stores/app';
 import { begin } from '../../lib/handoff';
-import { episodeName, episodePosition, fmtRuntime, seenLabel, watchedRatio } from '../../lib/format';
+import { episodeName, episodePosition, seenLabel, watchedRatio } from '../../lib/format';
 import { mergeGenres } from '../../lib/genres';
+import ScoreStrip from '../ScoreStrip.vue';
 import { useTmdb } from '../../lib/scores';
 import { LOOP_NEED } from '../../lib/looprail';
 
@@ -104,12 +105,12 @@ function onErr(): void {
 }
 
 const target = computed(() => (props.item.type === 'Episode' ? props.item.parentId : props.item.id));
-/* Synopsis and age rating come from the same ladder the detail page and the lobby hero use — TMDB in
+/* The paragraph and the year come from the same ladder the detail page and the lobby hero use — TMDB in
    Chinese, then TMDB's other line, then the server — and this row was the only surface left out of it. Measured on
    a 48-row list: 26 of its rows had no overview at all and 32 carried no rating, while the server has an OfficialRating
    for only 13-18 of 25 sampled titles. The ask rides the `near` gate above rather than the row's own mount,
-   so a page only reaches for the titles somebody can actually see, and it asks TMDB alone: IMDb, Trakt and
-   Bangumi would be six round trips per row for two lines of text this card cannot draw. */
+   so a page only reaches for the titles somebody can actually see. This getter pulls TMDB alone because it is
+   the only source with a paragraph; the marks under it are asked by ScoreStrip, once the row's work resolves. */
 const tmdb = useTmdb(() => (near.value ? props.item : null));
 /* Age guidance is a property of the show, so an episode row takes it from the work above it. Its synopsis
    is not: this page's 24 episode rows are one show, and the series paragraph under each of them would be
@@ -152,7 +153,6 @@ const overview = computed(() => {
   if (isWork.value) return tmdb.value.meta?.overviewZh || tmdb.value.meta?.overviewOther || props.item.overview || '';
   return tmOv.value || props.item.overview || '';
 });
-const cert = computed(() => tmdb.value.meta?.cert || props.item.officialRating || '');
 /* One ladder, then the card's own floor. Two numbers for one title is what this used to print: measured on
    70 sampled titles, 12 differ by ≥0.3 and 5 by ≥1.0 — 孤独摇滚! held 8.5 here against the TMDB 8.3 the page
    it opens shows, and 首尔破笑组's 10.0 is server data that no rater agrees with. A score belongs to the work,
@@ -164,24 +164,28 @@ const rating = computed(() => {
   const v = meta?.voteAverage || (ready ? fallback : 0);
   return v > 0 ? v.toFixed(1) : '';
 });
-/* The year reads the server first and TMDB only where the server has nothing; 分类 is a fact about the work
-   rather than about this row, so it takes both lists — TMDB's order, then whatever this server calls a genre
-   that TMDB never named. Measured on a 48-row list: rows with no ProductionYear and rows on a shelf nobody ever
-   tagged. Nothing new is asked: this is the same reply the rating and the paragraph on this row ride. */
-const meta = computed(() =>
-  [
-    props.item.seriesName && props.item.seriesName !== props.item.name ? props.item.seriesName : '',
+/* The reference's own line: the year, a gap, then the labels on a Chinese comma, with no middle dot between
+   the segments. The gap is two non-breaking spaces because ordinary ones collapse and the gap the reference
+   carries is wider than a word space, and the labels hang off one slash each. The series name still leads where the row is one of its episodes, since
+   that row's headline is an episode title and answers 「which show」 with nothing. The labels themselves are
+   the same ladder the paragraph and the marks ride: TMDB's order, then whatever this server calls a genre that
+   TMDB never named. */
+const meta = computed(() => {
+  const head = [
+    props.item.seriesName && props.item.seriesName !== props.item.name ? `${props.item.seriesName} ·` : '',
     String(props.item.productionYear || tmdb.value.meta?.year || ''),
-    mergeGenres(tmdb.value.meta?.genres, props.item.genres, 3).join(' / '),
   ]
     .filter(Boolean)
-    .join('  ·  '),
-);
-/* Only a row that is one playable thing has a length of its own. A Series row's RunTimeTicks is an average
-   episode (measured: 25 分钟 on 破产姐妹, which holds six seasons) and the page this card opens reads
-   「12 集 · 4小时51分」, so the badge and the hero were two subjects wearing one shape. */
-const runtime = computed(() => (props.item.type === 'Series' || props.item.type === 'BoxSet' ? '' : fmtRuntime(props.item.runTimeTicks)));
+    .join(' ');
+  return [head, mergeGenres(tmdb.value.meta?.genres, props.item.genres, 3).join('/')]
+    .filter(Boolean)
+    .join('\u00a0\u00a0');
+});
 const seen = computed(() => seenLabel(props.item.userData, props.item.runTimeTicks));
+/* The marks are the work's numbers, so an episode row hands the strip the series above it rather than its
+   own provider ids, which point at an episode none of these sites has a page for. A BoxSet or a Playlist has
+   nothing above it and keeps its own row, where the strip falls back to the server's number. */
+const stripItem = computed(() => tmdb.value.work || (isWork.value ? props.item : null));
 
 /* ---- the queue card's own lines -------------------------------------------------------------
    Three, and each answers a different question, because this page folds a show's whole episode run
@@ -250,18 +254,15 @@ function open(): void {
     <div class="body">
       <div class="head">
         <h3>{{ queue ? queueTitle : headline }}</h3>
-        <span v-if="item.studio" class="studio">{{ item.studio }}</span>
       </div>
 
       <p v-if="queue" class="where">{{ queueWhere }}</p>
       <template v-else>
         <p v-if="meta" class="meta">{{ meta }}</p>
         <p class="ov">{{ overview || '暂无简介。' }}</p>
-        <div class="badges">
+        <div v-if="stripItem || seen" class="badges">
+          <ScoreStrip v-if="stripItem" :item="stripItem" card />
           <span v-if="seen" class="b seen">{{ seen }}</span>
-          <span v-if="rating" class="b rate">★ {{ rating }}</span>
-          <span v-if="cert" class="b cert">{{ cert }}</span>
-          <span v-if="runtime" class="b time">{{ runtime }}</span>
         </div>
       </template>
 
@@ -373,18 +374,6 @@ h3 {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.studio {
-  flex: none;
-  /* 13px: 12px drops the top antialiasing row of a CJK glyph. Free here — the 15px title's line box
-     (23.3) still towers over this one's (20.2), so the head row does not grow. */
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-dim);
-  max-width: 34%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 .meta {
   margin: 5px 0 0;
   font-size: 13px;
@@ -406,8 +395,12 @@ h3 {
 .badges {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 7px 13px;
   margin-top: 11px;
+}
+/* The strip is a row of its own, so it takes the slack and wraps its marks before this row wraps. */
+.badges :deep(.strip) {
+  min-width: 0;
 }
 .b {
   display: inline-flex;
@@ -420,18 +413,6 @@ h3 {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
-.rate {
-  color: #6b4500;
-  background: rgba(255, 208, 99, 0.42);
-}
-.cert {
-  color: var(--text-dim);
-  border: 1px solid var(--line-strong);
-}
-.time {
-  color: var(--text-dim);
-  background: var(--chip);
-}
 /* The one badge in this row that is about *you*, so it is the one that carries the accent. */
 .seen {
   color: var(--accent);
@@ -440,7 +421,7 @@ h3 {
 
 /* ---- queue density -------------------------------------------------------------
    Measured off the reference: a 428x106 panel whose frame is 141 wide (a third of it, 16:9), a 16px title
-   sharing its baseline row with the studio at the right edge, and the count pinned to the bottom of the text
+   sharing its baseline row with the right edge, and the count pinned to the bottom of the text
    column rather than stacked under the title. The progress line is not from the reference — it reads the stop
    off the frame's bottom edge instead, because the reference's bar counts episodes and this account cannot
    answer that. Scaled to a two-across card here, the frame lands at 178px, the size the art asks for at 360. */
