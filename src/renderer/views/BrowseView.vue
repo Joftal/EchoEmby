@@ -48,9 +48,12 @@ const titles: Record<Exclude<Kind, 'view'>, string> = {
 const title = computed(() => (kind.value === 'view' ? decodeURIComponent(String(route.query.name || '')) || '资源库' : titles[kind.value]));
 /** 在看 is a playback queue, not a shelf: nothing about it wants narrowing. */
 const showBar = computed(() => kind.value !== 'resume');
-const variant = computed(() => (kind.value === 'resume' ? 'still' : 'poster'));
-/** The two watch-lists keep their wide rows; search joins the grid so the art reads under the filters. */
-const layout = computed<'list' | 'grid'>(() => (kind.value === 'unwatched' || kind.value === 'favorites' ? 'list' : 'grid'));
+/** The three lists are horizontal cards, two or three across; a search and a library window are posters. */
+const layout = computed<'list' | 'grid'>(() =>
+  kind.value === 'resume' || kind.value === 'unwatched' || kind.value === 'favorites' ? 'list' : 'grid',
+);
+/** 在看 drops the paragraph for a frame, a count and a bar, so it gets its own density of the same card. */
+const rowVariant = computed<'row' | 'queue'>(() => (kind.value === 'resume' ? 'queue' : 'row'));
 
 /** The gateway matches a title token by token, with its punctuation still inside the token: the
  *  「骗骗喜欢你」 nobody types quotes for cannot reach 「“骗骗”喜欢你」, but 「骗骗 喜欢你」 lands on it
@@ -162,6 +165,33 @@ const cardKey = (x: LibraryItem): string => (x.type === 'Series' ? `S|${x.name}`
 /** Which show a 在看 row belongs to. Name, not the server's series id: the library holds some shows
  *  twice under two ids (measured on bangumi: 鬼灭之刃 as four Series rows), and one card is one show. */
 const resumeKey = (x: LibraryItem): string => (x.type === 'Episode' ? `S|${x.seriesName || x.parentId || x.id}` : x.id);
+
+/* 在看 needs one thing more than a row carries: how many episodes the season the stop sits in actually
+   holds, which is the denominator of its bar. The episode row cannot say it — measured on nyamedia, it
+   answers a stop for 15 of the page's 94 rows and nothing at all for the other 79 — while the *season* row
+   answers `ChildCount` for every one of them, and one batched `Items?Ids=` over 40 season ids comes back
+   40/40. So the page asks once for the seasons its cards name. */
+const seasonRows = ref<Record<string, { total?: number }>>({});
+let seasonAsk = '';
+
+async function askSeasons(batch: LibraryItem[]): Promise<void> {
+  const ids = [...new Set(batch.filter(x => x.type === 'Episode' && x.seasonId).map(x => x.seasonId as string))].sort();
+  const key = `${store.account?.accountId || ''}|${ids.join(',')}`;
+  if (key === seasonAsk) return;
+  seasonAsk = key;
+  const out: Record<string, { total?: number }> = {};
+  // Chunked because the id list rides the query string, and 94 of them is a URL this gateway has never seen.
+  for (let i = 0; i < ids.length; i += 60) {
+    const chunk = ids.slice(i, i + 60);
+    const r = await window.echoemby.emby.items({ Ids: chunk.join(','), Limit: chunk.length, Fields: 'ChildCount' });
+    if (key !== seasonAsk) return;
+    for (const s of r.ok ? r.data || [] : []) out[s.id] = { total: s.childCount };
+  }
+  if (key !== seasonAsk) return;
+  seasonRows.value = out;
+}
+
+const seasonOf = (it: LibraryItem) => seasonRows.value[it.seasonId || ''] || null;
 
 /** 87 episodes of one show arrived as 87 cards. A library catalogue answers a title once, so an
  *  episode run folds into its Series card; 在看 folds too, but keeps the episode — the card is the
@@ -311,6 +341,7 @@ async function load(reset: boolean): Promise<void> {
     if (isSearch.value) await rememberSeries(episodeShows(batch));
     items.value = reset ? batch : [...items.value, ...batch];
     hasMore.value = batch.length === pageSize.value;
+    if (kind.value === 'resume') void askSeasons(items.value);
     if (!isFiltered(filters.value)) rememberStudios(batch, reset);
     // The facet is allowed to fail with the server: once rows are in, the library is answering.
     if (batch.length) void store.loadGenres();
@@ -335,6 +366,7 @@ async function sync(): Promise<void> {
   const batch = r.data || [];
   items.value = batch;
   hasMore.value = batch.length === pageSize.value;
+  if (kind.value === 'resume') void askSeasons(batch);
 }
 
 const wrapEl = ref<HTMLElement | null>(null);
@@ -344,20 +376,48 @@ function fit(): void {
   const w = wrapEl.value?.clientWidth || 0;
   if (!w) return;
   const gap = 16;
-  const min = layout.value === 'list' ? 400 : variant.value === 'still' ? 300 : 172;
+  const min = layout.value === 'list' ? 400 : 172;
   const floor = layout.value === 'list' ? 1 : 2;
-  // The reference lays the rows out two across and never narrower than that.
-  const cap = layout.value === 'list' ? 2 : 99;
+  // Three across at most. A horizontal row is the one shape that stops gaining something useful at about
+  // 400px: below that the frame and the count line start competing for the same pixels.
+  const cap = layout.value === 'list' ? 3 : 99;
   const c = Math.min(cap, Math.max(floor, Math.floor((w + gap) / (min + gap))));
   cols.value = c;
   cardW.value = Math.floor((w - (c - 1) * gap) / c);
+  void fitSkeleton();
 }
 let ro: ResizeObserver | null = null;
 const gridStyle = computed(() => ({
   gridTemplateColumns: `repeat(${cols.value}, ${layout.value === 'list' ? 'minmax(0, 1fr)' : cardW.value + 'px'})`,
 }));
+
+/* How many tiles the loading grid draws. It used to be a literal — 8 rows-tiles for the list, 18 posters for
+   the grid — and at a short window the list left a third of the page bare while at a tall one the posters ran
+   past the fold into a scrollbar. The count is now measured off the tiles themselves: one row's pitch times
+   the rows that fit between the grid's top edge and the bottom of the page. */
+const skEl = ref<HTMLElement | null>(null);
+const skCells = ref(12);
+async function fitSkeleton(): Promise<void> {
+  await nextTick();
+  const el = skEl.value;
+  const one = el?.firstElementChild as HTMLElement | null;
+  if (!el || !one) return;
+  const page = el.closest('.page') as HTMLElement | null;
+  // One row's pitch is the distance between the first cell and the cell directly under it, so a placeholder
+  // that carries a margin for the label lines under it (the poster tile does) is counted at the height the
+  // grid actually advances by. Height + gap alone would under-count that row and push an extra one past the fold.
+  const kids = el.children;
+  const step = kids.length > cols.value
+    ? kids[cols.value].getBoundingClientRect().top - kids[0].getBoundingClientRect().top
+    : (one.getBoundingClientRect().height + 16);
+  const pitch = step > 0 ? step : one.getBoundingClientRect().height + 16;
+  const top = el.getBoundingClientRect().top - (page?.getBoundingClientRect().top || 0) + (page?.scrollTop || 0);
+  const rows = Math.max(1, Math.ceil(((page?.clientHeight || window.innerHeight) - top) / pitch));
+  skCells.value = Math.min(60, rows * cols.value);
+}
+watch(loading, () => void fitSkeleton());
 // The rail can be mid-transition when the kind changes, so re-measure once the new layout is on screen.
-watch([layout, variant], async () => {
+watch(layout, async () => {
   await nextTick();
   fit();
 });
@@ -497,31 +557,46 @@ onBeforeUnmount(() => {
     <div ref="wrapEl" class="body">
       <p v-if="error" class="err">{{ error }} <button @click="load(true)">重试</button></p>
 
-      <div v-if="loading" class="grid sk" :class="{ list: layout === 'list' }" :style="gridStyle">
+      <div v-if="loading" ref="skEl" class="grid sk" :class="{ list: layout === 'list' }" :style="gridStyle">
         <template v-if="layout === 'list'">
-          <div v-for="n in 8" :key="n" class="cell list">
+          <div v-for="n in skCells" :key="n" class="cell list" :class="{ queue: rowVariant === 'queue' }">
             <span class="th"></span>
             <span class="bd">
-              <i class="k1"></i><i class="k2"></i><i class="o"></i><i class="o"></i><i class="o"></i>
-              <span class="gs"><i></i><i></i></span>
+              <i class="k1"></i><i class="k2"></i>
+              <template v-if="rowVariant !== 'queue'">
+                <i class="o"></i><i class="o"></i><i class="o"></i>
+                <span class="gs"><i></i><i></i></span>
+              </template>
+              <template v-else>
+                <i class="qc"></i>
+              </template>
             </span>
           </div>
         </template>
         <template v-else>
-          <div v-for="n in 18" :key="n" class="cell" :class="{ wide: variant === 'still' }" :style="{ width: cardW + 'px' }"><span></span></div>
+          <div v-for="n in skCells" :key="n" class="cell" :style="{ width: cardW + 'px' }"><span></span></div>
         </template>
       </div>
 
       <div v-else-if="shown.length" class="grid in" :class="{ list: layout === 'list' }" :style="gridStyle">
         <template v-if="layout === 'list'">
-          <ListCard v-for="(it, i) in shown" :key="`${it.id}-${i}`" :item="it" :index="i % 12" :matched-genres="filters.genres" />
+          <ListCard
+            v-for="(it, i) in shown"
+            :key="`${it.id}-${i}`"
+            :item="it"
+            :index="i % 12"
+            :matched-genres="filters.genres"
+            :variant="rowVariant"
+            :season="seasonOf(it)"
+            @play="onPlay"
+          />
         </template>
         <template v-else>
           <MediaCard
             v-for="(it, i) in shown"
             :key="`${it.id}-${i}`"
             :item="it"
-            :variant="variant"
+            variant="poster"
             :width="cardW"
             :index="i % 12"
             @play="onPlay"
@@ -683,9 +758,57 @@ h1 {
   background: var(--bg-elev);
   border: 1px solid var(--line);
 }
-.cell.wide {
+/* The queue tile is the card's own box model rather than a shape that approximates it: a 16:9 frame at the
+   card's width — `height: auto`, so the frame drives the tile the way it drives the real card instead of the
+   tile stretching the frame — and the three lines are the card's three line boxes: 24 for the 15.5px title,
+   20.1 for the two 13px lines, 5px apart, the count pushed to the bottom edge by `margin-top: auto` exactly
+   as `.foot` pushes it. Only the glyph band inside each box shimmers (15.5 and 13 tall, centred in the box),
+   so nothing moves when the text lands. The widths are the medians measured across the first 20 filled cards
+   — 77 / 153 / 95 of a 314.2 column — where the old 46 / 88 / 44% stood two lines in a row too long.
+   The hairline on the frame needs no placeholder: a shimmering frame already covers the 3px it takes. */
+.cell.list.queue {
+  height: auto;
+}
+.cell.list.queue > .th {
+  width: clamp(150px, 35%, 178px);
   aspect-ratio: 16 / 9;
-  border-radius: var(--radius);
+}
+.cell.list.queue .bd .k1,
+.cell.list.queue .bd .k2,
+.cell.list.queue .bd .qc {
+  display: flex;
+  align-items: center;
+  background: none;
+  animation: none;
+}
+.cell.list.queue .bd .k1 {
+  width: 25%;
+  height: 24px;
+}
+.cell.list.queue .bd .k2 {
+  width: 49%;
+  height: 20.1px;
+  margin-top: 5px;
+}
+.cell.list.queue .bd .qc {
+  width: 30%;
+  height: 20.1px;
+  margin-top: auto;
+}
+.cell.list.queue .bd .k1::after,
+.cell.list.queue .bd .k2::after,
+.cell.list.queue .bd .qc::after {
+  content: '';
+  display: block;
+  width: 100%;
+  height: 13px;
+  border-radius: 6px;
+  background: var(--shimmer);
+  background-size: var(--sk-tile) 100%;
+  animation: sh 1.3s linear infinite;
+}
+.cell.list.queue .bd .k1::after {
+  height: 15px;
 }
 .cell.list {
   aspect-ratio: auto;
