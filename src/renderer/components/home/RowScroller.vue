@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { onActivated, onBeforeUnmount, onDeactivated, onMounted, ref } from 'vue';
 import type { LibraryItem } from '../../../shared/types';
 import MediaCard from './MediaCard.vue';
 import { createLoopRail, RAIL_PRESS, type LoopRail } from '../../lib/looprail';
@@ -27,6 +27,28 @@ let observer: IntersectionObserver | null = null;
 let want = 0;
 let gliding = false;
 
+/** Where the reader left the row, kept as a distance from the loop's own beginning rather than as an
+ *  offset, and clamped at 0 because `home` is read off a rect (1885.159) while the browser floors the
+ *  offset it lands on (1884) — a row resting exactly at its home is a fraction short of it by design.
+ *  The lobby is the one cached page, and re-attaching it drops every scroll position along with the layout
+ *  boxes the hidden container took away — measured 1632 → 0 on a 最新更新 row over one 首页 → 详情 → 返回.
+ *  null until the row has been measured: that is the fresh mount the rail already parks on its own home. */
+let lastLeft: number | null = null;
+let reenter = false;
+
+/** Put the remembered place back. A row whose layout is still skipped has no box to write into, so the
+ *  ask is made again by the measure that finally finds one. */
+function restore(): void {
+  const el = track.value;
+  const r = rail;
+  if (!el || !r || !el.clientWidth) return;
+  reenter = false;
+  if (lastLeft === null) return;
+  r.jumpTo(r.home + lastLeft);
+  want = el.scrollLeft;
+  gliding = false;
+}
+
 function measure(): void {
   const el = track.value;
   // A box that has not been laid out has nothing to say. An observer's first notification arrives while a
@@ -39,6 +61,10 @@ function measure(): void {
   // cannot leave behind.
   atStart.value = r?.looped ? false : el.scrollLeft <= 2;
   atEnd.value = r?.looped ? false : el.scrollLeft + el.clientWidth >= el.scrollWidth - 2;
+  // The remembered place is asked of the row again from here, because this is the first moment a row that
+  // was still un-laid-out at re-entry has a box to write into.
+  if (reenter) restore();
+  else if (r) lastLeft = Math.max(0, el.scrollLeft - r.home);
 }
 
 /** Any scroll that ends is the truth about where the row sits, so a wheel or a fling that lands between two cards
@@ -66,6 +92,13 @@ function nudge(dir: number): void {
   // park the row between two posters.
   const to = (gliding ? want : el.scrollLeft) + dir * cards * p;
   want = r ? r.place(to) : Math.max(0, Math.min(Math.round(to / p) * p, el.scrollWidth - el.clientWidth));
+  // A destination the row already sits at starts no scroll, so no `scrollend` arrives to clear the glide
+  // and every later press would rebuild its target from a place nobody was shown.
+  if (Math.abs(want - el.scrollLeft) <= 2) {
+    want = el.scrollLeft;
+    gliding = false;
+    return;
+  }
   gliding = true;
   if (r) r.glideTo(want);
   else el.scrollTo({ left: want, behavior: 'smooth' });
@@ -121,6 +154,18 @@ onBeforeUnmount(() => {
   mo?.disconnect();
   rail?.destroy();
   rail = null;
+});
+
+/* Re-entry is where the row's offset has to be paid back: the cached lobby is moved into a hidden container
+   on leave and the browser drops the scroll position with the layout box. `activated` also runs on the first
+   mount, where the memory is empty and nothing moves; `deactivated` closes the recording early, so a reset
+   scroll event landing during the teardown cannot write 0 over where the reader was. */
+onActivated(() => {
+  reenter = true;
+  restore();
+});
+onDeactivated(() => {
+  reenter = true;
 });
 </script>
 

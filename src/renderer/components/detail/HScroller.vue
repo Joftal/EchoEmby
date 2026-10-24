@@ -57,6 +57,13 @@ function nudge(dir: number): void {
   // park the band between two cards.
   const to = (gliding ? want : el.scrollLeft) + dir * cards * p;
   want = r ? r.place(to) : Math.max(0, Math.min(Math.round(to / p) * p, el.scrollWidth - el.clientWidth));
+  // A destination the band already sits at starts no scroll, so no `scrollend` arrives to clear the glide
+  // and every later press would rebuild its target from a place nobody was shown.
+  if (Math.abs(want - el.scrollLeft) <= 2) {
+    want = el.scrollLeft;
+    gliding = false;
+    return;
+  }
   gliding = true;
   if (r) r.glideTo(want);
   else el.scrollTo({ left: want, behavior: 'smooth' });
