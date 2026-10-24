@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
+import { Database, Globe, MessageSquareText, Play } from 'lucide-vue-next';
 import type { DanmakuSettings, NetProbe, PlayerPrefs, Settings } from '../../shared/types';
 import { useAppStore } from '../stores/app';
 
@@ -37,6 +38,72 @@ const SOURCES: { value: DanmakuSettings['source']['type']; label: string }[] = [
   { value: 'bilibili', label: 'Bilibili' },
   { value: 'dandan', label: '弹弹 play' },
 ];
+
+const SECTIONS = [
+  { id: 'play', label: '播放', icon: Play },
+  { id: 'danmaku', label: '弹幕', icon: MessageSquareText },
+  { id: 'meta', label: '元数据', icon: Database },
+  { id: 'network', label: '网络', icon: Globe },
+] as const;
+type SectionId = (typeof SECTIONS)[number]['id'];
+
+const scrollEl = ref<HTMLElement | null>(null);
+const active = ref<SectionId>('play');
+/** A jump owns the indicator until its glide ends: the last sections are too short to reach the top
+ *  line, so the scroll position alone would light 网络 after a click on 元数据. */
+let navLock = 0;
+
+function unlock(): void {
+  navLock = 0;
+}
+
+/** The anchors are data markers rather than # links: the window's whole address is the router's hash, so
+ *  an <a href="#play"> would send the app to a route that does not exist. */
+function sectionEl(id: SectionId): HTMLElement | null {
+  return scrollEl.value?.querySelector<HTMLElement>(`[data-sec="${id}"]`) ?? null;
+}
+
+/** The title and the section index sit outside the scroll pane, so a sheet's own top is the line a jump
+ *  stops on: the pane's top edge is already below both navigations. */
+function go(id: SectionId): void {
+  const pane = scrollEl.value;
+  const el = sectionEl(id);
+  if (!pane || !el) return;
+  active.value = id;
+  navLock = performance.now() + 900;
+  const top = Math.min(pane.scrollHeight - pane.clientHeight, Math.max(0, el.offsetTop));
+  pane.scrollTo({ top, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+}
+
+/** A wheel over the fixed title or index still drives the sheets: the page itself has nothing left to
+ *  scroll, so without this the 152px beside the sheets would be a dead strip. */
+function onWheel(e: WheelEvent): void {
+  unlock();
+  const pane = scrollEl.value;
+  if (!pane) return;
+  if ((e.target as Element | null)?.closest?.('.scroll')) return;
+  const step = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+  pane.scrollBy({ top: step });
+}
+
+/** The last sheet whose top has passed the pane's first line is the one being read. The final sheet can
+ *  never reach that line at the bottom, so it is chosen outright. */
+function onScroll(): void {
+  const pane = scrollEl.value;
+  if (!pane) return;
+  if (performance.now() < navLock) return;
+  if (pane.scrollTop + pane.clientHeight >= pane.scrollHeight - 2) {
+    active.value = SECTIONS[SECTIONS.length - 1].id;
+    return;
+  }
+  const line = pane.scrollTop + 8;
+  let current: SectionId = SECTIONS[0].id;
+  for (const s of SECTIONS) {
+    const el = sectionEl(s.id);
+    if (el && el.offsetTop <= line) current = s.id;
+  }
+  active.value = current;
+}
 
 const addr = ref('');
 watch(() => settings.value?.proxyUrl, v => (addr.value = v || ''), { immediate: true });
@@ -162,225 +229,307 @@ async function runProbe(): Promise<void> {
 </script>
 
 <template>
-  <div class="page">
-    <div v-if="!settings || !player || !dm" class="col">
-      <header class="head"><i class="sk skh"></i></header>
-      <i class="sk sks"></i>
-      <div class="rows">
-        <div v-for="n in 8" :key="n" class="row">
-          <i class="sk skk"></i>
-          <i class="sk skg"></i>
-        </div>
-      </div>
-    </div>
-    <div v-else class="col">
+  <div class="page" @wheel.passive="onWheel" @pointerdown="unlock" @keydown="unlock">
+    <div class="col">
       <header class="head">
         <h1>设置</h1>
       </header>
 
-      <h2 class="sec">播放</h2>
-      <div class="rows">
-        <div class="row">
-          <div class="k">
-            <b>清晰度上限</b>
-            <i>原片禁止转码；其余档位由服务器决定是直连还是切片段</i>
-          </div>
-          <div class="seg">
-            <button v-for="o in TIERS" :key="o.value" type="button" :class="{ on: player.tier === o.value }" @click="set({ player: { tier: o.value } })">
-              {{ o.label }}
-            </button>
-          </div>
-        </div>
-
-        <div class="row">
-          <div class="k">
-            <b>硬件解码</b>
-          </div>
-          <div class="seg">
-            <button v-for="o in DECODERS" :key="o.value" type="button" :class="{ on: player.hwdec === o.value }" @click="set({ player: { hwdec: o.value } })">
-              {{ o.label }}
-            </button>
-          </div>
-        </div>
-
-        <div class="row">
-          <div class="k">
-            <b>渲染</b>
-            <i>清晰优先会换一个新的播放器进程</i>
-          </div>
-          <div class="seg">
-            <button type="button" :class="{ on: player.render !== 'hq' }" @click="set({ player: { render: 'smooth' } })">流畅优先</button>
-            <button type="button" :class="{ on: player.render === 'hq' }" @click="set({ player: { render: 'hq' } })">清晰优先</button>
-          </div>
-        </div>
-
-        <div class="row">
-          <div class="k">
-            <b>快进步长</b>
-          </div>
-          <div class="seg">
-            <button v-for="s in STEPS" :key="s" type="button" :class="{ on: player.seekStepMs === s }" @click="set({ player: { seekStepMs: s } })">
-              {{ s / 1000 }} 秒
-            </button>
-          </div>
-        </div>
-
-        <div class="row">
-          <div class="k">
-            <b>控制条停留</b>
-          </div>
-          <div class="seg">
-            <button v-for="h in HOLDS" :key="h" type="button" :class="{ on: player.controlsTimeoutMs === h }" @click="set({ player: { controlsTimeoutMs: h } })">
-              {{ h / 1000 }} 秒
-            </button>
-          </div>
-        </div>
-
-        <div class="row">
-          <div class="k">
-            <b>自动连播</b>
-            <i>一集播完接着放下一集</i>
-          </div>
-          <button type="button" class="sw" :class="{ on: player.autoNext }" @click="set({ player: { autoNext: !player.autoNext } })">
-            <span class="track"><i></i></span>
+      <div class="layout">
+        <nav class="srail" aria-label="设置分组">
+          <button
+            v-for="s in SECTIONS"
+            :key="s.id"
+            type="button"
+            :class="{ on: active === s.id }"
+            :aria-current="active === s.id ? 'true' : undefined"
+            @click="go(s.id)"
+          >
+            <component :is="s.icon" :size="17" :stroke-width="1.7" />
+            <span>{{ s.label }}</span>
           </button>
-        </div>
+        </nav>
 
-        <div class="row">
-          <div class="k">
-            <b>HDR 直通</b>
-            <i>屏幕不支持 HDR 时画面会发灰；下一次播放生效</i>
-          </div>
-          <button type="button" class="sw" :class="{ on: player.hdrHint }" @click="set({ player: { hdrHint: !player.hdrHint } })">
-            <span class="track"><i></i></span>
-          </button>
-        </div>
-      </div>
-
-      <h2 class="sec">弹幕</h2>
-      <div class="rows">
-        <div class="row">
-          <div class="k">
-            <b>显示弹幕</b>
-            <i>关闭时不会向任何弹幕源请求你看的内容</i>
-          </div>
-          <button type="button" class="sw" :class="{ on: dm.enabled }" @click="set({ danmaku: { enabled: !dm.enabled } })">
-            <span class="track"><i></i></span>
-          </button>
-        </div>
-
-        <div class="row">
-          <div class="k">
-            <b>来源</b>
-          </div>
-          <div class="seg">
-            <button v-for="o in SOURCES" :key="o.value" type="button" :class="{ on: dm.source.type === o.value }" @click="set({ danmaku: { source: { type: o.value } } })">
-              {{ o.label }}
+        <div class="main">
+          <nav class="stabs" aria-label="设置分组">
+            <button
+              v-for="s in SECTIONS"
+              :key="s.id"
+              type="button"
+              :class="{ on: active === s.id }"
+              :aria-current="active === s.id ? 'true' : undefined"
+              @click="go(s.id)"
+            >
+              {{ s.label }}
             </button>
-          </div>
-        </div>
+          </nav>
 
-        <div class="row addr">
-          <div class="k">
-            <b>API 地址</b>
-            <i>{{ dm.source.type === 'dandan' ? '自建或公共弹弹 play 兼容服务，例如 http://127.0.0.1:6666' : 'Bilibili 无需地址' }}</i>
+          <div ref="scrollEl" class="scroll" @scroll.passive="onScroll">
+            <div v-if="!settings || !player || !dm" class="skel" aria-hidden="true">
+            <section class="group">
+              <div class="pane">
+                <header class="ph">
+                  <span class="tic"><Play :size="15" :stroke-width="1.7" /></span>
+                  <h2>播放</h2>
+                </header>
+                <div v-for="n in 7" :key="n" class="row">
+                  <div class="k">
+                    <span class="sk skk"></span>
+                    <span v-if="n === 1 || n === 3 || n === 6 || n === 7" class="sk skhint"></span>
+                  </div>
+                  <i class="sk skg"></i>
+                </div>
+              </div>
+            </section>
+            <section class="group">
+              <div class="pane">
+                <header class="ph">
+                  <span class="tic"><MessageSquareText :size="15" :stroke-width="1.7" /></span>
+                  <h2>弹幕</h2>
+                </header>
+                <div v-for="n in 2" :key="n" class="row">
+                  <div class="k">
+                    <span class="sk skk"></span>
+                    <span v-if="n === 1" class="sk skhint"></span>
+                  </div>
+                  <i class="sk skg"></i>
+                </div>
+              </div>
+            </section>
           </div>
-          <input v-model="dmUrl" type="text" :disabled="dm.source.type !== 'dandan'" placeholder="http://127.0.0.1:6666" spellcheck="false" autocomplete="off" @blur="commitDmUrl" @keydown.enter="commitDmUrl" />
-        </div>
 
-        <div class="row addr">
-          <div class="k">
-            <b>密钥</b>
-            <i>{{ tokenSaved ? '已保存，重新输入可替换，清空后回车可删除' : '弹弹 play 的 X-Session-Token，只存在本机' }}</i>
-          </div>
-          <input
-            v-model="token"
-            type="password"
-            :disabled="dm.source.type !== 'dandan'"
-            :placeholder="tokenSaved ? '••••••••' : '可留空'"
-            spellcheck="false"
-            autocomplete="off"
-            @blur="commitToken()"
-            @keydown.enter="commitToken(true)"
-          />
-        </div>
+          <template v-else>
+            <section class="group" data-sec="play">
+              <div class="pane">
+                <header class="ph">
+                  <span class="tic"><Play :size="15" :stroke-width="1.7" /></span>
+                  <h2>播放</h2>
+                </header>
 
-        <div class="row">
-          <div class="k">
-            <b>标题匹配</b>
-            <i>库里的名字常常和弹幕源不一样</i>
-          </div>
-          <div class="seg">
-            <button type="button" :class="{ on: dm.matchMode !== 1 }" @click="set({ danmaku: { matchMode: 0 } })">近似</button>
-            <button type="button" :class="{ on: dm.matchMode === 1 }" @click="set({ danmaku: { matchMode: 1 } })">完全一致</button>
-          </div>
-        </div>
-      </div>
+                <div class="row">
+                  <div class="k">
+                    <b>清晰度上限</b>
+                    <i>原片禁止转码；其余档位由服务器决定是直连还是切片段</i>
+                  </div>
+                  <div class="seg">
+                    <button v-for="o in TIERS" :key="o.value" type="button" :class="{ on: player.tier === o.value }" @click="set({ player: { tier: o.value } })">
+                      {{ o.label }}
+                    </button>
+                  </div>
+                </div>
 
-      <h2 class="sec">元数据</h2>
-      <div class="rows">
-        <div class="row addr">
-          <div class="k">
-            <b>TMDB Key</b>
-            <i>{{ tmdbSaved ? '已保存，重新输入可替换，清空后回车可删除' : 'v3 API Key 或 v4 Token 均可，用于艺术字标题、中文简介与评分补强' }}</i>
-          </div>
-          <input
-            v-model="tmdbKey"
-            type="password"
-            :placeholder="tmdbSaved ? '••••••••' : '可留空'"
-            spellcheck="false"
-            autocomplete="off"
-            @blur="commitTmdb()"
-            @keydown.enter="commitTmdb(true)"
-          />
-        </div>
-        <div class="row addr">
-          <div class="k">
-            <b>Trakt Client ID</b>
-            <i>{{ traktSaved ? '已保存，重新输入可替换，清空后回车可删除' : 'trakt.tv/app 免费申请，填上后评分条多一格 Trakt 分数' }}</i>
-          </div>
-          <input
-            v-model="traktKey"
-            type="password"
-            :placeholder="traktSaved ? '••••••••' : '可留空'"
-            spellcheck="false"
-            autocomplete="off"
-            @blur="commitTrakt()"
-            @keydown.enter="commitTrakt(true)"
-          />
-        </div>
-      </div>
+                <div class="row">
+                  <div class="k">
+                    <b>硬件解码</b>
+                  </div>
+                  <div class="seg">
+                    <button v-for="o in DECODERS" :key="o.value" type="button" :class="{ on: player.hwdec === o.value }" @click="set({ player: { hwdec: o.value } })">
+                      {{ o.label }}
+                    </button>
+                  </div>
+                </div>
 
-      <h2 class="sec">网络</h2>
-      <div class="rows">
-        <div class="row">
-          <div class="k">
-            <b>代理模式</b>
-          </div>
-          <div class="seg">
-            <button v-for="o in PROXY_MODES" :key="o.value" type="button" :class="{ on: settings.proxyMode === o.value }" @click="set({ proxyMode: o.value })">
-              {{ o.label }}
-            </button>
-          </div>
-        </div>
+                <div class="row">
+                  <div class="k">
+                    <b>渲染</b>
+                    <i>清晰优先会换一个新的播放器进程</i>
+                  </div>
+                  <div class="seg">
+                    <button type="button" :class="{ on: player.render !== 'hq' }" @click="set({ player: { render: 'smooth' } })">流畅优先</button>
+                    <button type="button" :class="{ on: player.render === 'hq' }" @click="set({ player: { render: 'hq' } })">清晰优先</button>
+                  </div>
+                </div>
 
-        <div class="row addr">
-          <div class="k">
-            <b>代理地址</b>
-            <i>{{ addrHint }}</i>
-          </div>
-          <input v-model="addr" type="text" placeholder="127.0.0.1:7897" spellcheck="false" autocomplete="off" @blur="commitAddr" @keydown.enter="commitAddr" />
-        </div>
+                <div class="row">
+                  <div class="k">
+                    <b>快进步长</b>
+                  </div>
+                  <div class="seg">
+                    <button v-for="s in STEPS" :key="s" type="button" :class="{ on: player.seekStepMs === s }" @click="set({ player: { seekStepMs: s } })">
+                      {{ s / 1000 }} 秒
+                    </button>
+                  </div>
+                </div>
 
-        <div class="row">
-          <div class="k">
-            <b>连接测试</b>
-            <i v-if="probeRead">{{ probeRead }}</i>
-            <i v-if="probe && probe.error" class="bad">{{ probe.error }}</i>
+                <div class="row">
+                  <div class="k">
+                    <b>控制条停留</b>
+                  </div>
+                  <div class="seg">
+                    <button v-for="h in HOLDS" :key="h" type="button" :class="{ on: player.controlsTimeoutMs === h }" @click="set({ player: { controlsTimeoutMs: h } })">
+                      {{ h / 1000 }} 秒
+                    </button>
+                  </div>
+                </div>
+
+                <div class="row">
+                  <div class="k">
+                    <b>自动连播</b>
+                    <i>一集播完接着放下一集</i>
+                  </div>
+                  <button type="button" class="sw" :class="{ on: player.autoNext }" @click="set({ player: { autoNext: !player.autoNext } })">
+                    <span class="track"><i></i></span>
+                  </button>
+                </div>
+
+                <div class="row">
+                  <div class="k">
+                    <b>HDR 直通</b>
+                    <i>屏幕不支持 HDR 时画面会发灰；下一次播放生效</i>
+                  </div>
+                  <button type="button" class="sw" :class="{ on: player.hdrHint }" @click="set({ player: { hdrHint: !player.hdrHint } })">
+                    <span class="track"><i></i></span>
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            <section class="group" data-sec="danmaku">
+              <div class="pane">
+                <header class="ph">
+                  <span class="tic"><MessageSquareText :size="15" :stroke-width="1.7" /></span>
+                  <h2>弹幕</h2>
+                </header>
+
+                <div class="row">
+                  <div class="k">
+                    <b>显示弹幕</b>
+                    <i>关闭时不会向任何弹幕源请求你看的内容</i>
+                  </div>
+                  <button type="button" class="sw" :class="{ on: dm.enabled }" @click="set({ danmaku: { enabled: !dm.enabled } })">
+                    <span class="track"><i></i></span>
+                  </button>
+                </div>
+
+                <div class="row">
+                  <div class="k">
+                    <b>来源</b>
+                  </div>
+                  <div class="seg">
+                    <button v-for="o in SOURCES" :key="o.value" type="button" :class="{ on: dm.source.type === o.value }" @click="set({ danmaku: { source: { type: o.value } } })">
+                      {{ o.label }}
+                    </button>
+                  </div>
+                </div>
+
+                <div class="row addr">
+                  <div class="k">
+                    <b>API 地址</b>
+                    <i>{{ dm.source.type === 'dandan' ? '自建或公共弹弹 play 兼容服务，例如 http://127.0.0.1:6666' : 'Bilibili 无需地址' }}</i>
+                  </div>
+                  <input v-model="dmUrl" type="text" :disabled="dm.source.type !== 'dandan'" placeholder="http://127.0.0.1:6666" spellcheck="false" autocomplete="off" @blur="commitDmUrl" @keydown.enter="commitDmUrl" />
+                </div>
+
+                <div class="row addr">
+                  <div class="k">
+                    <b>密钥</b>
+                    <i>{{ tokenSaved ? '已保存，重新输入可替换，清空后回车可删除' : '弹弹 play 的 X-Session-Token，只存在本机' }}</i>
+                  </div>
+                  <input
+                    v-model="token"
+                    type="password"
+                    :disabled="dm.source.type !== 'dandan'"
+                    :placeholder="tokenSaved ? '••••••••' : '可留空'"
+                    spellcheck="false"
+                    autocomplete="off"
+                    @blur="commitToken()"
+                    @keydown.enter="commitToken(true)"
+                  />
+                </div>
+
+                <div class="row">
+                  <div class="k">
+                    <b>标题匹配</b>
+                    <i>库里的名字常常和弹幕源不一样</i>
+                  </div>
+                  <div class="seg">
+                    <button type="button" :class="{ on: dm.matchMode !== 1 }" @click="set({ danmaku: { matchMode: 0 } })">近似</button>
+                    <button type="button" :class="{ on: dm.matchMode === 1 }" @click="set({ danmaku: { matchMode: 1 } })">完全一致</button>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section class="group" data-sec="meta">
+              <div class="pane">
+                <header class="ph">
+                  <span class="tic"><Database :size="15" :stroke-width="1.7" /></span>
+                  <h2>元数据</h2>
+                </header>
+
+                <div class="row addr">
+                  <div class="k">
+                    <b>TMDB Key</b>
+                    <i>{{ tmdbSaved ? '已保存，重新输入可替换，清空后回车可删除' : 'v3 API Key 或 v4 Token 均可，用于艺术字标题、中文简介与评分补强' }}</i>
+                  </div>
+                  <input
+                    v-model="tmdbKey"
+                    type="password"
+                    :placeholder="tmdbSaved ? '••••••••' : '可留空'"
+                    spellcheck="false"
+                    autocomplete="off"
+                    @blur="commitTmdb()"
+                    @keydown.enter="commitTmdb(true)"
+                  />
+                </div>
+                <div class="row addr">
+                  <div class="k">
+                    <b>Trakt Client ID</b>
+                    <i>{{ traktSaved ? '已保存，重新输入可替换，清空后回车可删除' : 'trakt.tv/app 免费申请，填上后评分条多一格 Trakt 分数' }}</i>
+                  </div>
+                  <input
+                    v-model="traktKey"
+                    type="password"
+                    :placeholder="traktSaved ? '••••••••' : '可留空'"
+                    spellcheck="false"
+                    autocomplete="off"
+                    @blur="commitTrakt()"
+                    @keydown.enter="commitTrakt(true)"
+                  />
+                </div>
+              </div>
+            </section>
+
+            <section class="group" data-sec="network">
+              <div class="pane">
+                <header class="ph">
+                  <span class="tic"><Globe :size="15" :stroke-width="1.7" /></span>
+                  <h2>网络</h2>
+                </header>
+
+                <div class="row">
+                  <div class="k">
+                    <b>代理模式</b>
+                  </div>
+                  <div class="seg">
+                    <button v-for="o in PROXY_MODES" :key="o.value" type="button" :class="{ on: settings.proxyMode === o.value }" @click="set({ proxyMode: o.value })">
+                      {{ o.label }}
+                    </button>
+                  </div>
+                </div>
+
+                <div class="row addr">
+                  <div class="k">
+                    <b>代理地址</b>
+                    <i>{{ addrHint }}</i>
+                  </div>
+                  <input v-model="addr" type="text" placeholder="127.0.0.1:7897" spellcheck="false" autocomplete="off" @blur="commitAddr" @keydown.enter="commitAddr" />
+                </div>
+
+                <div class="row">
+                  <div class="k">
+                    <b>连接测试</b>
+                    <i v-if="probeRead">{{ probeRead }}</i>
+                    <i v-if="probe && probe.error" class="bad">{{ probe.error }}</i>
+                  </div>
+                  <button class="go" type="button" :disabled="probing" @click="runProbe">
+                    {{ probing ? '检测中…' : '检测' }}
+                  </button>
+                </div>
+              </div>
+            </section>
+          </template>
           </div>
-          <button class="go" type="button" :disabled="probing" @click="runProbe">
-            {{ probing ? '检测中…' : '检测' }}
-          </button>
         </div>
       </div>
     </div>
@@ -397,53 +546,25 @@ async function runProbe(): Promise<void> {
   --gutter: calc(var(--nav-w) + var(--side));
   position: relative;
   height: 100%;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: calc(var(--titlebar-h) + 22px) var(--side) 46px var(--gutter);
+  overflow: hidden;
+  padding: 0 var(--side) 0 var(--gutter);
   transition: padding var(--rail-dur) var(--rail-ease);
 }
-/* The page is only drawn once all three blocks have come back from the config read, and a page turn that
-   uncovers a bare column reads as a page that failed rather than one that is thinking. These are the real
-   cards with their contents pressed in, at the height the rows have. */
-.sk {
-  display: block;
-  background: var(--shimmer);
-  background-size: var(--sk-tile) 100%;
-  animation: sh 1.3s linear infinite;
-}
-.skh {
-  width: 118px;
-  height: 30px;
-  border-radius: 8px;
-}
-.skk {
-  width: 44%;
-  height: 15px;
-}
-.skg {
-  /* Measured against the real control: the segmented picker draws 40.2 and the row is that plus its own
-     15+15 of padding and a hairline, so this pill is what sets the row's 71.8 and the bar beside it cannot
-     be allowed to. */
-  width: 132px;
-  height: 40.2px;
-  border-radius: 999px;
-}
-.sks {
-  /* The section line above the first block of rows: 20 tall with the real 12 under it. */
-  width: 132px;
-  height: 20px;
-  margin-bottom: 12px;
-  border-radius: var(--r-badge);
-}
+/* The title, the index and the tab bar are the frame, and only the sheet column inside it moves: the
+   page itself never scrolls, so neither navigation can slide away. The sheet is 860 wide at the default
+   window, so the col reserves the rail (152) and its gap (32) on top of it. */
 .col {
-  max-width: 720px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  max-width: 1044px;
   margin: 0 auto;
+  padding-top: calc(var(--titlebar-h) + 24px);
 }
 .head {
-  margin-bottom: 20px;
-  /* The header box the h1 makes, so the section line and every row under it start on the line they will
-     land on; the bar rides the same middle band the title's ink does. */
-  min-height: 46.5px;
+  flex: none;
+  margin-bottom: 26px;
+  min-height: 42px;
   display: flex;
   align-items: center;
 }
@@ -454,31 +575,183 @@ h1 {
   letter-spacing: -0.3px;
   color: var(--text);
 }
-.sec {
-  margin: 26px 0 12px;
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 1.3px;
-  color: var(--text-dim);
-}
-.sec:first-of-type {
-  margin-top: 0;
-}
-.rows {
+.layout {
+  flex: 1;
+  min-height: 0;
   display: grid;
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
 }
-.row {
+.main {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* The index is a sibling of the sheets, not a bar over them: the section names stay on screen for the
+   whole page while the sheets scroll in the second column. */
+.srail {
+  display: none;
+}
+.srail button {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 12px 18px;
-  padding: 15px 18px;
-  border-radius: var(--r-tile);
+  gap: 10px;
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: var(--r-row);
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: left;
+  transition: color var(--hov) var(--ease), background var(--hov) var(--ease);
+}
+.srail button svg {
+  flex: none;
+  opacity: 0.72;
+}
+.srail button:hover {
+  color: var(--text);
+  background: var(--chip);
+}
+/* The picked section is near-black on the tint, like the app's own nav: accent-coloured 13px type on
+   accent-soft measured 3.75:1, and the colour here is what has to be read, not the tile. */
+.srail button.on {
+  color: var(--text);
+  background: var(--accent-soft);
+  font-weight: 600;
+}
+.srail button.on svg {
+  opacity: 1;
+}
+/* Below the rail's breakpoint the same four anchors sit in one row above the scroll pane. Text and a
+   2px underline rather than the pill track used by a value picker: these change what is on screen,
+   they do not pick a value. */
+.stabs {
+  flex: none;
+  display: flex;
+  align-items: flex-end;
+  gap: 28px;
+  height: 42px;
+  margin: 0 0 18px;
+  padding: 0 2px;
+  background: var(--glass);
+  backdrop-filter: blur(14px) saturate(160%);
+  border-bottom: 1px solid var(--line);
+}
+.stabs button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 41px;
+  font-size: 13px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  transition: color var(--hov) var(--ease);
+}
+.stabs button::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 999px;
+  background: transparent;
+  transition: background var(--hov) var(--ease);
+}
+.stabs button:hover {
+  color: var(--text);
+}
+.stabs button.on {
+  color: var(--text);
+}
+.stabs button.on::after {
+  background: var(--accent);
+}
+/* The only moving part. Its edges are below the title and the tab bar, and beside the rail, so the
+   sheets scroll without carrying either navigation with them. */
+.scroll {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-bottom: 46px;
+}
+@media (min-width: 1280px) {
+  .layout {
+    grid-template-columns: 152px minmax(0, 860px);
+    gap: 32px;
+  }
+  .srail {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding-top: 8px;
+  }
+  .stabs {
+    display: none;
+  }
+}
+.group + .group {
+  margin-top: 22px;
+}
+/* One surface per section, its title inside it: four sheets read as four chapters, and the icon tile
+   gives each chapter a fixed mark both in the rail and at its top. */
+.pane {
+  overflow: hidden;
+  border-radius: 16px;
   background: var(--bg-elev);
   border: 1px solid var(--line);
   box-shadow: var(--shadow-sm);
+}
+.ph {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 22px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.ph h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--text);
+}
+.tic {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+/* Label on the left, control on the right. The control column is sized by its widest picker and every
+   control ends on the sheet's right edge, so a switch and a seven-rung ladder share one line even
+   though they are nowhere near the same width. */
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px 24px;
+  padding: 15px 22px;
+}
+.row + .row {
+  border-top: 1px solid var(--line);
+}
+.row > .k {
+  min-width: 0;
+}
+.row > .seg,
+.row > .sw,
+.row > input,
+.row > .go,
+.row > .skg {
+  justify-self: end;
 }
 .k b {
   font-size: 14px;
@@ -496,11 +769,12 @@ h1 {
 .k i.bad {
   color: var(--danger);
 }
+/* A fixed 330 rather than a share of the row: all four fields then start and end on the same two lines
+   instead of each one stretching to whatever its label left over. */
 .addr input {
-  flex: 1;
-  min-width: 220px;
-  max-width: 320px;
-  padding: 9px 12px;
+  width: 330px;
+  height: 40px;
+  padding: 0 12px;
   border-radius: var(--radius);
   background: #f4f4f7;
   border: 1px solid var(--line);
@@ -522,7 +796,8 @@ h1 {
   background: #fff;
 }
 .go {
-  padding: 8px 18px;
+  height: 40px;
+  padding: 0 18px;
   border-radius: 999px;
   font-size: 13px;
   font-weight: 600;
@@ -541,18 +816,21 @@ h1 {
 .go:disabled {
   color: var(--text-faint);
 }
+/* The ladder never wraps: at the minimum window it is the label that gives up width, not the control.
+   The picked plate changes colour and fill, never weight or width. */
 .seg {
   display: inline-flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 2px;
   padding: 4px;
   border-radius: 999px;
   background: var(--bg-elev-2);
 }
 .seg button {
-  padding: 6px 14px;
+  padding: 6px 12px;
   border-radius: 999px;
   font-size: 13px;
+  white-space: nowrap;
   color: var(--text-dim);
   transition: color var(--hov) var(--ease), background var(--hov) var(--ease), transform var(--hov) var(--ease-out);
 }
@@ -561,7 +839,6 @@ h1 {
 }
 .seg button.on {
   color: var(--text);
-  font-weight: 600;
   background: var(--bg-elev);
   box-shadow: var(--shadow-sm);
 }
@@ -597,5 +874,42 @@ h1 {
 }
 .sw.on .track i {
   transform: translate3d(18px, 0, 0);
+}
+.srail button:focus-visible,
+.stabs button:focus-visible,
+.seg button:focus-visible,
+.sw:focus-visible,
+.go:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* The page is drawn only once all three blocks have come back from the config read. The real title,
+   rail and chapter headers stay on screen throughout; the bars are the first two chapters' own boxes
+   with their contents pressed in, seven rows and the four hint lines among them. */
+.sk {
+  display: block;
+  background: var(--shimmer);
+  background-size: var(--sk-tile) 100%;
+  animation: sh 1.3s linear infinite;
+}
+/* A title line is 21.7px tall and a hint line 20.15, with 4 between them. The bars keep those line
+   boxes so a hint row lands at the same height as its finished copy. Adjacent margins collapse, hence
+   the larger top margin on the hint bar. */
+.skk {
+  width: 44%;
+  height: 15px;
+  margin: 3.35px 0;
+  border-radius: var(--r-badge);
+}
+.skhint {
+  width: 72%;
+  height: 13px;
+  margin: 10.925px 0 3.575px;
+  border-radius: var(--r-badge);
+}
+.skg {
+  width: 300px;
+  height: 40.2px;
+  border-radius: 999px;
 }
 </style>
