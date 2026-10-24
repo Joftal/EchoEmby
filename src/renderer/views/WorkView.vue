@@ -633,7 +633,7 @@ function open(to: string, autoplay = false): void {
               <svg viewBox="0 0 24 24" width="18" height="18"><path d="M8 5l12 7-12 7z" fill="currentColor" /></svg>
             </span>
             <span v-if="e.seen" class="echip">{{ e.seen }}</span>
-            <div v-if="e.played > 0" class="eprog"><i :style="{ width: e.played + '%' }"></i></div>
+            <div v-if="e.played > 0" class="frame-prog"><i :style="{ width: e.played + '%' }"></i></div>
           </div>
           <div class="einfo">
             <p class="etitle">{{ e.head }}</p>
@@ -1035,28 +1035,14 @@ h2 {
 }
 .ethumb .echip {
   position: absolute;
-  left: 8px;
-  bottom: 8px;
+  left: 10px;
+  bottom: 22px;
   padding: 2px 7px;
   border-radius: 6px;
   font-size: 13px;
   font-weight: 650;
   color: #fff;
   background: rgba(9, 11, 18, 0.72);
-}
-.ethumb .eprog {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 3px;
-  background: rgba(255, 255, 255, 0.32);
-  overflow: hidden;
-}
-.ethumb .eprog i {
-  display: block;
-  height: 100%;
-  background: #fff;
 }
 .einfo {
   min-width: 0;

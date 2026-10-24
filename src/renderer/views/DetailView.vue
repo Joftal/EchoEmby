@@ -1331,7 +1331,7 @@ const LEVEL_WORD = ['无', '极少', '轻微', '中等', '较多', '严重'];
                 <span v-else class="ph">{{ r.ph }}</span>
                 <span class="disc" role="presentation"><svg viewBox="0 0 24 24" width="18" height="18"><path d="M8 5l12 7-12 7z" fill="currentColor" /></svg></span>
                 <span v-if="r.seen" class="echip">{{ r.seen }}</span>
-                <div v-if="r.played > 0" class="eprog"><i :style="{ width: r.played + '%' }"></i></div>
+                <div v-if="r.played > 0" class="frame-prog"><i :style="{ width: r.played + '%' }"></i></div>
               </div>
               <div class="einfo">
                 <LoopTitle class="etitle" :text="r.title" />
@@ -1750,11 +1750,12 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
 }
 .epi:hover .disc { opacity: 1; transform: none; }
 /* Same plate as the 在看 cards: the progress read-out lives on the frame it belongs to, not in the text
-   under it - the two used to sit so far apart they read as two different episodes. */
+   under it - the two used to sit so far apart they read as two different episodes. It sits above the
+   `.frame-prog` pill base.css draws. */
 .ethumb .echip {
   position: absolute;
-  left: 9px;
-  bottom: 10px;
+  left: 10px;
+  bottom: 22px;
   padding: 2px 7px;
   border-radius: var(--r-badge);
   font-size: 13px;
@@ -1765,8 +1766,6 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
   background: rgba(16, 16, 22, 0.74);
   backdrop-filter: blur(8px);
 }
-.ethumb .eprog { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255, 255, 255, 0.32); overflow: hidden; }
-.ethumb .eprog i { display: block; height: 100%; background: #fff; box-shadow: 0 0 0 1px rgba(18, 18, 26, 0.08); }
 .einfo { min-width: 0; margin-top: 11px; }
 .emeta { margin: 6px 0 0; display: flex; gap: 8px; flex-wrap: wrap; font-size: 13px; font-weight: 500; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 /* One line, cut where it runs out: a real episode title now lands here, and a card whose headline wrapped to

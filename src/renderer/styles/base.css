@@ -425,23 +425,33 @@ summary,
   opacity: 1;
 }
 
-/* The watched fraction drawn on the bottom edge of a 16:9 frame — the 继续观看 card on the lobby row and
-   the 在看 queue card are the same object read the same way, so the line is defined once and both point at
-   it. Global for the same reason as `.art-skel-*`: a scoped copy in each card is two rules that drift. */
+/* The watched fraction, drawn as a pill floating on the art rather than a hairline on its bottom edge.
+   A line flush with the frame was clipped by the 10px corner radius and its 1px border, and a white fill
+   over a bright picture read as nothing at all — measured on a 继续观看 card stopped 5% in, the stop was
+   invisible. So the pill is inset 10px on both sides and lifted 10px off the bottom. Its track is a
+   translucent white gel, not black: measured on 破产姐妹, a 4px band of rgba(16,16,22,.62) darkened the
+   whole width of the still and out-weighed the picture it sits on, while white at .32 only lifts it. The
+   one dark element left is a 1px, .12 hairline, which is what keeps the rail visible on near-white art
+   without painting a band there. The 「看到」 plates on these cards sit at bottom 22px, 8px above the pill.
+   继续观看 (MediaCard), the 在看 queue card (ListCard) and the episode stills on 详情/作品 all read the
+   same object, so it is defined once here. Global for the same reason as `.art-skel-*`: a scoped copy in
+   each card is two rules that drift. */
 .frame-prog {
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 3px;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  height: 4px;
+  border-radius: 999px;
   background: rgba(255, 255, 255, 0.32);
+  box-shadow: 0 0 0 1px rgba(16, 16, 22, 0.12), 0 1px 2px rgba(16, 16, 22, 0.14);
   overflow: hidden;
 }
 .frame-prog i {
   display: block;
   height: 100%;
+  border-radius: inherit;
   background: #fff;
-  box-shadow: 0 0 0 1px rgba(18, 18, 26, 0.08);
   transform-origin: left;
   transition: width 0.9s var(--ease-out);
 }

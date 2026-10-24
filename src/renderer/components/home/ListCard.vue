@@ -237,8 +237,8 @@ function open(): void {
       <img v-if="url && !failed" :src="url" alt="" :class="{ show: loaded }" loading="lazy" decoding="async" @load="loaded = true" @error="onErr" />
       <span v-if="failed" class="ph">{{ (item.seriesName || item.name).slice(0, 1) }}</span>
 
-      <!-- The bottom-edge hairline the 继续观看 row paints, from the same class in base.css and the same number
-           the 「看到」 plate prints, so the stop is read against the picture it was stopped on. -->
+      <!-- The pill the 继续观看 row paints, from the same class in base.css and the same number the 「看到」
+           plate prints, so the stop is read against the picture it was stopped on. The plate sits above it. -->
       <div v-if="queue && barPct > 0" class="frame-prog"><i :style="{ width: barPct + '%' }"></i></div>
 
       <!-- The reference puts the resume control on the frame itself: a play mark and the stop, or the play
@@ -422,8 +422,8 @@ h3 {
 /* ---- queue density -------------------------------------------------------------
    Measured off the reference: a 428x106 panel whose frame is 141 wide (a third of it, 16:9), a 16px title
    sharing its baseline row with the right edge, and the count pinned to the bottom of the text
-   column rather than stacked under the title. The progress line is not from the reference — it reads the stop
-   off the frame's bottom edge instead, because the reference's bar counts episodes and this account cannot
+   column rather than stacked under the title. The progress pill is not from the reference — it reads the
+   stop inside the frame instead, because the reference's bar counts episodes and this account cannot
    answer that. Scaled to a two-across card here, the frame lands at 178px, the size the art asks for at 360. */
 .queue {
   gap: 14px;
@@ -467,8 +467,8 @@ h3 {
 }
 .resume {
   position: absolute;
-  left: 8px;
-  bottom: 8px;
+  left: 10px;
+  bottom: 22px;
   display: inline-flex;
   align-items: center;
   gap: 5px;

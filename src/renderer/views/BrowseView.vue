@@ -764,7 +764,7 @@ h1 {
    as `.foot` pushes it. Only the glyph band inside each box shimmers (15.5 and 13 tall, centred in the box),
    so nothing moves when the text lands. The widths are the medians measured across the first 20 filled cards
    — 77 / 153 / 95 of a 314.2 column — where the old 46 / 88 / 44% stood two lines in a row too long.
-   The hairline on the frame needs no placeholder: a shimmering frame already covers the 3px it takes. */
+   The progress pill on the frame needs no placeholder: a shimmering frame already covers it. */
 .cell.list.queue {
   height: auto;
 }

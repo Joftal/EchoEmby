@@ -337,8 +337,8 @@ img.show {
 
 .chip {
   position: absolute;
-  left: 9px;
-  bottom: 10px;
+  left: 10px;
+  bottom: 22px;
   padding: 2px 7px;
   border-radius: var(--r-badge);
   font-size: 13px;
