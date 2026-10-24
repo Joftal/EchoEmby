@@ -994,7 +994,7 @@ const pack = computed(() => {
 });
 const overviewText = computed(() => pack.value?.overview || workOverview.value);
 
-/** 「2021-04-09 · 16 集 · 17小时18分」 for the season on screen. Until that season is known the line says
+/** 「2021-04-09 · 16 集 · 17小时18分钟」 for the season on screen. Until that season is known the line says
  *  nothing about counts: a collection keeps its own 部 count, which is the one number whose subject is
  *  already on screen. */
 const metaLine = computed(() => {

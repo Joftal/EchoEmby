@@ -175,20 +175,18 @@ export const episodeHead = (
   return pos && named ? `${pos} · ${named}` : pos || named;
 };
 
-/** 「14 分钟」 / 「2 小时 6 分」 from a millisecond span — how long something runs, not how far a viewer got.
- *  The resume read-out used to be its other customer and is now `seenLabel`, which is a clock. */
-export const fmtElapsed = (ms: number): string => {
-  const mins = Math.round(Math.max(0, ms) / 60000);
-  if (!mins) return '';
-  return mins >= 60 ? `${Math.floor(mins / 60)} 小时 ${mins % 60} 分` : `${mins} 分钟`;
-};
-
-/** 「45分钟」 / 「1小时30分」 from whole minutes. The server bills a file in ticks and TMDB bills an episode
- *  in minutes, and a card must be able to print either without two spellings of the same length. */
+/** 「45分钟」 / 「1小时42分钟」 / 「2小时」 from whole minutes. The shape follows the length: under an hour
+ *  there is nothing to split, over one the hours are said out loud, and an exact number of hours prints
+ *  without a 「0分钟」 tail. The server bills a file in ticks and TMDB bills an episode in minutes, and a
+ *  surface must be able to print either without two spellings of the same length — or, as this line used to
+ *  read on the work page, 102 minutes of a film as 「102 分钟」 beside the detail page's 「1小时42分」. */
 export const fmtMinutes = (mins?: number): string => {
   const m = Math.round(Number(mins) || 0);
   if (!m) return '';
-  return m >= 60 ? `${Math.floor(m / 60)}小时${m % 60}分` : `${m}分钟`;
+  const h = Math.floor(m / 60);
+  const rest = m % 60;
+  if (!h) return `${m}分钟`;
+  return rest ? `${h}小时${rest}分钟` : `${h}小时`;
 };
 
 export const fmtRuntime = (ticks?: number): string => {

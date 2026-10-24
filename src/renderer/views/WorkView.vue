@@ -236,7 +236,7 @@ interface EpView {
 const serverBand = computed<LibraryItem[] | null>(() => (serverRow.value && bandAsked.value ? serverEps.value : null));
 
 /** The season on screen, stated exactly the way the detail page states its own: 「2018-07-14 · 12 集 ·
- *  4小时51分」. This line used to speak for the whole work — its year and a count summed over every season
+ *  4小时51分钟」. This line used to speak for the whole work — its year and a count summed over every season
  *  the account holds — and under a picker the reader has just switched to 第 1 季 that read as 第 1 季's own
  *  number (measured: 104 集 printed over rails of 90, 66 and 19 cards). One subject per line, and the
  *  work-level facts the line no longer carries are the picker's rows. */
@@ -275,7 +275,7 @@ const metaLine = computed(() => {
       .filter(Boolean)
       .join(' · ');
   }
-  return [String(year.value || ''), kind.value === 'tv' ? '' : m.runtime ? `${m.runtime} 分钟` : ''].filter(Boolean).join(' · ');
+  return [String(year.value || ''), kind.value === 'tv' ? '' : fmtMinutes(m.runtime)].filter(Boolean).join(' · ');
 });
 
 /* A still that will not decode has to step down to the letter rather than leave a bare 16:9 box: this page

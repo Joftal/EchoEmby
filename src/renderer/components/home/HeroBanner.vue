@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue';
 import type { LibraryItem } from '../../../shared/types';
-import { accountName, fmtDate, fmtElapsed, ticksToMs } from '../../lib/format';
+import { accountName, fmtDate, fmtRuntime } from '../../lib/format';
 import { mergeGenres } from '../../lib/genres';
 import { PLAYABLE, resumeTarget } from '../../lib/resume';
 import { useScores } from '../../lib/scores';
@@ -66,7 +66,7 @@ const plate = ref<HTMLImageElement | null>(null);
 /** Only a single playable row has a runtime that is its own. The server's number on a Series row is neither
  *  the show's nor one episode's (measured: 模范出租车 answers 1小时4分 for a first season that runs 17小时1分),
  *  so the slide leaves it out the way the detail page's line does. */
-const runtime = computed(() => (playable.value ? fmtElapsed(ticksToMs(current.value?.runTimeTicks)) : ''));
+const runtime = computed(() => (playable.value ? fmtRuntime(current.value?.runTimeTicks) : ''));
 /* 分类 is about the work rather than about this row, so it takes both lists: TMDB's order, then whatever this
    server calls a genre that TMDB never named. A shelf the scraper left untagged still gets its labels —
    measured: 32 of 400 Series/Movie rows bill none — and the merged line costs no request, because it is the
