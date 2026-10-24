@@ -520,13 +520,21 @@ watch(
 const heroBackdrop = ref('');
 const heroPoster = ref('');
 /** What the plate paints, in the order the season decides it: TMDB's own poster for that season, then the
- *  server's season art, then the work's poster for a season neither side dresses in its own picture. The
- *  card art this page was opened from sits behind all three: it paints the first frame so the plate is
- *  never empty, and the season's own picture takes it over as soon as that picture is known. Measured on
+ *  server's season art, then TMDB's poster for the work, then the server's, for a page neither side dresses
+ *  in its own picture. The card art this page was opened from sits behind all four: it paints the first
+ *  frame so the plate is never empty, and the season's own picture takes it over as soon as that picture is
+ *  known. Measured on
  *  Ted Lasso, handing the seed the top of this ladder instead left the plate on the series poster through
  *  chips 1, 2 and 3 while its date, 集数, rating and credit band all moved with the season. */
 const tmdbPlate = computed(() => posterUrl(tmdbSeason.value?.poster));
-const plateSrc = computed(() => tmdbPlate.value || seasonArt.value || heroPoster.value || seedFor(props.id));
+/** TMDB's poster for the work itself, one rung under the season's own art rather than over it: a season that
+ *  has a picture keeps it, and only a page with nothing to dress falls to this. A Movie is the case that had
+ *  no rung at all, since there is no season level under a film, so this plate used to read straight through to
+ *  the gateway's single Primary (measured on 玩具总动员5: card and plate two different pictures). Placing it
+ *  above `heroPoster` also means a season neither side dresses wears TMDB's Chinese art, which is the picture
+ *  the card that opened the page was already wearing. */
+const tmdbWorkPlate = computed(() => posterUrl(scores.value.tmdb?.poster));
+const plateSrc = computed(() => tmdbPlate.value || seasonArt.value || tmdbWorkPlate.value || heroPoster.value || seedFor(props.id));
 /** Ranked title treatments for this item; TitleArt walks them and falls back to the name. */
 const titleUrls = ref<string[]>([]);
 
