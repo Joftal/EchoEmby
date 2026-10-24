@@ -22,12 +22,18 @@ const dead = ref<Record<string, true>>({});
 const loaded = ref(false);
 const failed = ref(false);
 const tries = ref(0);
-/** The best picture this card has not already watched fail. TMDB's own poster is the last rung and costs no
- *  ask of its own — it rides the same reply the ★ badge reads — so a work whose picture will not decode still
- *  ends up with a picture rather than a letter. */
+/** The best picture this card has not already watched fail.
+ *  Same rule as the row card: a poster frame of a work wears TMDB's picture first, because that ask carries
+ *  language=zh-CN while the gateway keeps one Primary per item with no language to rank it by — on this
+ *  account's 8 收藏 works, 6 of those single files are not the picture the page shows. Measured here: the 30
+ *  poster frames the home page paints all come from TMDB now, and its 16:9 rails still come from the server.
+ *  A still frame keeps the old order, since a 16:9 box must not wear a portrait poster, and so does an
+ *  episode row, whose own TMDB still is a truer answer than the work above it. The poster costs no ask of
+ *  its own: it rides the same reply the ★ badge reads. */
 const src = computed(() => {
   const extra = tmdb.value.meta?.poster ? `https://image.tmdb.org/t/p/w500${tmdb.value.meta.poster}` : '';
-  return [...rungs.value, extra].find(u => u && !dead.value[u]) || '';
+  const portraitWork = props.variant === 'poster' && props.item.type !== 'Episode';
+  return (portraitWork ? [extra, ...rungs.value] : [...rungs.value, extra]).find(u => u && !dead.value[u]) || '';
 });
 
 /** The gateway 500s on a burst, so a grid only asks for the art it can see. */

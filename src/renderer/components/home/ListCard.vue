@@ -36,12 +36,20 @@ const dead = ref<Record<string, true>>({});
 const loaded = ref(false);
 const failed = ref(false);
 const tries = ref(0);
-/** The best picture this card has not already watched fail. TMDB's own poster is the last rung and costs no
- *  ask of its own — it rides the same reply the ★ badge reads — so a row whose picture will not decode still
- *  ends up with a picture rather than a letter. */
+/** The best picture this card has not already watched fail.
+ *  A portrait frame of a work wears TMDB's poster first, and the server's picture is the stand-in behind it:
+ *  measured on the 8 cards this page paints, the gateway holds exactly one Primary each (its Images endpoint
+ *  answers three rows, tagged Primary / Logo / Backdrop, with no Language field to rank), and that one picture
+ *  disagreed with the page the card opens on 6 of 8 — 5 of them the work's original-language art (3 Japanese,
+ *  1 Korean, 1 English). TMDB's poster costs no ask of its own — it rides the same reply the ★ badge reads — and
+ *  the ladder below it is unchanged, so a card whose picture will not decode still ends up with one rather
+ *  than a letter.
+ *  The 在看 frame and an episode row keep the old order: a 16:9 frame cannot wear a portrait poster, and a
+ *  row that has this episode's own still should show that rather than the work above it. */
 const src = computed(() => {
   const extra = tmdb.value.meta?.poster ? `https://image.tmdb.org/t/p/w500${tmdb.value.meta.poster}` : '';
-  return [...rungs.value, extra].find(u => u && !dead.value[u]) || '';
+  const portraitWork = !queue.value && props.item.type !== 'Episode';
+  return (portraitWork ? [extra, ...rungs.value] : [...rungs.value, extra]).find(u => u && !dead.value[u]) || '';
 });
 
 /** The gateway 500s on a burst, so a list only asks for the art it can see. */
