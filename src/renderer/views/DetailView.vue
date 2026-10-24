@@ -15,7 +15,7 @@ import HeroSkeleton from '../components/HeroSkeleton.vue';
 import { tmdbKind as kindOf, trustSeason, useScores } from '../lib/scores';
 import { usePlayerStore } from '../stores/player';
 import { useAppStore } from '../stores/app';
-import { accountName, episodeHead, fmtDate, fmtMinutes, fmtRuntime, seenLabel, seasonTitle } from '../lib/format';
+import { accountName, episodeHead, fmtDate, fmtMinutes, fmtRuntime, seenLabel, seasonTitle, watchedRatio } from '../lib/format';
 import { PLAYABLE, PLAYABLE_PAGE, resumeTarget, seasonTarget } from '../lib/resume';
 import { mergeGenres } from '../lib/genres';
 import { resetPageScroll } from '../lib/scroll';
@@ -660,7 +660,7 @@ const epTitle = (e: LibraryItem): string => {
   );
 };
 const epSeen = (e: LibraryItem): string => seenLabel(e.userData, e.runTimeTicks);
-const epPlayed = (e: LibraryItem): number => Math.min(100, e.userData?.playedPercentage || 0);
+const epPlayed = (e: LibraryItem): number => Math.round(watchedRatio(e.userData, e.runTimeTicks) * 100);
 
 /** One card of the episode band, drawn from whichever side owns that episode. A season this server holds
  *  files for answers with its own rows — its art, its length, where the viewer stopped; a season it holds

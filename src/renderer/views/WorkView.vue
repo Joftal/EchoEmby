@@ -14,7 +14,7 @@ import { libraryWorks, useRelated, REVEAL_MS, type WorkKind, type WorkSeed } fro
 import { embyCached } from '../lib/embycache';
 import { mergeGenres } from '../lib/genres';
 import { beginPlay, workSeedFor } from '../lib/handoff';
-import { accountName, episodeHead, fmtDate, fmtMinutes, fmtRuntime, seenLabel, seasonTitle } from '../lib/format';
+import { accountName, episodeHead, fmtDate, fmtMinutes, fmtRuntime, seenLabel, seasonTitle, watchedRatio } from '../lib/format';
 import { resetPageScroll } from '../lib/scroll';
 import { useAppStore } from '../stores/app';
 import { vReveal } from '../lib/reveal';
@@ -296,7 +296,7 @@ const eps = computed<EpView[]>(() => {
         date: fmtDate(e.premiereDate) || fmtDate(r?.air),
         len: fmtRuntime(e.runTimeTicks) || fmtMinutes(r?.rt),
         seen: seenLabel(e.userData, e.runTimeTicks),
-        played: Math.min(100, e.userData?.playedPercentage || 0),
+        played: Math.round(watchedRatio(e.userData, e.runTimeTicks) * 100),
         to: `/detail/${e.id}`,
       };
     });
