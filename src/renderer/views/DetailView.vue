@@ -1025,7 +1025,48 @@ const seasonVoteUrl = computed(() => {
     : '';
 });
 
-const fav = computed(() => !!work.value?.userData?.isFavorite);
+/** The series' own heart says nothing about a favourite another client filed on one of its episodes.
+ *  The collection page folds those into the work, so the page that owns the heart reads the same union
+ *  or a folded card would open onto an empty heart. */
+const epFavIds = ref<string[]>([]);
+/** Which work the ids belong to; a page switch must not keep the previous show's episodes. */
+let epFavFor = '';
+
+async function askEpisodeFavs(seriesId: string): Promise<{ ok: boolean; ids: string[] }> {
+  if (!seriesId) return { ok: true, ids: [] };
+  const r = await window.echoemby.emby.items({
+    Recursive: true,
+    ParentId: seriesId,
+    IncludeItemTypes: 'Episode',
+    Filters: 'IsFavorite',
+    Limit: 1000,
+  });
+  return { ok: r.ok, ids: r.ok ? (r.data || []).map(x => x.id) : [] };
+}
+
+const fav = computed(
+  () => !!work.value?.userData?.isFavorite || (work.value?.type === 'Series' && epFavIds.value.length > 0),
+);
+
+watch(
+  () => [work.value?.id, work.value?.type] as const,
+  async ([id, type]) => {
+    if (!id || type !== 'Series') {
+      epFavIds.value = [];
+      epFavFor = '';
+      return;
+    }
+    if (epFavFor === id) return;
+    epFavFor = id;
+    epFavIds.value = [];
+    // The series' own heart is enough; only a work that is not starred needs the episode lookup.
+    if (work.value?.userData?.isFavorite) return;
+    const r = await askEpisodeFavs(id);
+    if (work.value?.id !== id) return;
+    if (r.ok) epFavIds.value = r.ids;
+  },
+  { immediate: true },
+);
 
 async function loadSeason(n: number) {
   if (!(n >= 0)) return;
@@ -1343,13 +1384,47 @@ async function toggleFav() {
   // rather than starring a season and leaving the show it belongs to unmarked.
   const it = work.value;
   if (!it || favBusy.value) return;
+  const seriesId = it.type === 'Series' ? it.id : '';
+  const was = fav.value;
+  const wasEps = epFavIds.value;
+  const on = !was;
   favBusy.value = true;
-  const on = !fav.value;
   // The press answers for itself: the write-back only lands when the server has filed it, and that
-  // round trip measured 300-600ms on this gateway — long enough for the heart to look untouched.
+  // round trip measured 300-600ms on this gateway — long enough for the heart to look untouched. The
+  // union that lit the heart has to come down with it, or the optimistic press would leave it on.
   it.userData = { ...it.userData, isFavorite: on };
-  if (!(await app.setFavorite(it.id, on))) it.userData = { ...it.userData, isFavorite: !on };
-  favBusy.value = false;
+  if (!on) epFavIds.value = [];
+  try {
+    if (on) {
+      if (!(await app.setFavorite(it.id, true))) it.userData = { ...it.userData, isFavorite: false };
+      return;
+    }
+    // 收藏 folds a series' episode favourites into the work, so turning the work off has to clear them
+    // too; writing only the series would leave the card on the collection page. The lookup comes first
+    // because a failed one cannot tell fan-out what to remove.
+    const eps = await askEpisodeFavs(seriesId);
+    if (!eps.ok) {
+      if (work.value?.id === it.id) epFavIds.value = wasEps;
+      it.userData = { ...it.userData, isFavorite: was };
+      return;
+    }
+    const results = await Promise.all([
+      app.setFavorite(it.id, false),
+      ...eps.ids.map(id => app.setFavorite(id, false)),
+    ]);
+    if (results.every(Boolean)) return;
+    // Some writes landed and some did not; the server is the only one that knows which, so the heart and
+    // the episode list are read back rather than guessed from a partially applied toggle.
+    const [again, own] = await Promise.all([askEpisodeFavs(seriesId), window.echoemby.emby.item(it.id)]);
+    if (work.value?.id === it.id) {
+      // A failed read-back keeps the attempted ids on the heart instead of claiming it dark: a favourite
+      // that remains server-side must stay pressable so the work can be turned off again.
+      epFavIds.value = again.ok ? again.ids : wasEps;
+      it.userData = { ...it.userData, isFavorite: own.ok ? !!own.data?.userData?.isFavorite : was };
+    }
+  } finally {
+    favBusy.value = false;
+  }
 }
 
 const LEVEL_WORD = ['无', '极少', '轻微', '中等', '较多', '严重'];

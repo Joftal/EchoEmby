@@ -211,7 +211,7 @@ const shown = computed<LibraryItem[]>(() => {
       return true;
     });
   }
-  if (!isSearch.value) return src;
+  if (!isSearch.value && kind.value !== 'favorites') return src;
   const onScreen = new Set(src.filter(x => x.type !== 'Episode').map(x => x.id));
   const taken = new Set<string>();
   const once = new Set<string>();
@@ -229,7 +229,9 @@ const shown = computed<LibraryItem[]>(() => {
     once.add(key);
     cards.push(card);
   }
-  return localSort(cards, filters.value.sort);
+  // 收藏 already arrived in the server's DateCreated order; folding must not move the works that
+  // were not touched, so the raw order stands rather than a re-sort of the Series rows' own dates.
+  return kind.value === 'favorites' ? cards : localSort(cards, filters.value.sort);
 });
 
 /** The empty search page is a shop window, not a blank one. Two asks fill it: the films, and the
@@ -340,6 +342,12 @@ async function load(reset: boolean): Promise<void> {
     // Before the rows go on screen: the fold has to be settled or the episode card would swap into a
     // show card under the user's cursor a beat after the grid paints.
     if (isSearch.value) await rememberSeries(episodeShows(batch));
+    else if (kind.value === 'favorites') {
+      // 收藏 is a list of works: an Episode row is folded into its Series before paint. A Series
+      // already accumulated is its own card, so only the orphan parents are asked for.
+      const onScreen = new Set([...items.value, ...batch].filter(x => x.type !== 'Episode').map(x => x.id));
+      await rememberSeries(episodeShows(batch).filter(id => !onScreen.has(id)));
+    }
     items.value = reset ? batch : [...items.value, ...batch];
     hasMore.value = batch.length === pageSize.value;
     if (kind.value === 'resume') void askSeasons(items.value);

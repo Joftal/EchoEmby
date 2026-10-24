@@ -321,6 +321,12 @@ function open(): void {
   overflow: hidden;
   background: var(--bg-elev-2);
 }
+/* The row card's flex line would stretch the frame to the copy's height, and a 92×151 box is not the 2:3
+   the width declares: measured 0.609, so a 2:3 poster lost its bottom and the detail hand-off refused the
+   seed. The queue card keeps its own 16:9 frame, which is deliberately the copy's height. */
+.lcard:not(.queue) .thumb {
+  align-self: flex-start;
+}
 .thumb img {
   position: absolute;
   inset: 0;
