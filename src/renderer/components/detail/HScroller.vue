@@ -62,16 +62,26 @@ function nudge(dir: number): void {
   else el.scrollTo({ left: want, behavior: 'smooth' });
 }
 
-/** Pull one card into view, and leave the band alone when the card can already be read. The caller decides
- *  which card is worth the travel — the episode band opens on the one the viewer stopped in — so this only
- *  answers "is it where a reader looks". The window is the track's own box minus its padding, because the
- *  left padding is the tuck the art slides under the floating rail in: a card parked in it is not found.
+/** Put one card where the reader is looking: on the middle of the window, or tucked against its left edge.
+ *  The band is left alone only when it already rests on that place. The caller decides which card is worth the travel — the episode band opens on the one
+ *  the viewer stopped in — and `center` says how far: a stop is put under the reader's eye (measured on
+ *  金装律师's 第 8 集: the band had it at the row's left edge, inside the window, so the old "is it visible"
+ *  test returned true and the card the entry named sat 474px off the middle while the card next to it filled
+ *  it), while the first card of a season nobody started is read from the front, where the band's own start
+ *  is. The window is the track's own box minus its padding, because the left padding is the tuck the art
+ *  slides under the floating rail in: a card parked in it is not found.
  *  The destination is the same `want` a press builds on and the same ease, so a glide nobody asked for cannot
  *  eat the next arrow click.
  *  Answers whether the band is left in a state where that card can be read: false means there was no box to
  *  measure yet, which is the caller's cue to ask again once the band exists. */
-function focusCard(i: number): boolean {
+function focusCard(i: number, center = true): boolean {
   const el = track.value;
+  // Asked for the copies before the geometry: the rail builds them a frame late, and a centring ask clamps
+  // against the width the row has *now*. Measured on 牧神记's 第 105 集 — the last card of the row the entry
+  // named — the ask reached 31392 against the 31866 the middle needs, because the 11 tail copies (3234px of
+  // travel) landed after the glide had already been clamped to the shorter row. The card that the 在看 entry
+  // was about ended up flush against the right edge instead of under the reader's eye.
+  rail?.sync();
   // Counted among the band's own cards: the copies a looping band keeps at either end are children of
   // the track too, and an index into `children` would hand back the wrong episode.
   const card = rail ? rail.cardAt(i) : (el?.children[i] as HTMLElement | undefined);
@@ -81,11 +91,16 @@ function focusCard(i: number): boolean {
   const cs = getComputedStyle(el);
   const viewL = b.left + (parseFloat(cs.paddingLeft) || 0);
   const viewR = b.right - (parseFloat(cs.paddingRight) || 0);
-  if (r.left >= viewL + 2 && r.right <= viewR - 2) return true;
-  const to = el.scrollLeft + (r.left + r.width / 2 - (viewL + viewR) / 2);
+  // The ask is a place, not a range: on the middle of the window, or tucked against its left edge. Testing
+  // "is the card anywhere inside the window" instead left a stale centre in place — measured on 摩登家庭, the
+  // band had been sent to one card's worth past its front by the ask before this one, found 第 1 集 already
+  // readable, and said nothing: the hero read 「继续播放第 1 集 · 看到 18:26」 while the card under the reader's
+  // eye was 第 2 集.
+  const to = center ? el.scrollLeft + (r.left + r.width / 2 - (viewL + viewR) / 2) : el.scrollLeft + (r.left - viewL);
   // Asked of the rail, so a card the copies hold at the far end is reached by the copy the band can show.
   // Not snapped: this ask is a centring position, not a press's whole-card step.
   want = rail ? rail.place(to, false) : Math.max(0, Math.min(el.scrollWidth - el.clientWidth, Math.round(to)));
+  if (Math.abs(want - el.scrollLeft) <= 2) return true;
   gliding = true;
   if (rail) rail.glideTo(want);
   else el.scrollTo({ left: want, behavior: 'smooth' });

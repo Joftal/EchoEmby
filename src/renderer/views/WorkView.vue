@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import type { LibraryItem, TmdbCredits, TmdbMeta, TmdbSeasonRow, TmdbStills } from '../../shared/types';
 import HScroller from '../components/detail/HScroller.vue';
@@ -15,6 +15,7 @@ import { embyCached } from '../lib/embycache';
 import { mergeGenres } from '../lib/genres';
 import { beginPlay, workSeedFor } from '../lib/handoff';
 import { accountName, episodeHead, fmtDate, fmtMinutes, fmtRuntime, seenLabel, seasonTitle, watchedRatio } from '../lib/format';
+import { seasonTarget } from '../lib/resume';
 import { resetPageScroll } from '../lib/scroll';
 import { useAppStore } from '../stores/app';
 import { vReveal } from '../lib/reveal';
@@ -320,6 +321,45 @@ const eps = computed<EpView[]>(() => {
     });
 });
 
+const epiBand = ref<InstanceType<typeof HScroller> | null>(null);
+/** The card the row should open on: this season's own stop, read off the rows the server handed for it. -1
+ *  when the band is TMDB's list rather than files — those rows carry no `userData`, so nothing here knows how
+ *  far the reader got — and -1 for a season never started. Both are read from the front. The rows are already
+ *  in hand, so this costs no request, which is the one thing the detail page could not do.
+ *  `seasonTarget`'s own fallback (its first episode) is not turned into an index: card 0 is where the band
+ *  already opens, and the detail page's second tier cannot be copied here, because over a whole season's rows
+ *  「not yet finished」 is true of every episode nobody watched. */
+const stopIndex = computed(() => {
+  const rows = serverBand.value;
+  if (!rows) return -1;
+  const t = seasonTarget(rows);
+  return t?.resumed ? rows.findIndex(e => e.id === t.item.id) : -1;
+});
+/* One glide per season, keyed instead of unconditional: the cards re-paint again when TMDB's stills arrive a
+   beat after the server's rows, and a watcher that ran on every recompute would pull the reader back onto the
+   stopped episode while they were already looking for the one past it. The rows themselves are the source, not
+   their count: TMDB's list of the same season is painted first and then replaced by the server's files, and
+   where the two hold the same number of episodes a count never changes — measured on 朋友的妹妹, seven stills
+   then seven files, so the band kept its own resting position and 第 4 集 sat 408px right of the middle
+   while its card printed 「看到 0:59」. `epiBand` is a source because this band, unlike the detail page's, is
+   not unmounted for the season switch — the same instance answers from the first season to the last. */
+let focusedOn = '';
+watch([seasonPick, () => serverBand.value, () => eps.value.length, () => epiBand.value], async () => {
+  if (!epiBand.value || !eps.value.length) return;
+  // -1 is a season with no stop in it, and the ask is card 0 just the same: a rail left wherever the previous
+  // season put it is the stale scrollLeft the detail page was fixed for. Measured here before that half was
+  // written — 火影忍者's 第 2 季 is a season TMDB lists and this account files under other numbers, so the band
+  // is TMDB's names with no rows to read a stop from, and after 第 1 季 had sent the rail to 2172px for 第 224
+  // 集 that is where 第 2 季 opened: 第 54 集 under the reader's eye for a season they had never started.
+  const i = Math.max(0, stopIndex.value);
+  const key = `${seasonPick.value}:${i}`;
+  if (focusedOn === key) return;
+  await nextTick();
+  // Only a stop is carried to the middle. Centring card 0 would pull the season's own tail clones in front of
+  // it and leave 第 1 集 off the reader's left.
+  if (epiBand.value.focusCard(i, i > 0)) focusedOn = key;
+});
+
 /** One run per work and per season. A still that answers after the reader has moved to another season is a
  *  write into the wrong band. */
 let run = 0;
@@ -340,6 +380,9 @@ async function loadSeason(): Promise<void> {
     serverEps.value = [];
     stills.value = {};
     seasonCast.value = null;
+    // The spent glide key belongs to the season being blanked, not to the page: keeping it is what strands
+    // the next season's band on the distance the previous one scrolled.
+    focusedOn = '';
   }
   bandAsked.value = false;
   if (!k || !seasonPick.value || Number.isNaN(n)) return;
@@ -586,7 +629,7 @@ function open(to: string, autoplay = false): void {
     <p v-else-if="fallback" class="miss" :title="error">这一页摆的是 {{ serverName }} 上的这条记录，TMDB 那半没有答上。</p>
 
     <div v-if="meta || fallback" class="flow">
-      <HScroller v-if="seasons.length" class="block epi-row">
+      <HScroller v-if="seasons.length" ref="epiBand" class="block epi-row">
         <template #header>
           <div class="ep-head">
             <FilterSelect

@@ -616,8 +616,8 @@ const noResource = computed(() => {
   return isSeries.value || isSeason.value ? seasonAbsent.value : !!item.value;
 });
 const epiBand = ref<InstanceType<typeof HScroller> | null>(null);
-/** The card the episode row should open on: the episode still in progress, when the season on screen holds
- *  it. -1 for a movie, for a finished show and for a season the viewer never started. */
+/** The card the episode row should open on. -1 for a movie, for a finished show and for a season the viewer
+ *  never started; a season the stop is not in falls back to that season's own 继续 target. */
 const resumeIndex = computed(() => {
   const id = resume.value?.item.id;
   return id ? episodes.value.findIndex(e => e.id === id) : -1;
@@ -640,7 +640,9 @@ watch([episodeN, resumeIndex, () => epiBand.value], async () => {
   const key = `${episodeN.value}:${i}`;
   if (focusedOn === key) return;
   await nextTick();
-  if (epiBand.value?.focusCard(i)) focusedOn = key;
+  // Only a stop is carried to the middle. Card 0 is where the band already opens, and centring it would
+  // pull the season's own tail clones in front of it and leave 第 1 集 off the reader's left.
+  if (epiBand.value?.focusCard(i, i > 0)) focusedOn = key;
 });
 /** The row's headline is the episode's own number and then whatever it is actually called. The 「第 1 季」
  *  half is gone: the picker above the row already names the season, so restating it on every card spent
