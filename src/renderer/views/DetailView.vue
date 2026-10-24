@@ -16,13 +16,13 @@ import { tmdbKind as kindOf, trustSeason, useScores } from '../lib/scores';
 import { usePlayerStore } from '../stores/player';
 import { useAppStore } from '../stores/app';
 import { accountName, episodeHead, fmtDate, fmtMinutes, fmtRuntime, seenLabel, seasonTitle, watchedRatio } from '../lib/format';
-import { PLAYABLE, PLAYABLE_PAGE, resumeTarget, seasonTarget } from '../lib/resume';
+import { PLAYABLE, PLAYABLE_PAGE, isStoppedRow, isUnfinishedRow, resumeTarget, seasonTarget } from '../lib/resume';
 import { mergeGenres } from '../lib/genres';
 import { resetPageScroll } from '../lib/scroll';
 import { createLoopRail, type LoopRail } from '../lib/looprail';
 import { embyCached } from '../lib/embycache';
 import { libraryWorks, useRelated, type WorkSeed } from '../lib/related';
-import { seedFor, seedItemFor, seedTypeFor, takeAutoplay } from '../lib/handoff';
+import { episodeClicked, seedFor, seedItemFor, seedTypeFor, takeAutoplay } from '../lib/handoff';
 import { vReveal } from '../lib/reveal';
 
 const props = defineProps<{ id: string }>();
@@ -537,15 +537,110 @@ const resumeRow = computed(() => app.rows.find(r => r.key === 'resume')?.items |
 /** The rows of the season on screen, and only while they really are that season's: the band keeps its
  *  height across a switch, so the rows being left sit here for a beat under the new season's number. */
 const seasonRows = computed<LibraryItem[]>(() => (episodeN.value === seasonN.value ? episodes.value : []));
-/** The row this hero is about, as the shared button reads it. A show's button answers for the season the
- *  page is open on rather than for the work: 第 2 季 says what 第 2 季 holds, and a season nobody has
- *  started names its own first episode. The lobby keeps asking the work-level question of where the viewer
- *  last stopped, so the two now disagree on purpose — measured on 摩登家庭, the work-level button named
- *  「第 1 季 · 第 1 集 · 看到 18:26」 while the page was open on a 特别篇 this server holds nothing for, so
- *  the plate promised a file and the badge under it denied it. */
-const resume = computed(() =>
-  isSeries.value || isSeason.value ? seasonTarget(seasonRows.value) : resumeTarget(item.value, [], resumeRow.value, false),
-);
+
+/** The row this work is on, asked from the server when the lobby's 在看 window holds no row for it. That
+ *  window is 22 shows (the lobby asks the store's row with no limit, while the 在看 page asks 200), so an entry
+ *  ranked 23rd or lower is invisible here, and 收藏 or 搜索 can open a work older than all of them; without this
+ *  the page answered with the furthest-started episode of the open season instead. Measured on the two works the
+ *  window misses: their 200-row entries are 鱿鱼游戏 第 3 季 第 5 集 and 冰菓 第 0 季 第 1 集, while the page opened
+ *  each on 第 1 集 of a season and its hero said so.
+ *  The ask is `IsResumable: true`, not `Filters: IsResumable`: on this gateway the filter form answers with
+ *  nothing at all for these works, because it keeps only rows that still carry an offset, and those are the rows
+ *  the gateway has reset (measured over 4 works — the filter form returns 0 rows for 鱿鱼游戏 / 冰菓 / 金装律师 /
+ *  牧神记 where the parameter form returns 12 in ~0.5s, its first row 3-5 / 0-1 / 1-8 / 1-104). The parameter form asks
+ *  which files *can* be resumed, so its first row is the last episode opened, offset or not. */
+const askedRow = ref<{ forId: string; item: LibraryItem } | null>(null);
+let askedFor = '';
+async function askWorkRow(seriesId: string): Promise<void> {
+  if (!seriesId || askedFor === seriesId) return;
+  askedFor = seriesId;
+  const r = await window.echoemby.emby.items({
+    ParentId: seriesId,
+    Recursive: true,
+    IncludeItemTypes: 'Episode',
+    SortBy: 'DatePlayed',
+    SortOrder: 'Descending',
+    IsResumable: true,
+    Limit: 12,
+  });
+  // The page may have moved to another work while this was out: that answer is about a title nobody is
+  // reading, and storing it would put one work's stop over another's season list.
+  if (askedFor !== seriesId) return;
+  // A request that did not answer is not an answer, so the guard that keeps this work from asking twice
+  // is handed back — a route blip would otherwise leave the page holding nothing, and the hero would fall
+  // back to the season's furthest-started episode while still claiming it is where the viewer stopped.
+  if (!r.ok) {
+    askedFor = '';
+    return;
+  }
+  // The first row that is really a stop, and failing that the first row the viewer has not finished. The list
+  // can also name episodes watched to the end — this fork marks them Played with the position reset — and
+  // those are not where the viewer continues; the same rule the 在看 shelf and the season's own button read.
+  // The second tier is what the reset works need: 鱿鱼游戏 answers with 12 rows at pos 0, and the first one it
+  // has not finished is 3-5, the episode the 在看 page lists it under. A head row watched to its end is dropped
+  // rather than adopted, so a season that is finished still opens at its front.
+  const rows = r.data || [];
+  const stop = rows.find(isStoppedRow) || rows.find(isUnfinishedRow) || null;
+  askedRow.value = stop ? { forId: seriesId, item: stop } : null;
+}
+
+/** The 在看 row this work's entry is about. `resumeTarget` answers with it whether or not the server kept
+ *  an offset, which is the point: the shelf listed this episode as the thing to come back to. */
+const shelfRowOf = (it: LibraryItem | null): LibraryItem | null =>
+  (it && resumeTarget(it, resumeRow.value)?.item) || null;
+const shelfRow = computed(() => shelfRowOf(work.value));
+
+/** The episode the clicked card was drawn from, when the card was one episode and the page it opened is its
+ *  work: a 搜索 list hands over 爱情公寓 第 3 集 while the destination is the same Series page the 在看 rail opens,
+ *  and nothing on that page says which of its 20 cards the reader aimed at. Measured on a search row: the
+ *  page opened on the newest stop instead (第 16 集), so the band slid four cards past the one under the pointer.
+ *  A row watched to its end does not qualify: `stoppedAtMs` multiplies that row's 100% into its whole runtime,
+ *  and the button would read 「继续播放 · 看到 41:00」 over an episode that has nothing left in it — the same line the work-scoped
+ *  ask reads off its head row. */
+const clickedRow = computed(() => {
+  const it = episodeClicked(props.id);
+  return it && isUnfinishedRow(it) ? it : null;
+});
+
+/** The row this page is about, in the order the reader meant it: the episode a clicked card was drawn from,
+ *  else the one the 在看 shelf holds for this work, and only when the shelf holds none — its window is 22 shows
+ *  — does the work-scoped ask answer for it.
+ *  The shelf row wins whether or not it carries an offset: it is the row the viewer pressed, and it is folded by
+ *  the same rule the ask imitates (a stop-row first per show, off [...resumePoints, ...datePlayed]). Measured over
+ *  4 works, the ask cannot be trusted to outrank it — its list is not in recency order once the gateway has
+ *  stopped returning dates: 善意的竞争 answers 1-4, 1-3 (both watched to the end), 1-1, then 1-2 at 60s, with the
+ *  shelf's own 1-5 fifth and the furthest stop 1-7 (14:20) seventh, so the first row with a number named 第 2 集
+ *  over the card that had just been pressed; 牧神记 answers 1-104 (watched) then 1-1 while the shelf names 1-105,
+ *  the season's last card.
+ *  Reading past the shelf for an offset used to be right: 火影忍者's shelf row was 第 222 集 at pos 0 while 第 224
+ *  集 held 498s. That is closed at the source now (the fold prefers a stop-row), and the shelf's row for
+ *  火影忍者 is 1-224 with its 8:18 — so an offset-less shelf row is no longer evidence of a stale row. */
+const workRow = computed<LibraryItem | null>(() => {
+  const aim = clickedRow.value;
+  if (aim) return aim;
+  const live = shelfRow.value;
+  if (live) return live;
+  const asked = askedRow.value;
+  return asked && asked.forId === work.value?.id ? asked.item : null;
+});
+/** That row, when the season on screen holds it. Read off the settled season rows rather than every
+ *  episode in hand: a switch keeps the outgoing rows for a beat under the new season's number. */
+const rowHere = computed(() => {
+  const it = workRow.value;
+  return it && seasonRows.value.some(e => e.id === it.id) ? it : null;
+});
+/** The row this hero is about, as the shared button reads it. It names the row the entry is about whenever
+ *  the season on screen holds it — the same episode 在看 names and the band opens on. Only a season the
+ *  viewer never took that stop in falls back to the season's own answer (furthest started, else first):
+ *  the button answers for the season the page is open on rather than for the work, so 第 2 季 says what
+ *  第 2 季 holds. Measured on 摩登家庭, a work-level button named 「第 1 季 · 第 1 集 · 看到 18:26」 while
+ *  the page was open on a 特别篇 this server holds nothing for, so the plate promised a file and the
+ *  badge under it denied it. */
+const resume = computed(() => {
+  if (!isSeries.value && !isSeason.value) return resumeTarget(item.value, [], resumeRow.value, false);
+  const it = rowHere.value;
+  return it ? resumeTarget(it, [it], [it], true) : seasonTarget(seasonRows.value);
+});
 /** The one item the play button is about: whatever it says, it plays. A type that names no media source is
  *  not handed to the player at all — measured, 合集/播放列表/资源库 pages answering 「播放」 died on
  *  「服务器出错了（HTTP 500）」 because PlaybackInfo has no file to negotiate. */
@@ -1120,16 +1215,23 @@ async function loadChildren(it: LibraryItem): Promise<void> {
   if (loaded === it.id) return;
   loaded = it.id;
   if (it.type === 'Series') {
-    const s = await embyCached('seasons', it.id, () => window.echoemby.emby.seasons(it.id));
+    // The 在看 row is the only source that says which episode was played most recently; a window restored
+    // on a shelf other than the lobby holds no rows yet, and the season below opens on that stop.
+    const [s] = await Promise.all([
+      embyCached('seasons', it.id, () => window.echoemby.emby.seasons(it.id)),
+      app.ensureResumeRow(),
+    ]);
     if (props.id !== it.id) return;
     serverSeasons.value = (s.ok ? s.data || [] : []).map(season => ({ seriesId: it.id, season }));
     void askSiblings(it);
     /* Open on the season the viewer stopped in, not on whichever row the server listed first: 爱情公寓 was left
        at 第 2 季 第 3 集 while the page showed 第 1 季's cards, so the episode they meant to press sat behind a
-       tab. Read off the 在看 rows the lobby already pulled — measured: 200/200 of the resumable episode rows
-       that query answers carry their ParentId, so this costs no request. A show nobody has started falls back
-       to the first season with episodes, exactly as before. */
-    const stop = resumeTarget(it, resumeRow.value)?.item;
+       tab. The 在看 row is the source whenever the lobby's 22-row window holds this show; only when it
+       holds nothing is the server asked for the row this work is on, which costs 0.3-0.5s and no more than one
+       ask per page. A show nobody has started falls back to the first season with episodes, exactly as before. */
+    if (!shelfRowOf(it) && !clickedRow.value) await askWorkRow(it.id);
+    if (props.id !== it.id) return;
+    const stop = workRow.value;
     const home =
       (stop && serverSeasons.value.find(x => x.season.id === stop.seasonId)) ||
       (stop && stop.parentIndexNumber != null && serverSeasons.value.find(x => x.season.indexNumber === stop.parentIndexNumber)) ||
@@ -1139,11 +1241,16 @@ async function loadChildren(it: LibraryItem): Promise<void> {
   } else if (it.type === 'Season') {
     /* A page opened on one season is still a page about a series: its scores, its logo and its season
        tabs all belong one level up, and the switcher cannot be drawn from a list nobody asked for. */
-    const series = await loadSeries(it.parentId || '');
+    const [series] = await Promise.all([loadSeries(it.parentId || ''), app.ensureResumeRow()]);
     if (props.id !== it.id) return;
     if (series) {
       askWork(series);
-      const s = await embyCached('seasons', series.id, () => window.echoemby.emby.seasons(series.id));
+      // The row this work is on rides beside the season list: the band and the hero both read it, and asking
+      // after the rows landed would re-glide the band from the season's own target onto that row.
+      const [s] = await Promise.all([
+        embyCached('seasons', series.id, () => window.echoemby.emby.seasons(series.id)),
+        shelfRowOf(series) || clickedRow.value ? Promise.resolve() : askWorkRow(series.id),
+      ]);
       if (props.id === it.id) {
         serverSeasons.value = (s.ok ? s.data || [] : []).map(season => ({ seriesId: series.id, season }));
         void askSiblings(series);
