@@ -551,6 +551,23 @@ export class EmbyClient {
    *  Played, so the row was filling with episodes that have nothing to resume and no 看到 time to show. */
   private stalled = (x: LibraryItem): boolean => !!x.userData?.played && !x.userData.positionMs;
 
+  /** Whether a row still parks the viewer *inside* it. The two surfaces that name a progress on the lobby
+   *  (the hero plate and the 在看 rail) print what this row says, so a row that parks them nowhere is not an
+   *  answer: measured on nyamedia 2026-10-24, 8 of the shelf's 22 rows carry `positionMs: 0`, and the
+   *  Resume endpoint put one of those — 火影忍者 第 222 集, seen to 0 — in front of the same show's real
+   *  stop, 第 224 集 at 8:18, which the DatePlayed list carries at row 6 of the very same window. A
+   *  percentage counts because this fork answers some rows that way instead of with an offset; 99 and up
+   *  is finished, and under a second there is nothing to print (see the 「看到 0:00」 case in the
+   *  renderer's isStoppedRow). */
+  private parked = (x: LibraryItem): boolean => {
+    const u = x.userData;
+    if (!u) return false;
+    if (u.played && !u.positionMs) return false;
+    const pct = u.playedPercentage || 0;
+    if (pct >= 99) return false;
+    return (u.positionMs || 0) >= 1000 || pct > 0;
+  };
+
   /** The 在看 row on its own. Closing the player changes which titles are in it and in what order, and
    *  that is the only part of the lobby a stopped film can move — a 最新更新 row is a library's ingest order
    *  and does not care what was watched. Asked alone, it is two round trips in parallel instead of the
@@ -564,16 +581,28 @@ export class EmbyClient {
       this.resumePoints(limit).catch(() => []),
       this.items({ Recursive: true, MediaTypes: 'Video', SortBy: 'DatePlayed', SortOrder: 'Descending', Limit: limit, IsResumable: true }).catch(() => []),
     ]);
-    const seen = new Set<string>();
+    const seat = new Map<string, number>();
     // One card is one show, so an episode folds onto its series by name — the same rule the 在看 page's
     // own fold uses. Keying on `parentId` instead split a show whose two stopped episodes sit in
     // different seasons into two cards on the rail, which has no fold of its own.
-    const items = [...points, ...recent].filter(x => !this.stalled(x)).filter(x => {
+    // A show keeps the seat it first took, so the shelf order stays the endpoint's own; only the episode
+    // that fills the seat can change, and only upward: a row that parks the viewer somewhere beats one
+    // that parks them nowhere. Measured the same day, this moves 火影忍者 to 第 224 集 (8:18) inside the
+    // existing window and leaves the other seven pos-0 rows standing, because the pool holds no stopped
+    // row for them at any depth — asking the DatePlayed list at 18, 60 and 180 answers 7, 14 and 20
+    // stopped rows of 18/60/180, and none of the seven shows' stops is among them. Those seven keep their
+    // seat on purpose (a title the viewer was in is still something they reach for); the detail page
+    // answers them by asking that one work directly.
+    const items: LibraryItem[] = [];
+    for (const x of [...points, ...recent]) {
+      if (this.stalled(x)) continue;
       const key = x.type === 'Episode' ? x.seriesName || x.parentId || x.id : x.id;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+      const at = seat.get(key);
+      if (at === undefined) {
+        seat.set(key, items.length);
+        items.push(x);
+      } else if (!this.parked(items[at]) && this.parked(x)) items[at] = x;
+    }
     return items.length ? { key: 'resume', title: '继续观看', items } : null;
   }
 

@@ -26,6 +26,12 @@ let seedType = '';
 /** Which page that type belongs to, kept apart from it because a deep link that follows a click must not
  *  borrow the clicked card's shape. */
 let seedTypeId = '';
+/** The episode a card named when the card was one episode and the page it opens is its work. A 搜索 row and
+ *  a 在看 row both travel this way: the destination is the same Series page either one opens, and the page's
+ *  own season list cannot tell which of its episodes the reader pointed at. Written on every click — an
+ *  episode card sets it, anything else clears it — so a deep link or a later card cannot borrow one. */
+let episodePageId = '';
+let episodeRow: LibraryItem | null = null;
 
 /** Remember the rendered art under the pointer so the page it opens can paint from it instead of waiting
  *  out a round trip. Reads the image, not the item: a card whose art never loaded has nothing to hand over. */
@@ -34,6 +40,9 @@ export function begin(img: HTMLImageElement | null | undefined, id: string, row?
   seedItem = row && row.id === id ? row : null;
   seedType = row ? (row.id === id ? row.type : row.type === 'Episode' ? 'Season' : '') : '';
   seedTypeId = row ? id : '';
+  const ep = row && row.type === 'Episode' && row.id !== id ? row : null;
+  episodeRow = ep;
+  episodePageId = ep ? id : '';
 
   const url = img ? img.currentSrc || img.src : '';
   const r = img?.getBoundingClientRect();
@@ -58,6 +67,13 @@ export function seedItemFor(id: string): LibraryItem | null {
  *  for the server to say what it is looking at. */
 export function seedTypeFor(id: string): string {
   return seedTypeId === id ? seedType : '';
+}
+
+/** The episode the card that opened this page was drawn from, or null when the page was not opened by an
+ *  episode card. The row is not the page's item — the page is the work above it — but it is the one thing
+ *  on the page the reader aimed at. */
+export function episodeClicked(id: string): LibraryItem | null {
+  return episodePageId === id && episodePageId ? episodeRow : null;
 }
 
 /** A recommendation the library does not hold has no row to hand over, so the card hands over what it was

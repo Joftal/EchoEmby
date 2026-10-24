@@ -55,10 +55,10 @@ const inSet = (list: LibraryItem[], it: LibraryItem): boolean => list.some(x => 
 
 /** The row a hero's button should play, or null when nothing on this page says which file to open.
  *  `candidates` are the rows the page already holds for this title — the lobby's 继续观看 row, since the
- *  lobby asks the work-level question of where the viewer last stopped. A detail page open on one season
- *  asks a different question and uses `seasonTarget` instead, because a Series or Season card carries no
- *  position of its own (measured: its UserData answers UnplayedItemCount and 8 rows, nothing about where
- *  the viewer stopped).
+ *  lobby asks the work-level question of where the viewer last stopped. A Series or Season card carries
+ *  no position of its own (measured: its UserData answers UnplayedItemCount and 8 rows, nothing about
+ *  where the viewer stopped), so those pages hand the stopped episode itself in `candidates` — and
+ *  `seasonTarget` is only the fallback for a season that does not hold that stop.
  *  `flagged` is the half of those the server itself returned as in progress, and it is what lets a row
  *  count without an offset. A season's episode list must not be read that way: every one of its rows
  *  matches the same query, so 第 1 集 — never opened — would land under a button labelled 播放.
@@ -70,7 +70,7 @@ export function resumeTarget(
   seasonNamed = false,
 ): ResumeTarget | null {
   if (!item) return null;
-  if (PLAYABLE.includes(item.type)) return stopped(item) > 0 || inSet(flagged, item) ? target(item) : null;
+  if (PLAYABLE.includes(item.type)) return stopped(item) > 0 || inSet(flagged, item) ? target(item, seasonNamed) : null;
   // Two ways an episode hangs off the card above it by id, and a third by name that only speaks when the
   // row carries neither id: measured here, 500 Series rows hold 20 duplicated names, and 「凡人修仙传」 is
   // two separate folders (219367, 217153) — so a page keyed by name borrowed the other folder's stopped
@@ -92,6 +92,25 @@ export function resumeTarget(
  *  that rounds its percentage up from 99.6 is still answering "watched". */
 const WATCHED = 99;
 
+/** Whether a row says the viewer is still *inside* it, which is the one question every surface that names a
+ *  progress answers: the 在看 shelf, a season's button and the page's work-scoped ask. Two shapes are not a
+ *  stop — a row the fork marks Played with its offset reset (the shelf drops these as `stalled`, main
+ *  client.ts:552), and the watched-at-100 row above. Measured over the whole resumable list on both hosts
+ *  (24 rows bangumi, 6 OkEmby) neither shape is in it today; the rule is here so the three surfaces cannot
+ *  each invent their own answer when one of them appears. */
+export const isStoppedRow = (it: LibraryItem): boolean => {
+  if (it.userData?.played && !it.userData.positionMs) return false;
+  if ((it.userData?.playedPercentage || 0) >= WATCHED) return false;
+  return stopped(it) > 0;
+};
+
+/** A row the viewer has not reached the end of, whether or not the server kept a number for how far they
+ *  got. `isStoppedRow` cannot answer that question for a row whose offset the gateway has reset — measured
+ *  on 金装律师, all 12 of its resumable rows answer positionMs 0 — and the episode the 在看 entry named is
+ *  still the one to open. Reads the same `WATCHED` line so a row billed as watched at 100% cannot be the one. */
+export const isUnfinishedRow = (it: LibraryItem): boolean =>
+  !it.userData?.played && (it.userData?.playedPercentage || 0) < WATCHED;
+
 /** The furthest-along episode in a season that was started and not finished, or null when the season holds
  *  no such row. Recency is deliberately not the rule: `LastPlayed` is not returned by these servers, and the
  *  question a season's button answers is 「这一季看到哪了」, which is the largest number rather than the
@@ -99,8 +118,7 @@ const WATCHED = 99;
 function seasonStopped(rows: LibraryItem[]): LibraryItem | null {
   let best: LibraryItem | null = null;
   for (const e of rows) {
-    if ((e.userData?.playedPercentage || 0) >= WATCHED) continue;
-    if (stopped(e) <= 0) continue;
+    if (!isStoppedRow(e)) continue;
     if (!best || (e.indexNumber ?? -1) > (best.indexNumber ?? -1)) best = e;
   }
   return best;

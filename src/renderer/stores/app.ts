@@ -52,6 +52,9 @@ export const useAppStore = defineStore('app', () => {
     viewsPromise = null;
     genres.value = [];
     genresPromise = null;
+    // A server with no stops is only a promise for *this* server, so the switch hands the ask back.
+    resumeAsked = false;
+    resumeAwaited = null;
   }
 
   async function switchTo(accountId: string): Promise<boolean> {
@@ -339,16 +342,37 @@ export const useAppStore = defineStore('app', () => {
   /** The row a stopped film can move, and the only one a write-back cannot produce: a title watched past
    *  the server's cutoff leaves 继续观看, a new one enters at the top, and both orders are the server's.
    *  Asked alone it is two round trips; the lobby's other rows are library ingest order. */
-  async function refreshResume(): Promise<void> {
+  async function refreshResume(): Promise<boolean> {
     const r = await window.echoemby.emby.resumeRow();
-    if (!r.ok) return;
+    if (!r.ok) return false;
     const at = rows.value.findIndex(x => x.key === 'resume');
     if (!r.data) {
       if (at >= 0) rows.value.splice(at, 1);
-      return;
+      return true;
     }
     if (at >= 0) rows.value.splice(at, 1, r.data);
     else rows.value.unshift(r.data);
+    return true;
+  }
+
+  /** The 在看 row on its own, for a page that reads a stop before the lobby has ever been opened: the
+   *  detail page opens on the episode 在看 names, and a window restored on another shelf holds no rows
+   *  yet. At most one ask in flight, and a server with no stops is not asked again this session;
+   *  `refreshResume` stays free to re-ask after every stop. */
+  let resumeAsked = false;
+  let resumeAwaited: Promise<void> | null = null;
+  function ensureResumeRow(): Promise<void> {
+    if (resumeAsked || rows.value.some(r => r.key === 'resume')) return Promise.resolve();
+    if (!resumeAwaited) {
+      resumeAwaited = refreshResume()
+        .then(ok => {
+          if (ok) resumeAsked = true;
+        })
+        .finally(() => {
+          resumeAwaited = null;
+        });
+    }
+    return resumeAwaited;
   }
 
   /** The last stop the server accepted. Write-back covers every copy this app holds, but one browse
@@ -389,5 +413,5 @@ export const useAppStore = defineStore('app', () => {
     offWatched = window.echoemby.player.onWatched(w => void rememberPlayback(w));
   }
 
-  return { config, account, rows, views, genres, loading, error, ready, counts, lastStop, init, login, switchTo, remove, update, saveSettings, loadCounts, loadHome, loadViews, loadGenres, imageUrl, backdropUrl, logoCandidates, workLogos, itemArt, episodeTitle, episodeOverview, setFavorite, watchPlayback };
+  return { config, account, rows, views, genres, loading, error, ready, counts, lastStop, init, login, switchTo, remove, update, saveSettings, loadCounts, loadHome, loadViews, loadGenres, ensureResumeRow, imageUrl, backdropUrl, logoCandidates, workLogos, itemArt, episodeTitle, episodeOverview, setFavorite, watchPlayback };
 });
