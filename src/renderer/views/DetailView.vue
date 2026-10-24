@@ -519,6 +519,13 @@ watch(
 
 const heroBackdrop = ref('');
 const heroPoster = ref('');
+/** The band behind the copy: TMDB's best-voted shot, with the server's own Backdrop as the stand-in for a
+ *  page TMDB never answered. This page asked the server alone, so the same work wore two different films
+ *  across the same band depending on which page the reader was on — measured over the 11 works on 收藏, all
+ *  11 disagreed (玩具总动员5: a toy box here, a green alien on the work page). The work page has always read
+ *  `backdrops[0]`, so this is the same rule, not a new picture, and the two bands now print the same file on
+ *  11/11. No new request either: these are the paths the 剧照 strip further down already fetches. */
+const heroArt = computed(() => (backdrops.value.length ? backdropUrl(backdrops.value[0]) : heroBackdrop.value));
 /** What the plate paints, in the order the season decides it: TMDB's own poster for that season, then the
  *  server's season art, then TMDB's poster for the work, then the server's, for a page neither side dresses
  *  in its own picture. The card art this page was opened from sits behind all four: it paints the first
@@ -1447,7 +1454,7 @@ const LEVEL_WORD = ['无', '极少', '轻微', '中等', '较多', '严重'];
       <section v-else-if="item" class="hero">
         <div class="stage" :style="{ transform: `translate3d(0, ${Math.round(scroll * 0.28)}px, 0)` }">
           <Transition name="heroart">
-            <img v-reveal v-if="heroBackdrop" :key="heroBackdrop" :src="heroBackdrop" alt="" decoding="async" />
+            <img v-reveal v-if="heroArt" :key="heroArt" :src="heroArt" alt="" decoding="async" />
           </Transition>
         </div>
         <div class="wash"></div>
@@ -2324,7 +2331,12 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
   opacity: 0;
   transform: scale(0.97);
 }
-.heroart-leave-to {
+/* `img` and the element tag are load-bearing, not decoration: the band's frame also carries v-reveal, whose
+   global `.rv.on` rule (base.css) pins opacity to 1 at the same specificity a bare scoped class reaches, and
+   the loser is the frame that is supposed to leave. Measured 2026-10-25 with the TMDB-first band, which makes
+   this hand-off fire on every first load rather than only on a sibling switch: the outgoing server photo held
+   at opacity 1 and its node was never unmounted (still two frames at +14s). */
+.stage img.heroart-leave-to {
   opacity: 0;
   transform: scale(1.03);
 }
