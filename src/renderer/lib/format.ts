@@ -51,18 +51,19 @@ export const episodePosition = (season?: number | null, episode?: number | null)
 };
 
 /** Emby names a track's language with an ISO-639-2 code (`jpn`, `chi`, `und`), which is not a thing a viewer
- *  reads. The player's track menu has spelled these out from the start; the 播放资源 block printed the raw
- *  code beside it, so one track wore two names on two surfaces. The list below is the set these two gateways
- *  actually answer with (measured over 60 files: kor·chi·jpn·und·eng·spa·fre·ger·ita·pol·por·rus·tha·ind·
- *  may·fil·ara·bul·cze·hun·swe·dut·fin·rum·gre·hin·tur·nob·dan), and a code that is not here prints as
- *  itself rather than as a guess. */
+ *  reads. This is the one table that spells those codes out: the player's track menu, the 技术信息 card and
+ *  the 资源库 language filter all read through `langName`, so a viewer who ticks 「日语」 to find a title does
+ *  not then read 「日文」 inside it. The keys below are the set these two gateways actually answer with
+ *  (measured over 60 files: kor·chi·jpn·und·eng·spa·fre·ger·ita·pol·por·rus·tha·ind·may·fil·ara·bul·cze·
+ *  hun·swe·dut·fin·rum·gre·hin·tur·nob·dan), and a code that is not here prints as itself rather than as a
+ *  guess. */
 const LANGS: Record<string, string> = {
   zho: '中文', chi: '中文', chs: '中文（简）', zht: '中文（繁）', cht: '中文（繁）', zh: '中文', yue: '粤语',
-  eng: '英文', en: '英文', jpn: '日文', kor: '韩文', fre: '法文', fra: '法文', ger: '德文', deu: '德文',
-  spa: '西文', ita: '意文', rus: '俄文', por: '葡文', tha: '泰文', vie: '越南文', und: '无语言',
-  ind: '印尼文', may: '马来文', fil: '菲律宾文', ara: '阿拉伯文', bul: '保加利亚文', cze: '捷克文',
-  hun: '匈牙利文', swe: '瑞典文', dut: '荷兰文', fin: '芬兰文', rum: '罗马尼亚文', gre: '希腊文',
-  hin: '印地文', tur: '土耳其文', nob: '挪威文', dan: '丹麦文', pol: '波兰文',
+  eng: '英语', en: '英语', jpn: '日语', kor: '韩语', fre: '法语', fra: '法语', ger: '德语', deu: '德语',
+  spa: '西班牙语', ita: '意大利语', rus: '俄语', por: '葡萄牙语', tha: '泰语', vie: '越南语', und: '无语言',
+  ind: '印尼语', may: '马来语', fil: '菲律宾语', ara: '阿拉伯语', bul: '保加利亚语', cze: '捷克语',
+  hun: '匈牙利语', swe: '瑞典语', dut: '荷兰语', fin: '芬兰语', rum: '罗马尼亚语', gre: '希腊语',
+  hin: '印地语', tur: '土耳其语', nob: '挪威语', dan: '丹麦语', pol: '波兰语',
 };
 
 export const langName = (code?: string): string => {

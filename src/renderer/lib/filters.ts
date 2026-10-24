@@ -1,4 +1,5 @@
 import type { LibraryItem, StudioRef } from '../../shared/types';
+import { langName } from './format';
 import { genreLabel, genreQuery } from './genres';
 
 /** Which sort is active. `relevance` means "leave the server's own order alone", which is the only
@@ -30,22 +31,12 @@ export const TYPE_OPTIONS: Option[] = [
   { value: 'Series', label: '剧集' },
 ];
 
-/** Emby stores audio languages as three-letter codes; the server accepts a comma list of them. */
-export const LANG_OPTIONS: Option[] = [
-  { value: 'chi', label: '中文' },
-  { value: 'eng', label: '英语' },
-  { value: 'jpn', label: '日语' },
-  { value: 'kor', label: '韩语' },
-  { value: 'fra', label: '法语' },
-  { value: 'ger', label: '德语' },
-  { value: 'spa', label: '西班牙语' },
-  { value: 'ita', label: '意大利语' },
-  { value: 'rus', label: '俄语' },
-  { value: 'por', label: '葡萄牙语' },
-  { value: 'tha', label: '泰语' },
-  { value: 'vie', label: '越南语' },
-  { value: 'hin', label: '印地语' },
-];
+/** Emby stores audio languages as three-letter codes; the server accepts a comma list of them. The codes are
+ *  what goes into the query, the words are `langName`'s — the same table the 技术信息 card and the player's
+ *  track menu read, so the language a viewer ticks here is spelled the same way inside the title they open. */
+export const LANG_OPTIONS: Option[] = ['chi', 'eng', 'jpn', 'kor', 'fra', 'ger', 'spa', 'ita', 'rus', 'por', 'tha', 'vie', 'hin'].map(
+  value => ({ value, label: langName(value) }),
+);
 
 export interface SortOption extends Option {
   value: SortKey;
