@@ -60,6 +60,14 @@ interface Current {
   danmaku: DanmakuQuery | null;
   /** Completing the same item twice must not POST 已播放 twice. */
   reported: boolean;
+  /** The length this item has according to the server, in ms. mpv's own number is preferred while it is on
+   *  screen, but the stop write used to have only that one source: a file whose duration never arrived left
+   *  no stop at all, even though 开场 two functions away had already used the server's length for the same item. */
+  runtimeMs: number;
+  /** The offset the server held when this session opened — the number the start report carried with it. A
+   *  position under a second cannot be allowed to overwrite it, because that is precisely how a write that
+   *  never got going erases a stop that was already stored. */
+  startMs: number;
   /** The stop position this item has already been given to the server, or -1 while it has not been left
    *  yet. Every exit path funnels through one write, and this is what keeps two of them — 播完 then the
    *  close that follows it — from posting the same item twice. */
@@ -159,7 +167,7 @@ export class PlayerController {
     // the user walked away from gets its stop written before anything new is asked for.
     const leaving = this.current;
     if (leaving && leaving.itemId !== itemId) {
-      const w = await this.flushStop();
+      const w = await this.flushStop(undefined, 'switch');
       if (w) this.out.watched(w);
     }
     const c = this.client();
@@ -196,6 +204,8 @@ export class PlayerController {
       danmaku: this.danmakuOf(item),
       reported: resume.played,
       flushedMs: -1,
+      runtimeMs: Math.round((item.runTimeTicks || 0) / 1e4),
+      startMs: resume.startMs,
     };
     this.out.session(this.getSession());
     this.raise();
@@ -269,6 +279,15 @@ export class PlayerController {
   private onGone(message?: string): void {
     this.kernel = null;
     if (this.tearing) return;
+    // The process died on its own: no close(), no quit, nothing after this but an error line on the overlay.
+    // mpv's clock went with it, but the last position it reported is still in this.state and is the only
+    // number this viewing session will ever have. Left unwritten, the gateway keeps holding whatever 开场
+    // carried — which for a film started fresh is 0.
+    void this.flushStop(undefined, 'gone')
+      .then(w => {
+        if (w) this.out.watched(w);
+      })
+      .catch(() => undefined);
     this.state = { ...this.state, status: 'error', error: message || '播放器退出了' };
     this.out.state(this.state);
   }
@@ -300,9 +319,13 @@ export class PlayerController {
     const c = this.current;
     if (!c || c.reported) return;
     c.reported = true;
-    const w = await this.flushStop(this.state.durationMs);
+    const w = await this.flushStop(this.state.durationMs, 'ended');
+    // Reaching the end is what earns the 已播放 mark, and it does not depend on the position write having
+    // landed. These were chained: a stopped report the server refused used to leave a finished film
+    // unmarked as well as unfindable.
+    const played = await this.client().markPlayed(c.itemId);
     if (w) {
-      w.played = await this.client().markPlayed(c.itemId);
+      w.played = played;
       this.out.watched(w);
     }
     const next = config.get().settings.player.autoNext ? c.next : null;
@@ -327,18 +350,23 @@ export class PlayerController {
     };
   }
 
-  /** One event opening a session. Nothing is written while the film runs: 进度 used to post every 15 s, and
-   *  every one of those numbers was already stale by the time it landed. `atMs`/`durationMs` are the offset
-   *  the server already holds rather than the live clock, because mpv has not reported one yet — and the
-   *  number a start carries is the number the gateway writes back into the item about a minute later
-   *  (368040 became 59000 there while nothing was being sent, 187396 became 0 after a start at 0), so it is
-   *  the one number this app must not guess at. */
+  /** The one 开场 a viewing gets, sent from 播开那一步 — a stream rebuilt for a quality or a renderer change
+   *  is still the same viewing and stays quiet, because FirstPlay is what stamps PlayCount. Nothing is
+   *  written while the film runs: 进度 used to post every 15 s, and every one of those numbers was already
+   *  stale by the time it landed. `atMs`/`durationMs` are the offset the server already holds rather than the
+   *  live clock, because mpv has not reported one yet — and the number a start carries is the number the
+   *  gateway writes back into the item about a minute later (368040 became 59000 there while nothing was
+   *  being sent, 187396 became 0 after a start at 0), so it is the one number this app must not guess at. */
   private async announceStart(atMs?: number, durationMs?: number): Promise<void> {
     const c = this.current;
     const k = this.kernel;
     if (!c) return;
     const at = atMs ?? (k?.running ? await k.positionMs().catch(() => this.state.positionMs) : this.state.positionMs);
     if (this.current !== c) return;
+    // The number 开场 carries is the number the gateway writes back into the item a minute later, so the
+    // record of it is worth one line: 2026-10-24 a 小鬼当家 open printed nothing at all, and only the
+    // server's own PlayCount 1→2 proved the start had gone out.
+    console.log('[player] 开场', c.itemId, `pos=${Math.round(at)}`, `len=${Math.round(durationMs ?? this.state.durationMs)}`, `mpv=${k?.running ? '在' : '没'}`);
     await this.client().session(this.progressInput(false, at, durationMs ?? this.state.durationMs), 'start');
   }
 
@@ -346,15 +374,49 @@ export class PlayerController {
    *  what 看到 shows anywhere in the app. Returns the number the server took, or null when there was
    *  nothing to say or the server did not take it; a caller must not patch a card with a position the
    *  server refused, because the next re-read would contradict it.
-   *  `atMs` is the end-of-file override: mpv's clock at the last frame is a frame short of the runtime. */
-  private async flushStop(atMs?: number): Promise<WatchedRecord | null> {
+   *  `atMs` is the end-of-file override: mpv's clock at the last frame is a frame short of the runtime.
+   *  A refusal says so; a write that landed also says so, because measured 2026-10-24 on 小鬼当家 the 开场
+   *  landed (PlayCount 1→2, LastPlayedDate moved to 22:04) while `PlaybackPositionTicks` stayed 0 with an
+   *  empty log — from the outside a silent success, a silent early return and a server that accepts a
+   *  number and does not keep it are one and the same picture, and only the number in the line separates
+   *  them. `reason` is which exit asked, so the line says what the screen was doing at that moment. */
+  private async flushStop(atMs?: number, reason = 'exit'): Promise<WatchedRecord | null> {
     const c = this.current;
-    const durationMs = this.state.durationMs;
-    if (!c || !durationMs || c.flushedMs >= durationMs) return null;
+    if (!c) return null;
+    console.log('[player] 退出', reason, c.itemId, `pos=${Math.round(this.state.positionMs)}`,
+      `dur=${Math.round(this.state.durationMs)}`, `runtime=${Math.round(c.runtimeMs)}`, `start=${Math.round(c.startMs)}`,
+      `flushed=${c.flushedMs}`, `mpv=${this.kernel?.running ? '在' : '没'}`);
+    // mpv's length when it has reported one, the server's when it has not — the same two sources 开场 reads,
+    // in the same order of preference.
+    const durationMs = this.state.durationMs || c.runtimeMs;
+    if (!durationMs) {
+      console.warn('[player] 停止没写：说不清这部片多长', reason, c.itemId);
+      return null;
+    }
+    if (c.flushedMs >= durationMs) return null;
     const k = this.kernel;
     const at = atMs ?? (k?.running ? await k.positionMs().catch(() => this.state.positionMs) : this.state.positionMs);
     if (this.current !== c) return null;
-    if (!(await this.client().session(this.progressInput(true, at, durationMs), 'stopped'))) return null;
+    // The same number goes to the server once. mpv's own death writes the stop here, and the close that
+    // follows it asks again with a clock that can no longer move.
+    if (c.flushedMs === at) return null;
+    // Under a second is not a stop, and posting one is how a session that never got going erases the offset
+    // it opened with — the write would land, and the gateway would keep it: the 「看到 0:00」 the cards already
+    // refuse to print, published to every other client.
+    if (at < 1000 && c.startMs >= 1000) {
+      console.warn('[player] 停止没写：位置不足一秒，保住开场的偏移', reason, c.itemId, `start=${Math.round(c.startMs)}`);
+      return null;
+    }
+    const client = this.client();
+    let ok = await client.session(this.progressInput(true, at, durationMs), 'stopped');
+    if (!ok) ok = await client.session(this.progressInput(true, at, durationMs), 'stopped');
+    if (!ok) {
+      console.warn('[player] 停止没写出去', reason, c.itemId, `pos=${Math.round(at)}`, `len=${durationMs}`, `start=${Math.round(c.startMs)}`);
+      return null;
+    }
+    // What the server took, even when it took 0: an accepted number that the item never shows is only
+    // tellable apart from a write that never went out by having the number on the record.
+    console.log('[player] 停止已写', reason, c.itemId, `pos=${Math.round(at)}`, `len=${durationMs}`);
     c.flushedMs = at;
     return { itemId: c.itemId, positionMs: at, durationMs };
   }
@@ -480,7 +542,10 @@ export class PlayerController {
       throw e;
     }
     await k.setSpeed(speed).catch(() => undefined);
-    void this.announceStart().catch(() => undefined);
+    // No second 开场 here. This is the same item inside the same session, and FirstPlay is the event that
+    // stamps PlayCount and LastPlayedDate — measured 2026-10-24, one open of 小鬼当家 answers PlayCount 1 —
+    // so re-announcing on every knob move would publish another 收看过 for something that was never a new
+    // viewing. The stopped report on the way out carries the source this stream actually ended on.
   }
 
   /** A knob changed while something is playing: apply live what mpv can apply live, re-negotiate when the
@@ -519,7 +584,7 @@ export class PlayerController {
     this.tearing = true;
     // The stop is written before anything is torn down: mpv still holds the real position, and the number
     // the lobby is handed must be the one the server just took.
-    const w = await this.flushStop();
+    const w = await this.flushStop(undefined, 'close');
     this.current = null;
     await this.kernel?.quit().catch(() => undefined);
     this.kernel = null;
@@ -538,7 +603,7 @@ export class PlayerController {
    *  The server still gets the stopped report; the lobby's write-back does not, because the page that
    *  would read it is being destroyed and the ask it triggers would only delay the exit. */
   async shutdown(): Promise<void> {
-    await this.flushStop();
+    await this.flushStop(undefined, 'quit');
     this.current = null;
     await this.kernel?.quit().catch(() => undefined);
     this.kernel = null;
