@@ -11,9 +11,19 @@ export interface Identity {
 }
 
 export class EmbyError extends Error {
-  constructor(message: string, readonly status: number) {
+  /** `path` is for the log only: two of the writes below swallow a refusal into a boolean, and a line that
+   *  says 服务器出错了（HTTP 500） without naming the endpoint cannot tell a lost stop from a lost poster. */
+  constructor(message: string, readonly status: number, readonly path?: string) {
     super(message);
   }
+}
+
+/** A failure in one log-safe fragment: which endpoint, which status, what the gateway said back. It lives
+ *  here rather than in errors.ts's `detail()` because that module imports this one, and a swallow point
+ *  should not need a cycle to say why it swallowed. */
+function why(e: unknown): string {
+  const err = e as EmbyError;
+  return `${err?.path || ''} HTTP ${err?.status || 0} ${String(err?.message ?? e)}`.trim();
 }
 
 /** The outcome of one PlaybackInfo round. */
@@ -282,7 +292,7 @@ export class EmbyClient {
     for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') q.set(k, String(v));
     const res = await http(`${this.base}${path}?${q}`, { method: 'GET', headers: this.headers() }, timeoutMs);
     const text = await res.text();
-    if (!res.ok) throw new EmbyError(text.slice(0, 200) || res.statusText, res.status);
+    if (!res.ok) throw new EmbyError(text.slice(0, 200) || res.statusText, res.status, path);
     return text ? JSON.parse(text) : ({} as T);
   }
 
@@ -299,7 +309,7 @@ export class EmbyClient {
       timeoutMs,
     );
     const text = await res.text();
-    if (!res.ok) throw new EmbyError(text.slice(0, 200) || res.statusText, res.status);
+    if (!res.ok) throw new EmbyError(text.slice(0, 200) || res.statusText, res.status, path);
     return text ? JSON.parse(text) : ({} as T);
   }
 
@@ -368,7 +378,7 @@ export class EmbyClient {
     for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') q.set(k, String(v));
     const res = await http(`${this.base}${path}?${q}`, { method: 'DELETE', headers: this.headers() }, timeoutMs);
     const text = await res.text();
-    if (!res.ok) throw new EmbyError(text.slice(0, 200) || res.statusText, res.status);
+    if (!res.ok) throw new EmbyError(text.slice(0, 200) || res.statusText, res.status, path);
     return text ? JSON.parse(text) : ({} as T);
   }
 
@@ -765,11 +775,25 @@ export class EmbyClient {
   async session(input: ProgressInput, event: 'start' | 'stopped'): Promise<boolean> {
     const path = event === 'start' ? '/Sessions/Playing' : '/Sessions/Playing/Stopped';
     const body = { ...this.progressBody(input), EventName: event === 'start' ? 'FirstPlay' : undefined };
-    return this.post(path, body, {}, 8000).then(() => true, () => false);
+    return this.post(path, body, {}, 8000)
+      .then(() => true)
+      .catch(e => {
+        // A refusal used to end here as a bare `false`, so the one write that decides 看到 could fail with
+        // no record of the item, the number or the answer. The caller still gets the boolean it patches cards
+        // from; this line is only for whoever has to tell 服务器没收 from 没什么可写 afterwards.
+        console.warn('[emby] session 没写出去', event, `item=${input.itemId}`, `pos=${Math.round(input.positionMs)}`, `len=${Math.round(input.durationMs)}`, why(e));
+        return false;
+      });
   }
 
   async markPlayed(itemId: string): Promise<boolean> {
-    return this.post(`/Users/${this.account.userId}/PlayedItems/${itemId}`).then(() => true, () => false);
+    const path = `/Users/${this.account.userId}/PlayedItems/${itemId}`;
+    return this.post(path)
+      .then(() => true)
+      .catch(e => {
+        console.warn('[emby] 已播放没写出去', why(e));
+        return false;
+      });
   }
 
   /** Returns the state after the toggle so the caller can render it without a refetch. */

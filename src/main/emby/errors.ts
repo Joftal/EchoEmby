@@ -94,7 +94,9 @@ export function explain(e: unknown): string {
 export function detail(e: unknown): string {
   let out = '';
   for (let c: any = e; c; c = c.cause) {
-    out += ` | ${c?.name ?? ''}: ${String(c?.message ?? c)}`;
+    // The endpoint and the status ride along when the thrower knew them, because a bare HTTP 500 says which
+    // layer broke and nothing about which write was refused.
+    out += ` | ${c?.name ?? ''}${c?.path ? ` ${c.path}` : ''}${c?.status ? ` HTTP ${c.status}` : ''}: ${String(c?.message ?? c)}`;
     if (out.length > 500 || c.cause === c) break;
   }
   return redact(out.replace(/^ \| /, ''));
