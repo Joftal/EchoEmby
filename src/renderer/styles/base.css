@@ -425,6 +425,50 @@ summary,
   opacity: 1;
 }
 
+/* A photo held at zero leaves its box painted only by the plate behind it (`--bg-elev` / `--bg-elev-2` and a
+   hairline), which is what the reader sees while the bytes are in flight — and an empty circle reads as a
+   missing picture, not a coming one. Measured on a cold 小林家的龙女仆: at the frame the bands are on screen,
+   46 of the 46 photo boxes inside the viewport were still holding (37 of 39 in the 分集 frame) and nothing on
+   screen said so, because the shimmer this app owns lives only in the pre-arrival skeleton, which is gone the
+   moment the rows arrive. So the same shimmer goes under any box that is holding a `v-reveal` photo that has
+   not landed, and takes itself away on `load`. The hero's `.stage` is left out, and not because it answers
+   early — it holds for ~1.0s in view too (+422 → +1450ms with the cache off). It is left out because its
+   ground is the dark stage under `.wash`, where the copy is white: this light plate token would turn the top
+   61vh of the page grey under white type to signal something already signalled by the bands below it. */
+.ethumb:has(> img.rv:not(.on)),
+.face:has(> img.rv:not(.on)),
+.still:has(> img.rv:not(.on)),
+.lb-th:has(> img.rv:not(.on)),
+.sposter:has(> img.rv:not(.on)),
+.pl-cell .art:has(> img.rv:not(.on)) {
+  background: var(--shimmer);
+  background-size: var(--sk-tile) 100%;
+}
+
+/* The sweep on top of that plate, and the same for the seam copies a loop rail builds — those carry
+   `animation: none` written inline by looprail.ts's harvest(), so the lobby's entrance cascade cannot replay
+   at the wrap, and an inline declaration outranks a stylesheet one: a clone still holding its photo got the
+   plate without the motion (measured on a cold 剧照 band: 16 of the 35 held boxes on screen were clones).
+   Only that second rule needs the `@media` guard, and the measurement says why — inject both variants and
+   read a held box under `reduce`: a normal declaration IS flattened by the `*` block at the end of this file
+   (0.01ms, one pass, because `!important` outranks any specificity that is not itself important), while an
+   `!important` one wins the tie on specificity and would keep sweeping for a reader who asked for less
+   motion. The plate rule is wrapped alongside it so the two cannot mean different things. */
+@media (prefers-reduced-motion: no-preference) {
+  .ethumb:has(> img.rv:not(.on)),
+  .face:has(> img.rv:not(.on)),
+  .still:has(> img.rv:not(.on)),
+  .lb-th:has(> img.rv:not(.on)),
+  .sposter:has(> img.rv:not(.on)),
+  .pl-cell .art:has(> img.rv:not(.on)) {
+    animation: sh 1.3s linear infinite;
+  }
+  [data-loop-clone]:has(> img.rv:not(.on)),
+  [data-loop-clone] :has(> img.rv:not(.on)) {
+    animation: sh 1.3s linear infinite !important;
+  }
+}
+
 /* The watched fraction, drawn as a pill floating on the art rather than a hairline on its bottom edge.
    A line flush with the frame was clipped by the 10px corner radius and its 1px border, and a white fill
    over a bright picture read as nothing at all — measured on a 继续观看 card stopped 5% in, the stop was
