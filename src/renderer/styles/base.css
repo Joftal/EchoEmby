@@ -440,6 +440,7 @@ summary,
 .still:has(> img.rv:not(.on)),
 .lb-th:has(> img.rv:not(.on)),
 .sposter:has(> img.rv:not(.on)),
+.calpo:has(> img.rv:not(.on)),
 .pl-cell .art:has(> img.rv:not(.on)) {
   background: var(--shimmer);
   background-size: var(--sk-tile) 100%;
@@ -460,6 +461,7 @@ summary,
   .still:has(> img.rv:not(.on)),
   .lb-th:has(> img.rv:not(.on)),
   .sposter:has(> img.rv:not(.on)),
+  .calpo:has(> img.rv:not(.on)),
   .pl-cell .art:has(> img.rv:not(.on)) {
     animation: sh 1.3s linear infinite;
   }

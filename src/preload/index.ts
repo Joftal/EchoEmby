@@ -51,6 +51,9 @@ const api: EchoEmbyApi = {
     csm: input => invoke('meta:csm', input),
     setKeys: patch => invoke('meta:setKeys', patch),
   },
+  calendar: {
+    schedule: input => invoke('calendar:schedule', input),
+  },
   player: {
     play: (itemId, fromStart) => invoke('player:play', itemId, fromStart),
     command: cmd => invoke('player:command', cmd),

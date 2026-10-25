@@ -6,6 +6,7 @@ import DetailView from './views/DetailView.vue';
 import WorkView from './views/WorkView.vue';
 import PlayerView from './views/PlayerView.vue';
 import BrowseView from './views/BrowseView.vue';
+import CalendarView from './views/CalendarView.vue';
 import ServersView from './views/ServersView.vue';
 import SettingsView from './views/SettingsView.vue';
 
@@ -24,6 +25,9 @@ export const router = createRouter({
     { path: '/login', name: 'login', component: LoginView, meta: { rank: -1 } },
     { path: '/', name: 'home', component: HomeView, meta: { rank: 0 } },
     { path: '/browse', name: 'browse', component: BrowseView, meta: { rank: 1 } },
+    // Same depth as the shelves: the calendar is another way to look at what 收藏 and 在看 already list,
+    // so moving between them reads as sideways, not as going deeper.
+    { path: '/calendar', name: 'calendar', component: CalendarView, meta: { rank: 1 } },
     { path: '/servers', name: 'servers', component: ServersView, meta: { rank: 2 } },
     { path: '/settings', name: 'settings', component: SettingsView, meta: { rank: 3 } },
     { path: '/detail/:id', name: 'detail', component: DetailView, props: true, meta: { rank: 10 } },

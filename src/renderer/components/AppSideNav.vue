@@ -26,6 +26,14 @@ const ICONS = {
   heart: ['M12 19.6S5.2 15.2 5.2 10.7A3.9 3.9 0 0 1 12 8.3a3.9 3.9 0 0 1 6.8 2.4c0 4.5-6.8 8.9-6.8 8.9Z'],
   layers: ['M4 8.4 12 4.2l8 4.2-8 4.2z', 'M4 8.4v7.2L12 19.8l8-4.2v-7.2'],
   search: ['M11 4.6a6.4 6.4 0 1 0 0 12.8 6.4 6.4 0 0 0 0-12.8Z', 'M19.4 19.4 15.6 15.6'],
+  // Four strokes, not a grid: the 19px icon column with 1.7 ink turns a 7-cell calendar into mush — the
+  // same reason the settings entry is two rails with knobs rather than a gear.
+  calendar: [
+    'M5.2 8.6h13.6V18a1.6 1.6 0 0 1-1.6 1.6H6.8A1.6 1.6 0 0 1 5.2 18z',
+    'M8.4 6v4.2',
+    'M15.6 6v4.2',
+    'M9.4 14.6h5.2',
+  ],
   // Two rails with knobs, not a gear: a toothed rim needs ~7px of ink to read as a gear, and at the
   // 19px icon column it came back as a sun (the teeth detached from the circle at that stroke weight).
   tune: ['M4.4 8h2.1', 'M11.1 8h8.5', 'M8.8 5.7a2.3 2.3 0 1 0 0 4.6 2.3 2.3 0 0 0 0-4.6Z', 'M4.4 16h8.5', 'M17.5 16h2.1', 'M15.2 13.7a2.3 2.3 0 1 0 0 4.6 2.3 2.3 0 0 0 0-4.6Z'],
@@ -37,11 +45,13 @@ const discover: NavItem[] = [{ key: 'home', label: '首页', to: '/', paths: ICO
 const mine: NavItem[] = [
   { key: 'kresume', label: '在看', to: '/browse?kind=resume', paths: ICONS.play },
   { key: 'kfavorites', label: '收藏', to: '/browse?kind=favorites', paths: ICONS.heart },
+  { key: 'calendar', label: '追剧日历', to: '/calendar', paths: ICONS.calendar },
 ];
 
 const activeKey = computed(() => {
   if (route.name === 'home') return 'home';
   if (route.name === 'settings') return 'set';
+  if (route.name === 'calendar') return 'calendar';
   if (route.name === 'browse') return route.query.view ? `v${route.query.view}` : `k${route.query.kind || ''}`;
   return '';
 });

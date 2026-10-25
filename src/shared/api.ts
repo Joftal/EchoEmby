@@ -1,4 +1,4 @@
-import type { Account, AppConfig, BangumiScore, CsmGuide, DanmakuQuery, DanmakuTrack, DanmakuTrackInfo, FacetOption, ImdbRating, IpcResult, LibraryItem, LibraryRow, MetaKeys, NetProbe, PlayerCommand, PlayerMedia, PlayerSession, PlayerState, RtScores, Settings, SettingsPatch, TmdbCredits, TmdbMeta, TmdbRelated, TmdbStills, TraktScores, WatchedRecord } from './types';
+import type { Account, AppConfig, BangumiScore, CalendarResult, CsmGuide, DanmakuQuery, DanmakuTrack, DanmakuTrackInfo, FacetOption, ImdbRating, IpcResult, LibraryItem, LibraryRow, MetaKeys, NetProbe, PlayerCommand, PlayerMedia, PlayerSession, PlayerState, RtScores, Settings, SettingsPatch, TmdbCredits, TmdbMeta, TmdbRelated, TmdbStills, TraktScores, WatchedRecord } from './types';
 
 export interface EchoEmbyApi {
   app: {
@@ -47,6 +47,11 @@ export interface EchoEmbyApi {
     tmdbLogos(input: { kind: 'movie' | 'tv'; tmdbId: string }): Promise<IpcResult<string[]>>;
     csm(input: { kind: 'movie' | 'tv'; title: string }): Promise<IpcResult<CsmGuide | null>>;
     setKeys(patch: Partial<MetaKeys>): Promise<IpcResult<MetaKeys | undefined>>;
+  };
+  calendar: {
+    /** The days this account's followed shows update, for the window the page is showing. `force` steps
+     *  past the cache's TTL — the 刷新 button's whole reason to exist. */
+    schedule(input: { from: string; to: string; force?: boolean }): Promise<IpcResult<CalendarResult>>;
   };
   player: {
     /** `fromStart` is the button's promise, not a preference: a hero that says 「播放」 rather than

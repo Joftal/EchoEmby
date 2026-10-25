@@ -324,6 +324,71 @@ export interface TmdbEpisodeRow {
  *  gets no row at all. */
 export type TmdbStills = Record<number, TmdbEpisodeRow>;
 
+/** Which pool chip a 追剧日历 row answers to. Decided from TMDB's own `original_language` plus whether it
+ *  files the work under 动画, because the server's library names are per-account and its `Genres` are a
+ *  mixed-language soup (measured: the gateway lists 23 中文 / 25 English / 2 Japanese spellings).
+ *  `kr` joined the list because 其他 was holding nothing but Korean shows (measured 2026-10-26: 3 of the 22
+ *  followed titles — 鱿鱼游戏 / 模范出租车 / 首尔破笑组 — and no other language at all), which left the last
+ *  chip naming a bucket by what it is not. */
+export type CalendarPool = 'cn' | 'cnova' | 'jp' | 'en' | 'kr' | 'other';
+
+/** One episode the calendar has a date for. The date is TMDB's, the clock is Bilibili's when it names one,
+ *  and the absence of a clock is the honest answer for a show no source times — see `CalendarResult`. */
+export interface CalendarSlot {
+  /** `YYYY-MM-DD`, the day TMDB bills this episode for. */
+  date: string;
+  /** `HH:MM`, the local air time, only when Bilibili's week schedule names this title on this day. */
+  clock?: string;
+  /** Bilibili's own 「延期」 sentence for that slot, verbatim, when it has one. */
+  delay?: string;
+  tmdbId: string;
+  /** This server's Series row, so the card can open 详情页. Absent only if the row vanished mid-read. */
+  seriesId?: string;
+  name: string;
+  /** image.tmdb.org poster path — the work's own, the same file 收藏 and 首页 ask for — `''` when TMDB
+   *  has none. */
+  poster: string;
+  pool: CalendarPool;
+  season: number;
+  episode: number;
+  episodeName?: string;
+  /** Year the show first aired, TMDB's `first_air_date` cut to four digits; 0 when it never aired. */
+  year: number;
+  /** TMDB's genre names for the work, already in 中文. Empty when TMDB filed none. */
+  genres: string[];
+  /** How many episodes this season holds, so 「集 4/12」 can be drawn as a bar. 0 when neither the work
+   *  reply nor the season reply counted it, which the card reads as 「no denominator」 rather than 「/0」. */
+  seasonTotal: number;
+}
+
+/** A title the roster counts as 在追 that has no episode dated inside the window the page asked for. Two
+ *  shapes land here and the page tells them apart: TMDB has not put the current season on the calendar yet
+ *  (`lastDate` empty), or it dated that season and every one of those days is already off the page. */
+export interface CalendarQuiet {
+  tmdbId: string;
+  /** This server's Series row, so the row opens 详情页 like a card does. */
+  seriesId?: string;
+  name: string;
+  poster: string;
+  pool: CalendarPool;
+  season: number;
+  /** The latest day TMDB has dated for this season, `''` when it has dated none at all. */
+  lastDate: string;
+}
+
+export interface CalendarResult {
+  /** Every slot inside the asked window, in date order. */
+  slots: CalendarSlot[];
+  /** Names whose TMDB request did not answer — silence, not 「no such title」, so they retry next open. */
+  failed: string[];
+  /** The followed shows none of the above carries a day for. Without them a reader cannot tell 「nothing is
+   *  coming」 from 「this page lost my shows」, which is the difference between a quiet week and a bug. */
+  quiet: CalendarQuiet[];
+  /** No TMDB key is saved, so no date could be asked for at all. The one case where an empty calendar is
+   *  not a data answer but a missing credential, and the page says so instead of listing nobody. */
+  noKey?: boolean;
+}
+
 /** One head in a season's credit list: the name as TMDB localises it, the character it played or
  *  the role label the band prints, and its `profile_path`. */
 export interface TmdbCreditRow {

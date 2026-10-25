@@ -179,8 +179,10 @@ const seasonTable = (rows: any[] | undefined): TmdbSeasonRow[] => {
 /** `answered` distinguishes "TMDB says this id does not exist" from "TMDB did not reply", which
  *  matters because only the former should be cached as a miss. `why` names what to blame for the
  *  silence; it only ever reaches the log, through ipc.ts's detail(), because the mapped sentence a
- *  caller sees must not pretend to know the user's own server broke. */
-const fetchJson = async <T>(url: string, cred: string): Promise<{ json: T | null; answered: boolean; why: string }> => {
+ *  caller sees must not pretend to know the user's own server broke.
+ *  Exported for the 追剧日历, which asks the same host for two shapes this file's own readers never
+ *  touch (`next_episode_to_air` and a season's per-episode dates) and keeps them in its own file. */
+export const fetchJson = async <T>(url: string, cred: string): Promise<{ json: T | null; answered: boolean; why: string }> => {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 15000);
   /* TMDB has two credentials and they do not interchange: a v4 read token is a JWT and only the

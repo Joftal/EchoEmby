@@ -7,6 +7,7 @@ import { imdbRating } from './meta/imdb';
 import { traktScores } from './meta/trakt';
 import { bangumiScore } from './meta/bangumi';
 import { tmdbMeta, tmdbSeasonCast, tmdbSeasonStills, tmdbRelated, tmdbImages, tmdbLogos } from './meta/tmdb';
+import { calendarSchedule } from './meta/calendar';
 import { csmGuide } from './meta/csm';
 import { PlayerWindows } from './player/windows';
 import { PlayerController, type PlayerOut } from './player/session';
@@ -174,6 +175,10 @@ export class AppServices {
     ipcMain.handle('meta:tmdbLogos', (_e, { kind, tmdbId }: { kind: 'movie' | 'tv'; tmdbId: string }) => wrap('meta:tmdbLogos', () => tmdbLogos(kind, tmdbId)));
     ipcMain.handle('meta:csm', (_e, { kind, title }: { kind: 'movie' | 'tv'; title: string }) => wrap('meta:csm', () => csmGuide(kind, title)));
     ipcMain.handle('meta:setKeys', (_e, patch: { tmdbV4Token?: string; traktClientId?: string }) => wrap('meta:setKeys', () => config.setMetaKeys(patch)));
+
+    ipcMain.handle('calendar:schedule', (_e, { from, to, force }: { from: string; to: string; force?: boolean }) =>
+      wrap('calendar:schedule', () => calendarSchedule(this.client(), from, to, !!force)),
+    );
 
     // The player is one object with the whole lifecycle; every channel below is a thin pass-through, so
     // nothing the overlay can ask for needs a second copy of the logic here.
