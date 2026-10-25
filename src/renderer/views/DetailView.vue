@@ -12,7 +12,7 @@ import HeroPlay from '../components/HeroPlay.vue';
 import LoopTitle from '../components/LoopTitle.vue';
 import TitleArt from '../components/TitleArt.vue';
 import HeroSkeleton from '../components/HeroSkeleton.vue';
-import { tmdbKind as kindOf, trustSeason, useScores } from '../lib/scores';
+import { pairedSeason, tmdbKind as kindOf, trustSeason, useScores } from '../lib/scores';
 import { usePlayerStore } from '../stores/player';
 import { useAppStore } from '../stores/app';
 import { accountName, episodeHead, fmtDate, fmtMinutes, fmtRuntime, seenLabel, seasonTitle, watchedRatio } from '../lib/format';
@@ -52,6 +52,11 @@ const seasonN = ref(-1);
 /** Which season the rows now in `episodes` were read for. The list keeps its height across a switch, so
  *  without this the hero would print the season being left's length under the new one's date. */
 const episodeN = ref(-1);
+/** Which season the rows now in `episodes` have been *answered* for — asked, rows or failure both count,
+ *  unlike `episodeN` which only takes the rows. The season pairing reads it as "is the evidence still on its
+ *  way": a verdict cannot be handed out before the files that decide it, and it must not be held back forever
+ *  because one request died. */
+const filesFor = ref(-1);
 /** Whether TMDB has answered the episode list for the season on screen. Consulted only for a season this
  *  server holds no row for, where it is the whole difference between 「还没有分集」 and an ask still out. */
 const stillsSettled = ref(false);
@@ -180,12 +185,12 @@ const wantRail = computed(
 );
 
 /** image.tmdb.org answers directly on this machine (the API host needs the system proxy). */
-/* Whether TMDB's row for episode number N is *this* card's episode. The season-level count pairing answers
-   coarse: it refuses a show still airing, whose 3 files against TMDB's 13 is a partial download rather than
-   a mispairing (measured on PSYREN 第 1 季 — 3/13 = 0.23 against the 0.67 line, which cost all three cards
-   their outside picture even though TMDB bills a still for each of them). So a refusal is not final: two
-   sides that agree on when this one episode aired have said something stronger than two counts. */
-const countsPaired = computed(() => !!trustRow(seasonNumber.value, seasonRow.value?.childCount));
+/* Whether TMDB's row for episode number N is *this* card's episode, and the one place the answer is read.
+   The pairing verdict is the season's own files (see `tmdbSeason` below), and a refusal is not final: TMDB's
+   row for that number is still fetched, because a season can be refused by a rule that cannot tell a
+   mispairing from a show still airing — PSYREN 第 1 季's 3 files against TMDB's 13 is a partial download —
+   so two sides that agree on when this one episode aired still get to dress the card. */
+const seasonPaired = computed(() => !!tmdbSeason.value);
 /** The server's own date is a timestamp with a zone, TMDB's a plain `YYYY-MM-DD`, and this gateway writes
  *  its season dates a day early — so the claim being tested is the calendar day, with one day of slack. */
 const DAY_MS = 86400000;
@@ -198,7 +203,7 @@ const sameEpisodeDate = (server?: string, tmdb?: string): boolean => {
 const stillRow = (ep: number | undefined, airDate?: string): TmdbEpisodeRow | undefined => {
   if (ep == null) return undefined;
   const r = stills.value[ep];
-  if (!r || countsPaired.value) return r;
+  if (!r || seasonPaired.value) return r;
   return sameEpisodeDate(airDate, r.air) ? r : undefined;
 };
 /** A card built from TMDB's own row needs no pairing test — the picture and the card are the same episode
@@ -856,8 +861,11 @@ interface ServerSeason {
   season: LibraryItem | null;
 }
 
-/* TMDB and this server do not always count the same season. The threshold and the sweep that picked it
-   live in `trustSeason`, because the player's season chips have to refuse the same pairings this page does. */
+/* TMDB and this server do not always count the same season. Once a page holds the season's own files the
+   pairing is judged by where those files sit (`pairedSeason`); the count test in `trustSeason` is what is left
+   for the surfaces that hold a count and nothing else — this page's picker rows for the seasons nobody has
+   opened, whose files are one request per season away, and the player's season chips, which have no files at
+   all until the reader presses one. */
 const trustRow = (n?: number | null, count?: number): TmdbSeasonRow | null => trustSeason(scores.value.tmdb?.seasons, n, count);
 
 /** Every season this work has, on either side of the pair, in one number-ordered list.
@@ -897,7 +905,28 @@ const seasonAt = computed<ServerSeason | null>(() => {
 });
 const seasonRow = computed<LibraryItem | null>(() => seasonAt.value?.season || null);
 const seasonNumber = computed(() => (seasonN.value >= 0 ? seasonN.value : null));
-const tmdbSeason = computed(() => trustRow(seasonNumber.value, seasonRow.value?.childCount));
+/** TMDB's own row for the season on screen, straight out of the work-level table and before any pairing test:
+ *  the test needs the count TMDB itself bills, which a merged list would have replaced with the server's. */
+const tmdbRow = computed(() => {
+  const n = seasonNumber.value;
+  return n == null ? null : scores.value.tmdb?.seasons?.find(x => x.n === n) || null;
+});
+/** This season's files in the shape the pairing reads: `undefined` when this machine holds no row for the
+ *  season (nothing to pair, so nothing to wait for), `null` while its file list is still out, and the numbers
+ *  once it has answered — an empty array included, because a season whose files carry no `indexNumber` at all
+ *  (22 of the 389 measured pairs) is an answer, not a wait, and falls back to the count test. */
+const seasonFiles = computed<number[] | null | undefined>(() => {
+  if (!seasonRow.value) return undefined;
+  if (filesFor.value !== seasonN.value) return null;
+  if (episodeN.value !== seasonN.value) return [];
+  return episodes.value.map(e => e.indexNumber).filter((x): x is number => typeof x === 'number');
+});
+/** The season on screen as its own files bill it. A refusal costs the hero its date, its art, its rating, its
+ *  paragraph and its credits, and costs every card in the band its outside picture — and a season nobody has
+ *  opened yet keeps the count test, since its files are a request away and a caption cannot wait on them. */
+const tmdbSeason = computed(() =>
+  pairedSeason({ tmdb: tmdbRow.value, files: seasonFiles.value, count: seasonRow.value?.childCount }),
+);
 
 /* Asked from a watch rather than from `loadEpisodes`, because the trust test needs TMDB's meta and
    that usually lands after the first episode ask has already gone out. The answer is also held here,
@@ -1113,6 +1142,9 @@ async function loadSeason(n: number) {
     });
   }
   const r = await embyCached('episodes', { seriesId, seasonId: sid }, () => window.echoemby.emby.episodes({ seriesId, seasonId: sid }));
+  // Answered either way, and that is what lets the pairing be judged: a failure is not a wait, and a caption
+  // that waited on a request the gateway never answers would withhold its marks for the rest of the visit.
+  if (seasonN.value === n) filesFor.value = n;
   if (r.ok && seasonN.value === n) {
     episodes.value = r.data || [];
     episodeN.value = n;
@@ -1180,7 +1212,15 @@ async function loadSeries(seriesId: string): Promise<LibraryItem | null> {
  *  for seasons this machine files by number alone, and it bills the ones nobody has at all. Whether this
  *  server holds the season is not part of its name — that is the badge beside the picker's job, so the pill
  *  reads the same width whichever season is picked and the work page's rows match these. */
-const seasonLabel = (s: ServerSeason): string => seasonTitle(s.n, s.season?.name, trustRow(s.n, s.season?.childCount)?.name);
+/** The row's name comes from the verdict that page has evidence for: the season on screen is judged by its
+ *  own files, exactly as the hero above it is, so the trigger and the caption cannot wear two different
+ *  season names; the rows below it are judged by the counts, which is all a season nobody has opened gives. */
+const seasonLabel = (s: ServerSeason): string =>
+  seasonTitle(
+    s.n,
+    s.season?.name,
+    (s.n === seasonNumber.value ? tmdbSeason.value : trustRow(s.n, s.season?.childCount))?.name,
+  );
 
 /* One button that pours the season list out of its bottom edge, on the picker's own vocabulary rather than a
    second dropdown drawn for this page. Its options stack one to a row: 「第 1 季」 and

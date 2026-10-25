@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import type { LibraryItem, TmdbCredits, TmdbMeta, TmdbSeasonRow, TmdbStills } from '../../shared/types';
+import type { LibraryItem, Person, TmdbCredits, TmdbMeta, TmdbSeasonRow, TmdbStills } from '../../shared/types';
 import HScroller from '../components/detail/HScroller.vue';
 import RelatedStrip from '../components/detail/RelatedStrip.vue';
 import FilterSelect from '../components/browse/FilterSelect.vue';
@@ -12,6 +12,7 @@ import HeroPlay from '../components/HeroPlay.vue';
 import logoTmdb from '../assets/logos/tmdb.svg';
 import { libraryWorks, useRelated, REVEAL_MS, type WorkKind, type WorkSeed } from '../lib/related';
 import { embyCached } from '../lib/embycache';
+import { pairedSeason, trustSeason } from '../lib/scores';
 import { mergeGenres } from '../lib/genres';
 import { beginPlay, workSeedFor } from '../lib/handoff';
 import { accountName, episodeHead, fmtDate, fmtMinutes, fmtRuntime, seenLabel, seasonTitle, watchedRatio } from '../lib/format';
@@ -85,11 +86,22 @@ const serverName = computed(() => (app.account ? accountName(app.account) : ''))
 /** Seasons across all of those rows, each still knowing which row it came from: the episodes below it can
  *  only be asked for through that row. */
 const serverSeasons = ref<{ row: LibraryItem; season: LibraryItem }[]>([]);
+/** Whether that list is the server's answer rather than a sweep still running. The pairing needs it because
+ *  the page opens on TMDB's table — which a warm cache hands over before this library's season rows do — and
+ *  a season with no server row yet reads as 「nothing to pair」, which is the one shape that lets a verdict
+ *  through without any files. Measured on 火影's 作品页: the season's score painted at 55ms and came back off
+ *  at 693ms when the server said its 第 1 季 is ten files numbered 221-230. */
+const seasonsAnswered = ref(false);
 const serverEps = ref<LibraryItem[]>([]);
 /** Whether the band on screen has its answer — TMDB's episode list, or this season's files. An empty band
  *  that has not been asked yet is not an empty band, and the line under the season says which of the two
  *  it is only once it knows. */
 const bandAsked = ref(false);
+/** Whether the season's file list has been answered — its rows or a failure, both count. `bandAsked` is not
+ *  this fact: that one also tells the reader 「这一季没有文件」, and a request the gateway never answered has
+ *  not earned that sentence. The pairing needs the weaker one, because an ask that is not coming back must not
+ *  withhold a season's marks for the rest of the visit. */
+const filesAnswered = ref(false);
 const backdrops = ref<string[]>([]);
 const logos = ref<string[]>([]);
 const stills = ref<TmdbStills>({});
@@ -135,10 +147,11 @@ const tmdbUrl = computed(() => (idKey.value ? `https://www.themoviedb.org/${kind
  *  two Series rows carry the same number they overlap rather than continue each other, so the fullest one
  *  answers, which is also how the row below picks its files. On a page built out of the server's record the
  *  server's rows are the whole list either way. */
-const seasons = computed<TmdbSeasonRow[]>(() => {
-  if (kind.value !== 'tv') return [];
-  const byN = new Map<number, TmdbSeasonRow>();
-  for (const s of meta.value?.seasons || []) byN.set(s.n, { ...s });
+/** This server's own rows for the work's season numbers, keyed by number. Where two Series rows carry
+ *  the same number they overlap rather than continue each other, so the fullest one answers — the same
+ *  rule the union below and the file list under it both use. Its name is the second rung of a season
+ *  caption, and the only one a refused pairing may wear. */
+const heldSeasons = computed(() => {
   const held = new Map<number, { count: number; name: string }>();
   for (const g of serverSeasons.value) {
     const n = g.season.indexNumber ?? 0;
@@ -147,6 +160,20 @@ const seasons = computed<TmdbSeasonRow[]>(() => {
     const best = held.get(n);
     if (!best || count > best.count) held.set(n, { count, name: g.season.name });
   }
+  return held;
+});
+/** Every season this work has, on either side of the pair, in one number-ordered list — the union the detail
+ *  page keeps. TMDB's table names, dates and scores a season, so it owns those columns; the episode count
+ *  belongs to the machine holding the files (measured: the server's own ChildCount matched the rows it
+ *  returned 20 of 20 times, while the two sides disagreed on 2 of the 20 seasons both of them know). Where
+ *  two Series rows carry the same number they overlap rather than continue each other, so the fullest one
+ *  answers, which is also how the row below picks its files. On a page built out of the server's record the
+ *  server's rows are the whole list either way. */
+const seasons = computed<TmdbSeasonRow[]>(() => {
+  if (kind.value !== 'tv') return [];
+  const byN = new Map<number, TmdbSeasonRow>();
+  for (const s of meta.value?.seasons || []) byN.set(s.n, { ...s });
+  const held = heldSeasons.value;
   for (const [n, g] of held) {
     const cur = byN.get(n);
     // A row that bills no files is not an answer about a season TMDB has a full list for.
@@ -163,7 +190,21 @@ const counted = computed(() => seasons.value.filter(s => s.n >= 1 && s.epCount >
  *  which season a fresh page lands on. */
 const firstSeasonN = (rows: TmdbSeasonRow[]): number | undefined => (rows.find(s => s.n >= 1 && s.epCount) || rows[0])?.n;
 const season = computed(() => seasons.value.find(s => String(s.n) === seasonPick.value) || null);
-const seasonOptions = computed(() => seasons.value.map(s => ({ value: String(s.n), label: seasonTitle(s.n, s.name) })));
+/** Which TMDB row may name a season: the one on screen is named by the verdict its own files give, so the
+ *  picker's trigger and the caption above it cannot call the same season two different things; the rows nobody
+ *  has opened are named by the counts, which is the whole of what a season with no files asked for can say. */
+const isPicked = (n: number): boolean => seasonPick.value !== '' && Number(seasonPick.value) === n;
+const namedRow = (s: TmdbSeasonRow): TmdbSeasonRow | null =>
+  isPicked(s.n) ? paired.value : trustSeason(meta.value?.seasons, s.n, s.epCount);
+/** The name a season wears, on the detail page's ladder: this server's own name first, then TMDB's for the
+ *  seasons the pairing believes. A season TMDB bills and this page refuses keeps only its number and whatever
+ *  the account called it, because the name in that row belongs to a season the files say this is not — and a
+ *  season only this server knows has no TMDB row to refuse, so the merge's own name stands. */
+const seasonLabel = (s: TmdbSeasonRow | null): string => {
+  if (!s) return '';
+  return seasonTitle(s.n, heldSeasons.value.get(s.n)?.name, namedRow(s)?.name);
+};
+const seasonOptions = computed(() => seasons.value.map(s => ({ value: String(s.n), label: seasonLabel(s) })));
 
 /** A click on the season already on screen comes back as the picker's clear gesture. This band always shows
  *  a season, so an empty answer keeps the one on screen instead of blanking it. */
@@ -179,17 +220,35 @@ const overviewText = computed(() => meta.value?.overviewZh || meta.value?.overvi
  *  (measured here: TMDB answers Sci-Fi & Fantasy in English for some of these works, and 详情页 turned that
  *  into 科幻奇幻 while this page printed it raw). */
 const shownGenres = computed<string[]>(() => mergeGenres(meta.value?.genres, fallback.value ? libItem.value?.genres : []));
-const crew = computed(() => {
-  const src = kind.value === 'tv' ? seasonCast.value : meta.value?.cast || null;
-  const rows: { id: string; name: string; sub: string; face: string }[] = [];
+const crew = computed<CrewRow[]>(() => {
+  /* The season's own credits only while the pairing believes that season. Refused, this page prints this
+     server's crew instead — the same ground the detail page falls back to under the same refusal, so two
+     pages that refuse one pairing cannot name two different crews. TMDB's work-level list is not a rung
+     here: `/tv/{id}` carries no cast (only a movie's own entry does, measured), which is what left this band
+     holding nothing the first time the gate went in. */
+  const src = kind.value === 'tv' ? (paired.value ? seasonCast.value : null) : meta.value?.cast || null;
+  const rows: CrewRow[] = [];
   const add = (list: TmdbCredits['act'], kindLabel: string) => {
     for (const p of list) rows.push({ id: `tm:${kindLabel}:${p.name}`, name: p.name, sub: p.sub || kindLabel, face: p.img ? faceUrl(p.img) : '' });
   };
-  if (src) {
+  if (src && (src.act.length || src.dir.length || src.write.length)) {
     add(src.dir, '导演');
     add(src.write, '编剧');
     add(src.act, '演员');
-  } else if (meta.value?.writers?.length) {
+    return rows.slice(0, 30);
+  }
+  const mine = serverCrew();
+  if (mine.length) {
+    // The same gap-fill the detail page applies to the same ground: this library files no Writers on a
+    // Series row, so TMDB's writing credits are the only ones the band will ever show for those names —
+    // and the two pages have to add them or one prints 65 heads and the other 63 for one refusal.
+    if (!serverPeople.value.some(p => p.type === 'Writer')) {
+      for (const w of meta.value?.writers || []) mine.push({ id: `tw:${w}`, name: w, sub: '编剧', face: '' });
+    }
+    return mine.slice(0, 30);
+  }
+  // Nothing on either side but the writing credits, which is still a credit.
+  if (meta.value?.writers?.length) {
     for (const w of meta.value.writers) rows.push({ id: `tw:${w}`, name: w, sub: '编剧', face: '' });
   }
   return rows.slice(0, 30);
@@ -214,6 +273,81 @@ const serverRow = computed(() => {
   if (!held.length) return null;
   return held.sort((a, b) => (b.season.childCount || 0) - (a.season.childCount || 0))[0];
 });
+/* Which season this page may take TMDB's word for. The work page used to trust TMDB's table for every season
+   it lists — the pairing the detail page refuses, this one dressed a caption for — and both pages now hand the
+   question to `pairedSeason`, so a season's date, its name, its rating and its credits arrive together or not
+   at all. The evidence this page holds for the season on screen is its file list. */
+/** TMDB's own row for the season on screen, out of the work-level table rather than off `seasons`, whose
+ *  merge has already written this server's file count over the number the pairing needs. */
+const tmdbRowFor = (n: number): TmdbSeasonRow | null => meta.value?.seasons?.find(x => x.n === n) || null;
+const tmdbRow = computed(() => (seasonPick.value === '' ? null : tmdbRowFor(Number(seasonPick.value))));
+/** This season's files in the shape the pairing reads: `undefined` when this account holds no row for the
+ *  season (nothing to pair, so nothing to wait for), `null` while its file list is still out, and the numbers
+ *  once it has answered — empty included, because a season whose files carry no `indexNumber` is an answer
+ *  rather than a wait, and falls back to the count test. */
+const seasonFiles = computed<number[] | null | undefined>(() => {
+  if (!seasonsAnswered.value) return null;
+  if (!serverRow.value) return undefined;
+  if (!filesAnswered.value) return null;
+  return serverEps.value.map(e => e.indexNumber).filter((x): x is number => typeof x === 'number');
+});
+/** The season on screen as its own files bill it. `null` answers both 「refused」 and 「not proved yet」, and
+ *  every reader below treats the two the same way: keep to the server's own field, or say nothing about
+ *  TMDB's side of this season. */
+const paired = computed(() =>
+  pairedSeason({ tmdb: tmdbRow.value, files: seasonFiles.value, count: serverRow.value?.season.childCount }),
+);
+/** 「本季评分」 only for a season the pairing believes: TMDB bills a season-level score inside the reply this
+ *  page already holds, and under a swapped pairing it is another season's number sitting on the line that
+ *  names this one. */
+const seasonVote = computed(() => paired.value?.voteAverage || 0);
+/** One head in the 演职员 band, whichever side of the pair dressed it. */
+interface CrewRow {
+  id: string;
+  name: string;
+  sub: string;
+  face: string;
+}
+const ROLE_LABEL: Record<string, string> = { Director: '导演', Writer: '编剧', Producer: '制片' };
+/* The server's own crew, asked only for a season the pairing refuses. The Series row carries the people and a
+   Season row carries none (measured on the detail page: 0 People on every Season row sampled), so this is the
+   show's list one level up — which is exactly what the detail page prints under the same refusal, and the
+   reason this page prints it too: a reader who opens both pages on a refused season should meet the same
+   names. The ask waits for the files, because a season still waiting on its list is not yet a refusal, and a
+   season that ends up believed never spends this request at all. */
+const serverPeople = ref<Person[]>([]);
+const serverFaces = ref<Record<string, string>>({});
+let peopleSeries = '';
+const peopleWanted = computed(() => (kind.value === 'tv' && filesAnswered.value && !paired.value ? serverRow.value?.row.id || '' : ''));
+watch(peopleWanted, async id => {
+  if (!id || id === peopleSeries) return;
+  peopleSeries = id;
+  serverPeople.value = [];
+  serverFaces.value = {};
+  const r = await embyCached('item', id, () => window.echoemby.emby.item(id));
+  if (!r.ok || peopleWanted.value !== id) return;
+  const people = r.data?.people || [];
+  serverPeople.value = people;
+  for (const p of people) {
+    if (!p.imageTag) continue;
+    void app.imageUrl({ id: p.id, primaryImageTag: p.imageTag }, 110).then(url => {
+      if (url) serverFaces.value[p.id] = url;
+    });
+  }
+});
+/** Directors, writers and producers first, then the cast — the order the detail page's band uses, so the same
+ *  crew reads the same way on both pages. */
+const serverCrew = (): CrewRow[] => {
+  const order: Record<string, number> = { Director: 0, Writer: 1, Producer: 2, Actor: 3 };
+  const seen = new Set<string>();
+  const out: CrewRow[] = [];
+  for (const p of [...serverPeople.value].sort((a, b) => (order[a.type] ?? 9) - (order[b.type] ?? 9))) {
+    if (seen.has(p.id)) continue;
+    seen.add(p.id);
+    out.push({ id: p.id, name: p.name, sub: p.type === 'Actor' ? p.role || '' : ROLE_LABEL[p.type] || p.role || '', face: serverFaces.value[p.id] || '' });
+  }
+  return out;
+};
 
 interface EpView {
   key: string;
@@ -246,7 +380,10 @@ const pack = computed(() => {
   if (!s && !row) return null;
   const held = serverBand.value;
   return {
-    date: fmtDate(s?.airDate) || fmtDate(row?.season.premiereDate),
+    /* TMDB's date only for the season its own files confirm. Refused, it is the server's, which is the one
+       figure either side can state about the files that are actually on this machine — and the hero line has
+       to read the season the pairing reads, not TMDB's table one level above it. */
+    date: fmtDate(paired.value?.airDate) || fmtDate(row?.season.premiereDate),
     eps: s?.epCount || 0,
     /* Only ever summed from rows that belong to this season: a Series row's own RunTimeTicks is neither its
        seasons' nor its episodes' (measured on the detail page: 64 分钟 billed for a season that runs
@@ -385,6 +522,7 @@ async function loadSeason(): Promise<void> {
     focusedOn = '';
   }
   bandAsked.value = false;
+  filesAnswered.value = false;
   if (!k || !seasonPick.value || Number.isNaN(n)) return;
   const s = await window.echoemby.meta.tmdbStills({ tmdbId: props.tmdbId, season: n });
   if (mine !== run || n !== Number(seasonPick.value)) return;
@@ -407,6 +545,9 @@ async function loadSeason(): Promise<void> {
     window.echoemby.emby.episodes({ seriesId: series.id, seasonId: season.id }),
   );
   if (mine !== run) return;
+  // The list has answered either way, and the pairing needs that fact before it needs the rows: a
+  // request the gateway never answers must not hold a season's marks back for the rest of the visit.
+  filesAnswered.value = true;
   if (!e.ok) return;
   serverEps.value = e.data || [];
   bandAsked.value = true;
@@ -423,6 +564,7 @@ async function loadWork(): Promise<void> {
   rowArt.value = '';
   rowWide.value = '';
   serverSeasons.value = [];
+  seasonsAnswered.value = false;
   serverEps.value = [];
   drawnSeason = null;
   backdrops.value = [];
@@ -430,7 +572,11 @@ async function loadWork(): Promise<void> {
   stills.value = {};
   seasonCast.value = null;
   bandAsked.value = false;
+  filesAnswered.value = false;
   seasonPick.value = '';
+  serverPeople.value = [];
+  serverFaces.value = {};
+  peopleSeries = '';
   // vue-router hands the next `/work/*` the same instance, so this is where a new work takes over the page.
   scroll.value = 0;
   resetPageScroll(scroller.value);
@@ -520,7 +666,10 @@ async function askSeasons(rows: LibraryItem[], mine: number): Promise<void> {
     });
   }
   const series = rows.filter(x => x.type === 'Series');
-  if (!series.length) return;
+  if (!series.length) {
+    seasonsAnswered.value = true;
+    return;
+  }
   const groups = await Promise.all(
     series.map(async row => ({ row, s: await embyCached('seasons', row.id, () => window.echoemby.emby.seasons(row.id)) })),
   );
@@ -528,6 +677,9 @@ async function askSeasons(rows: LibraryItem[], mine: number): Promise<void> {
   const before = serverRow.value;
   const picked = seasonPick.value;
   serverSeasons.value = groups.flatMap(g => (g.s.ok ? g.s.data || [] : []).map(season => ({ row: g.row, season })));
+  // A season ask that did not come back is not an answer: the page keeps its silence about that season rather
+  // than reading it as 「no files here」, which is the one shape that lets a verdict through with no files.
+  seasonsAnswered.value = groups.every(g => g.s.ok);
   // A page with no TMDB table to open on still has to land on a season: the first one with files behind it.
   if (!picked) {
     const first = firstSeasonN(seasons.value);
@@ -642,16 +794,16 @@ function open(to: string, autoplay = false): void {
               :model-value="seasonPick"
               @update:model-value="pickSeason"
             />
-            <h2 v-else>{{ seasonTitle(season?.n, season?.name) }}</h2>
-            <span v-if="season?.voteAverage" class="qline">
+            <h2 v-else>{{ seasonLabel(season) }}</h2>
+            <span v-if="season && seasonVote" class="qline">
               <span class="qn">本季评分</span>
               <a
                 class="qv"
                 :href="`https://www.themoviedb.org/tv/${props.tmdbId}/season/${season.n}`"
                 target="_blank"
                 rel="noreferrer"
-                :title="`TMDB ${seasonTitle(season.n, season.name)} 评分`"
-                >TMDB <i>{{ season.voteAverage.toFixed(1) }}</i></a
+                :title="`TMDB ${seasonLabel(season)} 评分`"
+                >TMDB <i>{{ seasonVote.toFixed(1) }}</i></a
               >
             </span>
           </div>

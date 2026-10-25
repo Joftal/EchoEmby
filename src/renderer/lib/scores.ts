@@ -24,22 +24,79 @@ export function tmdbKind(item: LibraryItem | null | undefined): 'movie' | 'tv' |
 
 export const SEASON_TRUST = 0.67;
 
-/** TMDB's row for one season number, believed only while both sides agree about how big that season is.
- *  Measured over 9 awkward shows and a 73-season sweep: where the numbering itself diverges — 物语 files
- *  seasons 11-25 where TMDB stops at 5, 咒术回战 has a 季 3 TMDB never heard of — there is simply no row to
- *  match, so that fallback costs no threshold. What a number still has to decide is the split-cour case:
+/** Whether the two sides' counts can be one season. Split out so `pairedSeason` can run the same test when
+ *  no numbering ever arrives to do it better. */
+const countsAgree = (t: TmdbSeasonRow, count?: number): boolean => {
+  const a = count || 0;
+  const b = t.epCount || 0;
+  return !a || !b || Math.min(a, b) / Math.max(a, b) >= SEASON_TRUST;
+};
+
+/** TMDB's row for one season number, believed while the two counts agree about how big that season is.
+ *  Kept for the surfaces that hold a count and nothing else: the player's season chips, and each page's
+ *  picker rows for the seasons nobody has opened. Where the numbering itself diverges there is simply no row
+ *  to match — 物语 files seasons 11-25 where TMDB stops at 5, 咒术回战 has a 季 3 TMDB never heard of — so a
+ *  divergence like that costs no threshold. What a count still has to decide is the split-cour case:
  *  咒术回战's 47 against TMDB's 59 (0.80) and 【推しの子】's 24 against 35 (0.69) are one season counted two
- *  ways and keep TMDB's date and art, while 800 Meters' 1 against 3 (0.33) is a different cut. 0.67
- *  separates them: 41 pairings believed, 1 refused. Believed or not, the episode count a page prints is
- *  always the server's own, because that is the number its episode row has to match. */
+ *  ways and keep TMDB's date and art, while 800 Meters' 1 against 3 (0.33) is a different cut. */
 export function trustSeason(rows: TmdbSeasonRow[] | null | undefined, n?: number | null, count?: number): TmdbSeasonRow | null {
   if (n == null || !rows) return null;
   const t = rows.find(x => x.n === n);
+  return t && countsAgree(t, count) ? t : null;
+}
+
+/** How many of a season's own files have to land inside the season TMDB bills before that season is believed.
+ *  0.8 measured over the 389 season pairs this gateway and TMDB both name (第 0 季 included, a work filed as
+ *  several Series rows counted once by its fullest row): the count test refused 58 of the pairs the files
+ *  agree about and believed 1 the files refuse, so 0.8 moves 50 pairings onto the answer the files give.
+ *  367 of the 389 hold numbered files to judge; the other 22 keep the count test and 2 of those are refused
+ *  by it (樱桃小丸子 第 2 季 bills 566 files and numbers none). What the count could never tell apart is the
+ *  rescue: a show still airing has 3 files against TMDB's 13 exactly the way a wrongly sliced season does,
+ *  and 魔法骑士雷阿斯, PSYREN and 22 more of these 50 are the first — each of them had lost its date, its art,
+ *  its rating, its paragraph, its credits and its episode pictures for want of a partial download. 43 of the
+ *  50 also start within a day of TMDB's own date for that season, which the count test cannot see.
+ *  What the rule cannot see is the subset. 神墓's 第 2 季 holds 16 files numbered 1-16 and its first date,
+ *  2024-08-10, is TMDB's own start for 第 2 季 (学城风云, 27 episodes) to the day, so believing that pairing
+ *  is right; the same run's continuation sits under its 第 1 季 numbered 17-43, lands 0 of 27 inside and keeps
+ *  no TMDB name. But 16 files of a 27-episode season is also exactly the shape of a show still airing, and
+ *  numbering alone cannot split the two — the rule buys the airing case and takes the subset case with it. */
+export const PAIR_MIN = 0.8;
+
+export interface SeasonPairing {
+  /** TMDB's own row for the season: the untouched one out of the work-level table, not a merged list that has
+   *  already had this server's episode count written over it. Null when TMDB bills no such season, which is a
+   *  refusal that needs no threshold at all. */
+  tmdb: TmdbSeasonRow | null | undefined;
+  /** The `indexNumber` of every file this server holds for that season. The three answers mean three things
+   *  and the rule lives in the difference: `undefined` is "this season has no files here to pair" (a page
+   *  drawn from TMDB's list alone), `null` is "the file list has not come back yet", and an array is the
+   *  answer — including an empty one, which is a season with nothing numbered in it rather than a wait. */
+  files?: number[] | null;
+  /** This server's own ChildCount: the only input of the fallback that runs when no numbering is available. */
+  count?: number;
+}
+
+/** TMDB's row for a season, believed by where that season's files actually sit rather than by two counts.
+ *  `null` answers both "refused" and "not provable yet", and that is the point: a page prints a season's
+ *  marks when this returns a row and prints nothing until it does, so a verdict can only ever add to what is
+ *  on screen. Grading with the count first and the files second was the alternative and it takes a hat away —
+ *  本季评分 and the season's own name would come back off a caption the reader watched arrive, on a page whose
+ *  hydration is otherwise only ever downward.
+ *  The range is TMDB's `1..epCount`, not the per-episode numbers a page can also hold: measured against the
+ *  real numbers on the 62 pairs where those were in hand, TMDB restarts every season at 1, so the two ranges
+ *  agreed 62 of 62 and not one verdict moved. Dates were the other candidate and they are not usable: 98 of
+ *  the 402 season rows on this machine carry no PremiereDate at all, and 9 pairings both sides agree on are 2
+ *  to 1006 days apart (咒术回战 第 1 季: 59 files numbered 1-59 against TMDB's 59, 2023-07-06 against
+ *  2020-10-03). Believed or not, the episode count a page prints is always the server's own, because that is
+ *  the number its episode row has to match. */
+export function pairedSeason(p: SeasonPairing): TmdbSeasonRow | null {
+  const t = p.tmdb;
   if (!t) return null;
-  const a = count || 0;
-  const b = t.epCount || 0;
-  if (a && b && Math.min(a, b) / Math.max(a, b) < SEASON_TRUST) return null;
-  return t;
+  if (p.files === null) return null;
+  const files = p.files;
+  if (!files || !files.length || !t.epCount) return countsAgree(t, p.count) ? t : null;
+  const inside = files.filter(x => x >= 1 && x <= t.epCount).length;
+  return inside / files.length >= PAIR_MIN ? t : null;
 }
 
 /* Keyed by item, so the lobby hero and the detail page ask once for the same title, and a title that

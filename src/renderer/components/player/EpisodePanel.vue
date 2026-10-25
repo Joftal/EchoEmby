@@ -46,9 +46,18 @@ async function loadSeasons(): Promise<void> {
 }
 
 /* Several of this library's seasons are filed under nothing but 「第 1 季」 while TMDB carries the name
-   somebody actually gave them: 鬼灭's server rows say only the position, where TMDB has 「立志篇」. The same
-   threshold the detail page uses is applied here rather than reinvented, because this list is a control —
-   naming 季 1 after a season that is 800 Meters' 3 would put a lie on the button that switches what plays.
+   somebody actually gave them: 鬼灭's server rows say only the position, where TMDB has 「立志篇」. The pages
+   judge that pairing by where a season's files land (`pairedSeason`), and this list cannot: naming these chips
+   by episode numbers would cost one file request per season every time the player opens, for a caption on a
+   button. So it keeps the count test, and stays a control rather than a claim — naming 季 1 after a season
+   that is 800 Meters' 3 would put a lie on the button that switches what plays.
+   What the two rules cost here is measured over the 389 season pairs this library and TMDB both name: the
+   verdicts split on 51 of them, and only 12 of those 51 are pairs where TMDB gives the season a name beyond
+   its number. 11 of those 12 print the same words on both surfaces anyway, because this server names those
+   seasons itself (「特别篇」, 「Specials」, 石纪元's 「科学与未来」). The one that differs is 神墓 第 2 季: the
+   page reads 「第 2 季 · 学城风云」 and this chip reads 「第 2 季」 — 16 files against TMDB's 27 is the pairing
+   the files admit (its first date is TMDB's own for that season) and the counts refuse. So a chip here
+   can be plainer than the season name on the page it came from, and never wronger.
    One ask for the whole series, keyed to it, so a session that moves to another show cannot name these
    chips from the last one's table. */
 const tmdbSeasons = ref<TmdbSeasonRow[]>([]);
