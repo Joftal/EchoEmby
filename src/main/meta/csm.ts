@@ -37,11 +37,14 @@ let store: Store | null = null;
 
 const load = (): Store => {
   if (store) return store;
+  let s: Store;
   try {
-    return { guides: {}, ...JSON.parse(readFileSync(file(), 'utf8')) };
+    s = { guides: {}, ...JSON.parse(readFileSync(file(), 'utf8')) };
   } catch {
-    return { guides: {} };
+    s = { guides: {} };
   }
+  store = s;
+  return s;
 };
 
 const persist = () => {
