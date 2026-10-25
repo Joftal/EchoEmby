@@ -27,7 +27,10 @@ const CARD_SOURCES: (keyof Scores)[] = ['rt', 'imdb', 'trakt', 'bgm', 'tmdb'];
 const ORDER = ['tomato', 'corn', 'imdb', 'tmdb', 'trakt', 'bgm'];
 const scores = useScores(() => props.item, props.card ? CARD_SOURCES : undefined);
 /** TMDB first, the server second: measured on this library the server's `OfficialRating` is present on
- *  only 13-18 of 25 sampled titles, while TMDB's `content_ratings` answers for nearly all of them. */
+ *  only 13-18 of 25 sampled titles, while TMDB's `content_ratings` answers for nearly all of them.
+ *  The csm minimum-age badge sits behind this ladder rather than beside it: on the title that started
+ *  this, TMDB answered 「PG」 and csm answered 5+, and the one cell printed two unequal answers to
+ *  「适合几岁」 side by side. */
 const certText = computed(() => scores.value.tmdb?.cert || props.item.officialRating || '');
 
 interface Mark {
@@ -177,7 +180,7 @@ onBeforeUnmount(() => {
     </a>
     <span v-if="!marks.length && item.communityRating" data-k="rate" class="b rate">★ {{ item.communityRating.toFixed(1) }}</span>
     <span v-if="!card && certText" data-k="cert" class="b cert">{{ certText }}</span>
-    <span v-if="!card && scores.csm?.minAge" data-k="csm" class="b cert">{{ scores.csm.minAge }}+</span>
+    <span v-if="!card && !certText && scores.csm?.minAge" data-k="csm" class="b cert">{{ scores.csm.minAge }}+</span>
   </div>
 </template>
 
