@@ -11,8 +11,10 @@ import type { CalendarPool, CalendarQuiet, CalendarResult, CalendarSlot, Library
  *
  * Three layers, each from the one source that can actually answer it (all measured 2026-10-25 over
  * both gateways, and the numbers are in the comments where they decide something):
- *   名单  the server, for free: `SeriesStatus=Continuing` narrows 2487→641 / 1660→632 rows in one ask,
- *         and the row keeps its `ProviderIds.Tmdb`, so no title has to be guessed from a Chinese name.
+ *   名单  the server, for free: 收藏 ∪ 在看 折成剧，`SeriesStatus=Continuing` narrows 2487→641 / 1660→632
+ *         rows in one ask and those rows keep their `ProviderIds.Tmdb`, so no title has to be guessed from a
+ *         Chinese name. The label is only a pre-filter: a starred show that calls itself 已完结 on its own row
+ *         still belongs here, and reaches its id through one batched `Items?Ids=` ask when the row is an episode.
  *   日期  TMDB. A work's own reply carries `next_episode_to_air`, and the season reply underneath it
  *         carries every episode's `air_date` — which is the only future a surface here can print,
  *         because the server dates nothing ahead of today (measured: 爱情公寓 answers 124/124 episode
@@ -205,14 +207,26 @@ interface Roster {
   wanted: Map<string, LibraryItem>;
 }
 
-/** 收藏 ∪ 在看, narrowed to what the server still calls 在更. Each ask is one request and all three run
- *  together; the whole roster costs no TMDB traffic, which is why it is re-read on every open rather than
- *  cached — starring a show has to move the page. */
+/** The gateway writes the literal `None` when it has scraped no id (see stores/app.ts), so the digits test is
+ *  not decoration: `None` would otherwise be asked of TMDB as an id. */
+const isSeriesId = (v?: string): v is string => /^\d{1,8}$/.test(String(v || ''));
+
+/** 收藏 ∪ 在看. Each ask is one request and all three run together; the roster itself costs no TMDB traffic,
+ *  which is why it is re-read on every open rather than cached — starring a show has to move the page.
+ *
+ *  The subject is 「我在追的剧」, not 「服务器说还在更的剧」. Measured 2026-10-26 over both gateways, starred
+ *  shows including 爱情公寓 and 孤独摇滚 call themselves `Ended` on their own Series row, and requiring the
+ *  server's label dropped every one of them off the page. So `SeriesStatus=Continuing` stays a pre-filter
+ *  (it narrows 1660→632 rows for free) and the starred set is then walked on its own. */
 async function rosterOf(client: EmbyClient): Promise<Roster> {
-  const fields = 'ProviderIds,SeriesName';
+  // `SeriesId` is not decoration: an Episode row is how 在看 names a show, and without the id the only way to
+  // that show's own row is its title, which is the guess this layer exists to avoid.
+  const fields = 'ProviderIds,SeriesName,SeriesId';
   const [ongoing, favs, resume] = await Promise.all([
     client.items({ Recursive: true, IncludeItemTypes: 'Series', SeriesStatus: 'Continuing', Limit: ROSTER_LIMIT, Fields: fields }),
-    client.items({ Recursive: true, IncludeItemTypes: 'Series', Filters: 'IsFavorite', Limit: 400, Fields: fields }).catch(() => [] as LibraryItem[]),
+    // A starred Episode means the same follow as a starred Series, so both kinds are asked; `IsFavorite`
+    // answers nothing at all unless the types are named (see the 收藏 page's own default).
+    client.items({ Recursive: true, IncludeItemTypes: 'Series,Episode', Filters: 'IsFavorite', Limit: 400, Fields: fields }).catch(() => [] as LibraryItem[]),
     client.resumeRow(300).then((r) => r?.items ?? []).catch(() => [] as LibraryItem[]),
   ]);
 
@@ -232,10 +246,40 @@ async function rosterOf(client: EmbyClient): Promise<Roster> {
     const nm = normName(row.name);
     if (!keys.has(row.id) && !keys.has(`n${nm}`)) continue;
     const tmdb = row.providers?.tmdb;
-    // The gateway writes the literal "None" when it has scraped no id (see stores/app.ts), so the digits
-    // test is not decoration: `None` would otherwise be asked of TMDB as an id.
-    if (!tmdb || !/^\d{1,8}$/.test(tmdb)) continue;
+    if (!isSeriesId(tmdb)) continue;
     if (!wanted.has(tmdb)) wanted.set(tmdb, row);
+  }
+
+  /* The label only gets bypassed for a show this account has *starred*: starring is a promise to keep saying
+     whether it updates, while a watched row is not. Measured 2026-10-26 with the parked list allowed to
+     bypass too — the roster went 22→59 shows and the list under the timeline to 50 rows, 41 of them
+     「已完结」 and the oldest 北国之恋 from 1982, because `resumeRow(300)` also carries the recently-played
+     half, which is a shelf of everything watched lately rather than a promise to keep watching. Day cards
+     were unaffected (63 either way): every one of those shows is over. */
+  const contIds = new Set(ongoing.map((r) => r.id));
+  const missing: string[] = [];
+  for (const r of favs) {
+    if (r.type === 'Movie') continue; // a film has no schedule for this page to miss.
+    const sid = r.type === 'Series' ? r.id : r.seriesId || r.parentId;
+    if (!sid || contIds.has(sid)) continue; // already reached through the Continuing ask.
+    if (isSeriesId(r.providers?.tmdb)) {
+      const tmdb = String(r.providers?.tmdb);
+      if (!wanted.has(tmdb)) wanted.set(tmdb, r);
+      continue;
+    }
+    if (!missing.includes(sid)) missing.push(sid);
+  }
+  if (missing.length) {
+    /* One batched ask answers every show the label hid: measured 13 ids in, 13 Series rows back with a
+       numeric `ProviderIds.Tmdb`, 0.53 s / 3.9 KB on OkEmby and 0.75 s / 4.3 KB on nyamedia. The Episode row
+       itself is no help — `SeriesProviderIds` is empty on 0 of 26 parked rows, and its own `ProviderIds.Tmdb`
+       is the *episode's* id (爱情公寓's row answers 1247651 where its series is 68809). */
+    const rows = await client.items({ Ids: missing.join(','), Fields: 'ProviderIds,SeriesName' }).catch(() => [] as LibraryItem[]);
+    for (const r of rows) {
+      const tmdb = r.providers?.tmdb;
+      if (!isSeriesId(tmdb)) continue;
+      if (!wanted.has(tmdb)) wanted.set(tmdb, r);
+    }
   }
   return { wanted };
 }
@@ -492,7 +536,9 @@ export async function calendarSchedule(client: EmbyClient, from: string, to: str
          2026-07-26, 鬼灭之刃 2024-06-30). `lastAir` rides on the work reply and is never clipped; an entry
          cached before it existed answers `''`, which is the old wording. */
       lastDate: entry.lastAir || (entry.slots.length ? entry.slots[entry.slots.length - 1].date : ''),
-      ended: entry.status === 'Ended',
+      // Both of TMDB's finished states: a cancelled show would otherwise print 「上一集」 indefinitely, which
+      // reads as a pause rather than as an ending.
+      ended: entry.status === 'Ended' || entry.status === 'Canceled',
     });
   }
   // The ones that aired most recently are the ones a reader is most likely still waiting on.

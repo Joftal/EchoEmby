@@ -147,13 +147,17 @@ function noneText(): string {
  *  dated ahead, or TMDB has never put a day on it. `第N季` is dropped when TMDB never named a season at all.
  *  The year rides along whenever the date is not this page's own year — 「上一集 10/19」 for 物语系列 would
  *  otherwise be read as this October, and it was 2024. Both notes carry a date and nothing else, because the
- *  row is one line inside a 260 px column: the name beside it is what gives way. */
+ *  row is one line beside a name in a column that gives way first.
+ *
+ *  「已完结」 keeps no season label, because it is not a season's answer: TMDB's `status` speaks for the whole
+ *  work, and 「第5季 · 已完结」 reads as though one season closing were the show's news. 「上一集」 and 「未排期」
+ *  are about the season named, so they keep it. */
 function quietNote(q: CalendarQuiet): string {
   const s = q.season ? `第${q.season}季 · ` : '';
   if (!q.lastDate) return `${s}未排期`;
   const y = q.lastDate.slice(0, 4);
   const d = y === today.slice(0, 4) ? mmdd(q.lastDate) : `${y}/${q.lastDate.slice(5, 7)}/${q.lastDate.slice(8, 10)}`;
-  return `${s}${q.ended ? '已完结' : '上一集'} ${d}`;
+  return q.ended ? `已完结 ${d}` : `${s}上一集 ${d}`;
 }
 
 function openQuiet(q: CalendarQuiet): void {
@@ -701,12 +705,14 @@ h1 {
 }
 .qgrid {
   display: grid;
-  /* 304 px is the widest row this list holds today measured, not a guess: 朋友的妹妹只喜欢烦我 needs 130 px
-     of name and its note 「第1季 · 已完结 2025/12/20」 needs 155, plus the gap and the row's own padding. At
-     the old 240 the name came out 「朋友的妹妹只喜欢烦…」 while the date stayed whole — the note is
-     `flex: none`, so the subject is what gives way, which is backwards. Four columns at 1360 became three of
-     the same 352 the two-column 980 layout already had. */
-  grid-template-columns: repeat(auto-fill, minmax(304px, 1fr));
+  /* 312 px is the widest row this list can ask for, not a guess. Measured today at 1360 / 1100 / 980: the
+     longest name is 朋友的妹妹只喜欢烦我 at 130 px and it carries 「已完结 2025-12-20」 (111 px), so the rows on
+     screen need 267 px and none truncates. The ceiling is the combination that is not on screen yet: that
+     same name on a season labelled 「第1季 · 上一集 2025-09-23」 note, which measures 155 px, giving 130 plus
+     155 plus the 14 px gap plus 12 px of padding = 311. At the old 240 the name came out truncated while
+     the date stayed whole: the note is `flex: none`, so the subject was what gave way, which is backwards.
+     The higher floor costs no columns, 3 / 2 / 2 at the three widths either way. */
+  grid-template-columns: repeat(auto-fill, minmax(312px, 1fr));
   gap: 2px 14px;
 }
 .qrow {
