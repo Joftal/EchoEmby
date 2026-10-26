@@ -12,6 +12,7 @@ import { resetPageScroll } from '../lib/scroll';
 import { PLAYABLE, applyStop } from '../lib/resume';
 import { useAppStore } from '../stores/app';
 import { usePlayerStore } from '../stores/player';
+import { paneDir } from '../router';
 
 const store = useAppStore();
 const player = usePlayerStore();
@@ -458,7 +459,35 @@ function onFilters(next: Filters): void {
 /** The rail's 在看/收藏 and each library window are ONE instance of this page, so nothing is torn down
  *  between them and the reader's place in the list they were reading survives as a place in the list they
  *  never asked for: measured, a 1200-row list scrolled to its end landed on 收藏 at 197 — that is just the
- *  shorter page clamping the old offset, not a reset. */
+ *  shorter page clamping the old offset, not a reset.
+ *  One instance also means the page-level push has nothing to move: the element Vue would swap IS the
+ *  element that stays. So the shelves slide as panes of this page instead, and `shelf` is what says which
+ *  shelf owns the screen. A typed term and a filter chip are deliberately NOT in it — they move by
+ *  `router.replace`, they re-ask the same shelf, and a slide per keystroke would be a strobe. */
+const shelf = computed(() => `${kind.value}|${viewId.value}`);
+/** The last shelf this page actually owned, for the way out. `kind` and `viewId` are read off
+ *  `route.query`, so walking to 设置 empties them and the key changes on the way: the page then runs a pane
+ *  swap underneath its own page push, and the two layers travel opposite ways — measured, 收藏 leaving right
+ *  and 在看 entering left inside a window that was itself leaving left. Out of the route there is no shelf
+ *  to swap, so the key that rides out is the one the reader was on. */
+const lastShelf = ref(shelf.value);
+watch(shelf, v => {
+  if (route.name === 'browse') lastShelf.value = v;
+});
+const paneKey = computed(() => (route.name === 'browse' ? shelf.value : lastShelf.value));
+/** Which way that shelf travels: the history is the only thing that knows whether the shelf behind us is
+ *  the one we are landing on (a 返回) or the one we are leaving. */
+const paneMove = computed(() => (paneDir.value === 'pop' ? 'pane-pop' : 'pane-push'));
+
+/* The two shelves share one scroller, so the reset that puts the arriving one at its beginning drags the one
+   still on screen along with it: a 在看 list read down to 2400px jumped its first row from y=-2265 to y=135
+   in 32ms and only then slid away. The offset is taken here, one statement before the reset, and the leaving
+   shelf pays it back as `--pin` so it slides out from where the reader actually was. */
+let panePin = 0;
+function pinLeavingPane(el: Element): void {
+  (el as HTMLElement).style.setProperty('--pin', `${-panePin}px`);
+}
+
 const pageEl = ref<HTMLElement | null>(null);
 watch(
   () => route.fullPath,
@@ -468,6 +497,7 @@ watch(
     filters.value = readFilters();
     // Picking a sort on a search only re-orders the window we hold; the query is unchanged.
     if (JSON.stringify(params(0)) === lastKey) return;
+    panePin = pageEl.value?.scrollTop || 0;
     resetPageScroll(pageEl.value);
     void load(true);
   },
@@ -521,6 +551,9 @@ onMounted(async () => {
   void store.loadGenres();
   await nextTick();
   fit();
+  // The observer lives on `.panes`, the box the shelves are stacked in, not on a shelf itself: switching
+  // 在看 to 收藏 remounts that subtree, and an observer bound to the first one's element would keep
+  // measuring a detached node — the card width would simply stop following the window.
   if (window.ResizeObserver && wrapEl.value) {
     ro = new ResizeObserver(fit);
     ro.observe(wrapEl.value);
@@ -538,101 +571,107 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="pageEl" class="page">
-    <header class="head">
-      <h1>{{ title }}</h1>
+    <div ref="wrapEl" class="panes">
+      <transition :name="paneMove" type="animation" @before-leave="pinLeavingPane">
+        <div :key="paneKey" class="pane">
+          <header class="head">
+            <h1>{{ title }}</h1>
 
-      <div class="tools">
-        <label v-if="kind === 'search'" class="field">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-            <path d="M11 4.6a6.4 6.4 0 1 0 0 12.8 6.4 6.4 0 0 0 0-12.8Z" />
-            <path d="M19.4 19.4 15.6 15.6" />
-          </svg>
-          <input v-model="term" type="search" placeholder="搜索片名、剧集" spellcheck="false" />
-        </label>
-      </div>
-    </header>
+            <div class="tools">
+              <label v-if="kind === 'search'" class="field">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                  <path d="M11 4.6a6.4 6.4 0 1 0 0 12.8 6.4 6.4 0 0 0 0-12.8Z" />
+                  <path d="M19.4 19.4 15.6 15.6" />
+                </svg>
+                <input v-model="term" type="search" placeholder="搜索片名、剧集" spellcheck="false" />
+              </label>
+            </div>
+          </header>
 
-    <FilterBar
-      v-if="showBar"
-      class="fbar"
-      :filters="filters"
-      :genre-options="genreOptions"
-      :studio-options="studioOptions"
-      :is-search="isSearch"
-      @change="onFilters"
-    />
+          <FilterBar
+            v-if="showBar"
+            class="fbar"
+            :filters="filters"
+            :genre-options="genreOptions"
+            :studio-options="studioOptions"
+            :is-search="isSearch"
+            @change="onFilters"
+          />
 
-    <div ref="wrapEl" class="body">
-      <p v-if="error" class="err">{{ error }} <button @click="load(true)">重试</button></p>
+          <div class="body">
+            <p v-if="error" class="err">{{ error }} <button @click="load(true)">重试</button></p>
 
-      <div v-if="loading" ref="skEl" class="grid sk" :class="{ list: layout === 'list' }" :style="gridStyle">
-        <template v-if="layout === 'list'">
-          <div v-for="n in skCells" :key="n" class="cell list" :class="{ queue: rowVariant === 'queue' }">
-            <span class="th"></span>
-            <span class="bd">
-              <i class="k1"></i><i class="k2"></i>
-              <template v-if="rowVariant !== 'queue'">
-                <i class="o"></i><i class="o"></i><i class="o"></i>
-                <span class="gs"><i></i><i></i></span>
+            <div v-if="loading" ref="skEl" class="grid sk" :class="{ list: layout === 'list' }" :style="gridStyle">
+              <template v-if="layout === 'list'">
+                <div v-for="n in skCells" :key="n" class="cell list" :class="{ queue: rowVariant === 'queue' }">
+                  <span class="th"></span>
+                  <span class="bd">
+                    <i class="k1"></i><i class="k2"></i>
+                    <template v-if="rowVariant !== 'queue'">
+                      <i class="o"></i><i class="o"></i><i class="o"></i>
+                      <span class="gs"><i></i><i></i></span>
+                    </template>
+                    <template v-else>
+                      <i class="qc"></i>
+                    </template>
+                  </span>
+                </div>
               </template>
               <template v-else>
-                <i class="qc"></i>
+                <div v-for="n in skCells" :key="n" class="cell" :style="{ width: cardW + 'px' }"><span></span></div>
               </template>
-            </span>
+            </div>
+
+            <div v-else-if="shown.length" class="grid in" :class="{ list: layout === 'list' }" :style="gridStyle">
+              <template v-if="layout === 'list'">
+                <ListCard
+                  v-for="(it, i) in shown"
+                  :key="`${it.id}-${i}`"
+                  :item="it"
+                  :index="i % 12"
+                  :variant="rowVariant"
+                  :season="seasonOf(it)"
+                  @play="onPlay"
+                />
+              </template>
+              <template v-else>
+                <MediaCard
+                  v-for="(it, i) in shown"
+                  :key="`${it.id}-${i}`"
+                  :item="it"
+                  variant="poster"
+                  :width="cardW"
+                  :index="i % 12"
+                  @play="onPlay"
+                />
+              </template>
+            </div>
+
+            <div v-else-if="shelvesLoading" class="shelves">
+              <div v-for="n in 2" :key="n" class="rsk">
+                <div class="hd"></div>
+                <div class="cards"><span v-for="m in 8" :key="m" class="cd"></span></div>
+              </div>
+            </div>
+
+            <div v-else-if="isSearch && !term.trim() && shelves.length" class="shelves">
+              <RowScroller v-for="r in shelves" :key="r.key" :title="r.title" :items="r.items" :count="false" @play="onPlay" />
+            </div>
+
+            <p v-else-if="kind === 'search'" class="empty">
+              {{ isFiltered(filters) ? '这个筛选条件下没有内容。' : term.trim() ? '没有匹配的结果。' : '输入片名开始搜索。' }}
+            </p>
+            <p v-else-if="isFiltered(filters)" class="empty">这个筛选条件下没有内容。</p>
+            <p v-else class="empty">
+              {{ kind === 'favorites' ? '还没有收藏的内容。' : '这个列表目前是空的。' }}
+            </p>
+
+            <button v-if="hasMore && !busy && !loading" class="more" @click="load(false)">加载更多</button>
           </div>
-        </template>
-        <template v-else>
-          <div v-for="n in skCells" :key="n" class="cell" :style="{ width: cardW + 'px' }"><span></span></div>
-        </template>
-      </div>
 
-      <div v-else-if="shown.length" class="grid in" :class="{ list: layout === 'list' }" :style="gridStyle">
-        <template v-if="layout === 'list'">
-          <ListCard
-            v-for="(it, i) in shown"
-            :key="`${it.id}-${i}`"
-            :item="it"
-            :index="i % 12"
-            :variant="rowVariant"
-            :season="seasonOf(it)"
-            @play="onPlay"
-          />
-        </template>
-        <template v-else>
-          <MediaCard
-            v-for="(it, i) in shown"
-            :key="`${it.id}-${i}`"
-            :item="it"
-            variant="poster"
-            :width="cardW"
-            :index="i % 12"
-            @play="onPlay"
-          />
-        </template>
-      </div>
-
-      <div v-else-if="shelvesLoading" class="shelves">
-        <div v-for="n in 2" :key="n" class="rsk">
-          <div class="hd"></div>
-          <div class="cards"><span v-for="m in 8" :key="m" class="cd"></span></div>
         </div>
-      </div>
-
-      <div v-else-if="isSearch && !term.trim() && shelves.length" class="shelves">
-        <RowScroller v-for="r in shelves" :key="r.key" :title="r.title" :items="r.items" :count="false" @play="onPlay" />
-      </div>
-
-      <p v-else-if="kind === 'search'" class="empty">
-        {{ isFiltered(filters) ? '这个筛选条件下没有内容。' : term.trim() ? '没有匹配的结果。' : '输入片名开始搜索。' }}
-      </p>
-      <p v-else-if="isFiltered(filters)" class="empty">这个筛选条件下没有内容。</p>
-      <p v-else class="empty">
-        {{ kind === 'favorites' ? '还没有收藏的内容。' : '这个列表目前是空的。' }}
-      </p>
-
-      <button v-if="hasMore && !busy && !loading" class="more" @click="load(false)">加载更多</button>
+      </transition>
     </div>
-
     <Transition name="toast">
       <div v-if="toast" class="toast">{{ toast }}</div>
     </Transition>
@@ -650,6 +689,57 @@ onBeforeUnmount(() => {
   /* Only the left side pays for the overlay sidebar; padding the right the same way shoved the page off-centre. */
   padding: calc(var(--titlebar-h) + 22px) var(--side) 46px var(--gutter);
   transition: padding var(--rail-dur) var(--rail-ease);
+}
+/* The shelves inside this page travel the way two pages do, because switching between them swaps no
+   element: this one component answers 在看, 收藏, 搜索 and every 资源库 window, so the router has no page
+   transition to run. `.panes` is a single grid cell with each shelf stacked in it, which keeps the pair
+   from doubling the page's height for the length of the move, and the keyframes are the window's own
+   (base.css): same shape, same clock, same ease as the push between two pages. */
+.panes {
+  display: grid;
+  grid-template-columns: 100%;
+  align-items: start;
+}
+.pane {
+  grid-area: 1 / 1;
+  min-width: 0;
+}
+/* The pointer is deaf to both of them mid-move, since neither shelf is where it is going to be, and the
+   arrival paints on top so the two edges meet on a sub-pixel rather than the leaving shelf drawing over
+   the one being entered. No alpha anywhere: the page's own ground stays put under both. */
+.pane-push-enter-active,
+.pane-push-leave-active,
+.pane-pop-enter-active,
+.pane-pop-leave-active {
+  pointer-events: none;
+  will-change: transform;
+}
+.pane-push-enter-active,
+.pane-pop-enter-active {
+  z-index: 2;
+}
+/* The shelf that is leaving pays for the shared scroller's trip back to the top: `--pin` is the offset it
+   was read at, so `top` puts it back there and it slides out from the rows the reader was looking at rather
+   than from its own beginning. Relative rather than a transform, because the transform belongs to the slide,
+   and only the leaving shelf carries it: the arriving one does begin at its top. */
+.pane-push-leave-active,
+.pane-pop-leave-active {
+  --pin: 0px;
+  z-index: 1;
+  position: relative;
+  top: var(--pin);
+}
+.pane-push-enter-active {
+  animation: page-in-right var(--page-dur) var(--rail-ease) both;
+}
+.pane-push-leave-active {
+  animation: page-out-left var(--page-dur) var(--rail-ease) both;
+}
+.pane-pop-enter-active {
+  animation: page-in-left var(--page-dur) var(--rail-ease) both;
+}
+.pane-pop-leave-active {
+  animation: page-out-right var(--page-dur) var(--rail-ease) both;
 }
 .head {
   display: flex;

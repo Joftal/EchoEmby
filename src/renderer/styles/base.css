@@ -335,9 +335,11 @@ summary,
   animation: page-out-right var(--page-dur) var(--rail-ease) both;
 }
 /* `flat` gets the positioning above and no animation, which is the hard cut: Vue reads the element's own
-   computed animation duration, finds none, and removes the classes in the same tick. A navigation with
-   nowhere to go — a sibling switch inside one shelf, a re-click of the rail — must not slide back to where
-   it started. */
+   computed animation duration, finds none, and removes the classes in the same tick. Two things reach it.
+   A navigation that swaps no element at all — 详情 to 详情, one work to the next — never gets here, because
+   there is then no enter and no leave to class; the shelves inside 浏览 are that case and travel anyway, on
+   their own copy of these keyframes (BrowseView's `.panes`). The one swap that does stay flat is coming out
+   of the player: that window is transparent over mpv's picture, so nothing may slide across it. */
 
 /* Content arriving inside a page that is already up. A poster rises 14px and gives up 1.5% of its size,
    which is enough to read as placed rather than dumped; a row of text only rises, because a scale on a

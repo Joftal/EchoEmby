@@ -50,8 +50,10 @@ onMounted(() => {
       <router-view v-slot="{ Component }">
         <!-- type="animation" because the move is keyframes, not a transition (see base.css). No mode:
              both pages are on screen for the length of the push, which is the whole effect — one page
-             carries the other off. `pageDir` (router.ts) picks the direction, and 'flat' has no rules,
-             so a navigation with nowhere to go stays the hard cut it was. keep-alive covers the lobby
+             carries the other off. `pageDir` (router.ts) picks the direction, and its 'flat' is the hard
+             cut kept for the one swap that must not travel: out of the transparent player window. A
+             navigation that keeps this component instance gets no classes at all, since there is no
+             element to swap. keep-alive covers the lobby
              only: it is the one page a reader returns to often, and the one whose rebuild was
              measurable (scroll position, carousel slide and 157 card entrances all replayed). No :key
              on the component: DetailView reuses its instance across a sibling switch and that reuse is
