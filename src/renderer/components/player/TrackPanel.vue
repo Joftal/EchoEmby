@@ -4,7 +4,7 @@ import SubPopover from './SubPopover.vue';
 import SubRow from './SubRow.vue';
 import StepRow from './StepRow.vue';
 import { usePlayerStore } from '../../stores/player';
-import { langName } from '../../lib/format';
+import { langName, zhTrackWords } from '../../lib/format';
 import type { PlayerTrack, TrackSelection } from '../../../shared/types';
 
 /** Body only: the card that holds this belongs to SheetLayer, and so does its title. */
@@ -17,12 +17,21 @@ const embedded = computed(() => tracks.value.filter(t => !t.external));
 const external = computed(() => tracks.value.filter(t => t.external));
 const current = computed<TrackSelection>(() => (props.kind === 'subtitle' ? media.value.subtitle : props.kind === 'audio' ? media.value.audio : media.value.video));
 
-/** mpv numbers each kind from 1, so the row the user picks has to say which one it is. */
+/** mpv numbers each kind from 1, so the row the user picks has to say which one it is. The title is the
+ *  container's own, in whatever language the release group worked in — the same string the 播放资源 card
+ *  translates — so this menu says 巴西 and 听障 where the file said 「Brazilian Portuguese」 and 「SDH」.
+ *  A title that only re-says the language leaves the row to the language itself. */
 const rowLabel = (t: PlayerTrack): string => {
-  const named = (t.title || '').trim();
+  const said = zhTrackWords((t.title || '').trim(), t.lang || '', false);
   const lang = langName(t.lang);
-  const head = named && named !== String(t.ordinal) ? named : lang || `轨道 ${t.ordinal}`;
+  const head = said || lang || `轨道 ${t.ordinal}`;
   return `${t.ordinal}. ${head}${t.forced ? '（强制）' : ''}`;
+};
+/** The language rides beside the row only when the row does not already say it — 「12. 巴西 葡萄牙语」
+ *  needs both halves, 「12. 葡萄牙语 葡萄牙语」 says one thing twice. */
+const subLang = (t: PlayerTrack): string => {
+  const lang = langName(t.lang);
+  return lang && rowLabel(t).includes(lang) ? '' : lang;
 };
 
 const meta = (t: PlayerTrack): string => [t.selected ? '正在用' : '', t.codec ? t.codec.toUpperCase() : ''].filter(Boolean).join(' · ');
@@ -82,7 +91,7 @@ function nudgeDelay(dir: number): void {
       <span class="mark"></span>
       <span class="label">
         {{ rowLabel(t) }}
-        <span v-if="langName(t.lang)" class="sub">{{ langName(t.lang) }}</span>
+        <span v-if="subLang(t)" class="sub">{{ subLang(t) }}</span>
       </span>
       <span class="meta">{{ meta(t) }}</span>
     </button>
