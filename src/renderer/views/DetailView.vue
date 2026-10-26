@@ -678,18 +678,26 @@ const techInline = computed<LibraryItem | null>(() =>
    episode (6.0KB/0.77s on OkEmby, 23.0KB/0.79s on nyamedia) — so the ask goes out when the reader asks
    for it, and the 10-minute cache every other ask uses makes a second look at that episode instant. */
 const techPop = ref<{ id: string; title: string; item: LibraryItem | null; dead: boolean } | null>(null);
-/* The 轨道 bar is the one block a placeholder cannot read off the ask: measured on 31 episodes, 21 answer with
-   that band and 10 — every web rip of 罚罪 — answer with none, and a bar drawn for a block that never arrives
-   moves the whole sheet 43px when the file lands. A season is one release, so the page keeps the shape the
-   last answer came in and paints the next placeholder like it. The season's own id is the key, because a
-   page walks its seasons and the previous season's shape must not silence the next one's band: a guess left
-   over from 罚罪 must not silence it on an anime, and an unknown season keeps drawing it — which is the
-   answer two seasons in three. */
-const bandSeen = ref<{ key: string; band: boolean } | null>(null);
-const bandGuess = computed(() => {
-  const seen = bandSeen.value;
-  if (!seen || seen.key !== (seasonAt.value?.season?.id || '')) return true;
-  return seen.band;
+/* Three plates are a guess, because the ask has not answered yet: whether the 字幕 band appears at all, and how
+   tall the version strip, the 音频 card and that band came in. Measured 2026-10-26: 罚罪's web rips answer with
+   no band at all (10 of the 31 episodes sampled), while 小林家的龙女仆 answers 10 consecutive episodes with one
+   and the same sheet — 44 strip, 138.1 audio, 88.4 band — because one season is one release. So the page keeps
+   the shape the last answer came in and paints the next placeholder like it. The season's own id is the key,
+   because a page walks its seasons and the previous season's shape must not silence the next one's band: a
+   guess left over from 罚罪 must not silence it on an anime, and an unknown season keeps drawing it — which is
+   the answer two seasons in three.
+   With nothing seen yet the plates fall back to the smallest true answer (361 of 468 files carry one audio
+   track; every extra track adds 27.1), and only that floor is allowed to move the card: the dialog is centred,
+   so a placeholder drawn *taller* than the file would shrink it under the reader's eyes.
+   Since 2026-10-26 the 音频 card joins the guess: it used to fold into the band whenever a file had a second
+   track, and now it lists every track in its own card, which a file without audio streams is the only way to
+   empty. */
+const sheetSeen = ref<{ key: string; strip: number; aud: number; wide: number } | null>(null);
+const plate = computed(() => {
+  const seen = sheetSeen.value;
+  const same = seen && seen.key === (seasonAt.value?.season?.id || '') ? seen : null;
+  const px = (n?: number) => (n ? { height: `${n}px` } : undefined);
+  return { band: same ? same.wide > 0 : true, strip: px(same?.strip), aud: px(same?.aud), wide: px(same?.wide) };
 });
 
 async function openTech(r: BandRow): Promise<void> {
@@ -703,7 +711,19 @@ async function openTech(r: BandRow): Promise<void> {
   pop.item = row?.sources?.length ? row : null;
   pop.dead = !pop.item;
   const src = pop.item?.sources?.[0];
-  if (src) bandSeen.value = { key: seasonAt.value?.season?.id || '', band: src.audio.length > 1 || (src.subtitle?.length ?? 0) > 0 };
+  if (src) {
+    await nextTick();
+    const h = (sel: string): number => {
+      const el = document.querySelector(`.tech-pop ${sel}`);
+      return el ? Math.round(el.getBoundingClientRect().height * 10) / 10 : 0;
+    };
+    sheetSeen.value = {
+      key: seasonAt.value?.season?.id || '',
+      strip: h('.src'),
+      aud: h('.tcard.aud'),
+      wide: h('.tcard.wide'),
+    };
+  }
 }
 
 function closeTech(): void {
@@ -1630,10 +1650,10 @@ const LEVEL_WORD = ['无', '极少', '轻微', '中等', '较多', '严重'];
             <TechCard v-if="techPop.item" :item="techPop.item" />
             <p v-else-if="techPop.dead" class="tp-msg">这台服务器读不出这一集的文件参数。</p>
             <div v-else class="tp-load" aria-hidden="true">
-              <i class="strip"></i>
-              <div class="cols"><i class="video"></i><i class="audio"></i></div>
-              <i v-if="bandGuess" class="band"></i>
-              <div class="foot"><i class="name"></i><i class="date"></i></div>
+              <i class="strip" :style="plate.strip"></i>
+              <div class="cols"><i class="video"></i><i class="audio" :style="plate.aud"></i></div>
+              <i v-if="plate.band" class="band" :style="plate.wide"></i>
+              <div class="foot"><i class="date"></i></div>
             </div>
           </section>
         </div>
@@ -2059,27 +2079,23 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
 }
 .tp-x:hover { background: var(--chip-hi); color: var(--text); }
 .tp-msg { margin: 0; padding: 30px 0; font-size: 13px; color: var(--text-dim); text-align: center; }
-/* The ask is a second long, so the dialog opens on the shape of the answer rather than on a spinner:
-   every block below is one the sheet really has. */
-/* Measured against the sheet on two kinds of file: the strip is 834.4×50 wherever the episode
-   has a source, the columns come in at 409.2 wide with a 16 gutter and, on every one of the 31 episodes
-   sampled, 214.2 tall over 266.5, and the foot is a name that ellipsises beside a date pinned to the right
-   edge. Those boxes are drawn here, so the rows do not move when the data arrives.
-   The 轨道 band is the one block a placeholder cannot know about — 20/20 episodes of 罚罪 have no subtitles at
-   all, 11/11 of the anime sampled do — and it is drawn anyway at the 86.7 its single-line form measured,
-   because the alternative was a sheet that grows by a third of itself in front of the reader. */
+/* The ask is half a second (measured 2026-10-26: 443-574ms for three episodes of 爱的迫降 opened with a cold
+   cache), so the dialog opens on the shape of the answer rather than on a spinner: every block below is one the
+   sheet really has. Measured against that sheet at 1360: the strip is 834.7×44 wherever the episode has a
+   source — one line, because a lone version has nothing to compare itself against — the two columns come in at
+   216 wide over 213.9 beside 602.7 over 83.2 for one audio track and 138.1 for three, the 字幕 card is 88.4 at
+   its one label line, and the foot is a date pinned to the right edge at 187.5×20.1.
+   Which of those heights the placeholder paints, and what stays a guess, is written at `sheetSeen` above. */
 .tp-load { display: flex; flex-direction: column; gap: 16px; }
 .tp-load i { display: block; border-radius: var(--radius); background: var(--shimmer); background-size: var(--sk-tile) 100%; animation: sh 1.3s linear infinite; }
-.tp-load .strip { height: 50px; }
+.tp-load .strip { height: 44px; }
 .tp-load .cols { display: flex; gap: 16px; align-items: flex-start; }
-.tp-load .cols i { flex: 1 1 0; }
-.tp-load .video { height: 214.2px; }
-.tp-load .audio { height: 266.5px; }
-.tp-load .band { height: 86.7px; }
-.tp-load .foot { display: flex; justify-content: space-between; gap: 18px; }
+.tp-load .cols .video { flex: 0 0 216px; height: 213.9px; }
+.tp-load .cols .audio { flex: 1 1 380px; height: 83.2px; }
+.tp-load .band { height: 88.4px; }
+.tp-load .foot { display: flex; justify-content: flex-end; gap: 18px; }
 .tp-load .foot i { height: 20.1px; border-radius: 6px; }
-.tp-load .name { flex: 1 1 auto; min-width: 0; }
-.tp-load .date { flex: none; width: 186px; }
+.tp-load .date { flex: none; width: 187.5px; }
 .techpop-enter-active,
 .techpop-leave-active { transition: opacity 0.16s var(--ease); }
 .techpop-enter-from,
