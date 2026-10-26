@@ -54,8 +54,8 @@ export const episodePosition = (season?: number | null, episode?: number | null)
  *  reads. This is the one table that spells those codes out: the player's track menu, the 技术信息 card and
  *  the 资源库 language filter all read through `langName`, so a viewer who ticks 「日语」 to find a title does
  *  not then read 「日文」 inside it. The keys below are what these gateways answer with, measured over
- *  1,600 files (the newest 400 plus the first 400 by name on each): 72 distinct codes on the tracks, all
- *  of them below, and a code the table does not know prints as itself rather than as a guess.
+ *  1,600 files (the newest 400 plus the first 400 by name on each) and then topped up from a 468-file
+ *  sample on 2026-10-26; a code the table does not know prints as itself rather than as a guess.
  *  Both spellings ride along where a gateway uses ISO-639-2/B (`ice` for Icelandic, `slo` for Slovak,
  *  `baq` for Basque, `mac` for Macedonian), because 蜘蛛侠：崭新之日 carries `slo` and `slv` as two
  *  different subtitle tracks in one file, so reading `slo` as Slovenian would name one language twice. */
@@ -71,6 +71,19 @@ const LANGS: Record<string, string> = {
   baq: '巴斯克语', mac: '马其顿语', div: '迪维希语', msa: '马来语', tgl: '他加禄语', tam: '泰米尔语',
   tel: '泰卢固语', kan: '卡纳达语', mal: '马拉雅拉姆语', de: '德语', es: '西班牙语', id: '印尼语',
   ja: '日语', ko: '韩语', th: '泰语', vi: '越南语', 'pt-br': '葡萄牙语（巴西）', 'zh-cn': '中文（简）', 'zh-tw': '中文（繁）',
+  // The tier a 468-file re-sample on 2026-10-26 still found printing as itself: `arm`/`geo`/`alb` are the
+  // ISO-639-2/B spellings of three languages already above under their 639-2/T names, and `mul` is the
+  // server's way of saying a track is not one language. `tc` is left alone — nothing in these replies
+  // says what it means, and a guess would be worse than the code.
+  aze: '阿塞拜疆语', arm: '亚美尼亚语', hye: '亚美尼亚语', geo: '格鲁吉亚语', kat: '格鲁吉亚语',
+  kaz: '哈萨克语', khm: '高棉语', kir: '吉尔吉斯语', alb: '阿尔巴尼亚语', sqi: '阿尔巴尼亚语',
+  srd: '撒丁语', mul: '多语言',
+  // Dialects a track title can name while the Language field stays broad: 寒战's dubs come coded `chi`
+  // titled 「Mandarin」, and Obsession's `mul` track is titled 「Swiss German, France」.
+  cmn: '普通话', gsw: '瑞士德语',
+  // The subtitle scene's two-letter script codes, measured 2026-10-26 on 鬼灭之刃 S01E05 (`tc` was the
+  // one stream language left printing as itself): on a CJK release `sc`/`tc` are 简/繁 and nothing else.
+  sc: '中文（简）', tc: '中文（繁）',
 };
 
 export const langName = (code?: string): string => {
@@ -79,6 +92,358 @@ export const langName = (code?: string): string => {
   if (key.startsWith('zh-hant')) return '中文（繁）';
   if (key.startsWith('zh-hans')) return '中文（简）';
   return LANGS[key] || code;
+};
+
+/** The one place a track's own words are turned into the reader's language. A release group names its
+ *  tracks in whatever language it works in, and measured 2026-10-26 over 471 files / 3,124 subtitle
+ *  streams both gateways answer with 544 labels a Chinese reader cannot read: the language's own
+ *  spelling (Deutsch ×15, čeština, magyar, 한국어, ไทย, العربية), a region in that spelling (Português
+ *  Brasil, Español Latinoamérica, Español España), an English region adjective (European ×18, Latin
+ *  American ×16, Brazilian ×10), and SDH ×74. Every one of them restates or qualifies the language the
+ *  row already heads in Chinese, so each word is resolved and re-said in Chinese here: language names in
+ *  any of their spellings drop when they name the track's own language and become their Chinese name
+ *  when they name another (Mandarin under a 中文 head is 普通话, which is news); region words become
+ *  Chinese region names; SDH/CC become 听障. What no table can resolve — a format code (ASS, PGSSUB),
+ *  a person's name in a commentary credit — rides along as it came, because a guess would be a lie.
+ *  Returns '' when nothing survives, which is the caller's signal that the title said nothing the
+ *  language heading does not already say. */
+const EN_LANG = new Intl.DisplayNames(['en'], { type: 'language' });
+const ZH_LANG = new Intl.DisplayNames(['zh-Hans'], { type: 'language' });
+const ZH_REGION = new Intl.DisplayNames(['zh-Hans'], { type: 'region' });
+export const enName = (code?: string): string => {
+  if (!code) return '';
+  try {
+    return EN_LANG.of(code.toLowerCase()) || '';
+  } catch {
+    return '';
+  }
+};
+export const zhName = (code?: string): string => {
+  if (!code) return '';
+  try {
+    return ZH_LANG.of(code.toLowerCase()) || '';
+  } catch {
+    return '';
+  }
+};
+/** Case, accents and punctuation are not facts about a language: `Intl` spells `nob` as 「Bokmål」 while
+ *  the file spells it 「Bokmal」. One fold for every side of every compare below. */
+export const fold = (s: string): string =>
+  s
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+/** `fold` erases every script but Latin, and that is exactly the spelling an endonym comes in — 「ไทย」,
+ *  「한국어」, 「العربية」 — as well as a region named in its own country's words (ಭಾರತ). Those need a
+ *  second key: the same string with case, spaces and punctuation off and the letters left alone. */
+const rawKey = (s: string): string => s.normalize('NFC').toLowerCase().replace(/[\s\-_/.,:;()[\]{}（）「」]/g, '');
+/** The locale a code's own speakers read it in — `de` for `ger`, `nb` for `nob` — which is where the
+ *  endonym comes from: the title says 「Deutsch」 and only a German-locale DisplayNames call knows that
+ *  is the German name of German. */
+const LOCALE: Record<string, string> = {
+  chi: 'zh', zho: 'zh', chs: 'zh', zht: 'zh', cht: 'zh', yue: 'zh', sc: 'zh', tc: 'zh', eng: 'en', en: 'en',
+  jpn: 'ja', ja: 'ja', kor: 'ko', ko: 'ko', fre: 'fr', fra: 'fr', ger: 'de', deu: 'de', de: 'de', spa: 'es',
+  es: 'es', ita: 'it', rus: 'ru', por: 'pt', tha: 'th', th: 'th', vie: 'vi', vi: 'vi', ind: 'id', id: 'id',
+  may: 'ms', msa: 'ms', fil: 'fil', ara: 'ar', bul: 'bg', cze: 'cs', hun: 'hu', swe: 'sv', dut: 'nl',
+  nld: 'nl', fin: 'fi', rum: 'ro', gre: 'el', hin: 'hi', tur: 'tr', nob: 'nb', nor: 'no', dan: 'da',
+  pol: 'pl', slo: 'sk', slv: 'sl', lit: 'lt', lav: 'lv', est: 'et', ice: 'is', heb: 'he', ukr: 'uk',
+  hrv: 'hr', srp: 'sr', cat: 'ca', glg: 'gl', baq: 'eu', mac: 'mk', div: 'dv', tgl: 'tl', tam: 'ta',
+  tel: 'te', kan: 'kn', mal: 'ml', aze: 'az', arm: 'hy', hye: 'hy', geo: 'ka', kat: 'ka', kaz: 'kk',
+  khm: 'km', kir: 'ky', alb: 'sq', sqi: 'sq', srd: 'sc', cmn: 'zh', gsw: 'gsw',
+};
+const endonymCache = new Map<string, string>();
+const endonym = (code: string): string => {
+  const hit = endonymCache.get(code);
+  if (hit !== undefined) return hit;
+  let out = '';
+  try {
+    out = new Intl.DisplayNames([LOCALE[code] || code], { type: 'language' }).of(code) || '';
+  } catch {
+    out = '';
+  }
+  endonymCache.set(code, out);
+  return out;
+};
+/** Spellings a title can carry for one language code: the English name, the Chinese one, the code and
+ *  its aliases, and the endonym. 「Bahasa Indonesia」 is what an Indonesian release calls Indonesian
+ *  while CLDR's id endonym is just 「Indonesia」, so the measured spellings ride beside the computed ones. */
+const EXTRA_SPELLINGS: Record<string, string> = {
+  'bahasa indonesia': 'ind', 'bahasa malaysia': 'may', 'bahasa melayu': 'may',
+  // `Intl` answers 「Chinese」 for `cmn` in V8 and in Chromium alike, so the word a release group uses
+  // for 普通话 — 6 audio tracks in the census, every one under a 中文 head where it is the only thing
+  // telling two dubs apart — never resolves on its own. 国语 is the same track spelled in Latin.
+  'mandarin': 'cmn', 'guoyu': 'cmn', 'putonghua': 'cmn',
+};
+let LANG_SPELLINGS: Map<string, string> | null = null;
+function langSpellings(): Map<string, string> {
+  if (LANG_SPELLINGS) return LANG_SPELLINGS;
+  const m = new Map<string, string>();
+  const put = (spelling: string, code: string) => {
+    for (const key of [fold(spelling), rawKey(spelling)]) if (key && !m.has(key)) m.set(key, code);
+  };
+  for (const code of Object.keys(LANGS)) {
+    put(code, code);
+    put(LANGS[code], code);
+    put(enName(code), code);
+    put(zhName(code), code);
+    put(endonym(code), code);
+  }
+  for (const [spelling, code] of Object.entries(EXTRA_SPELLINGS)) put(spelling, code);
+  LANG_SPELLINGS = m;
+  return m;
+}
+/** Region adjectives have no region code of their own — 「European」 is not a place `Intl` can name — so
+ *  the few the corpus holds map by hand onto the region that means them: 150 is Europe, 419 Latin America. */
+const REGION_ADJ: Record<string, string> = {
+  european: '150', 'latin american': '419', british: 'GB', castilian: 'ES', parisian: 'FR',
+  metropolitan: 'FR', swiss: 'CH', brazilian: 'BR', canadian: 'CA',
+};
+/** A language tag written out as the whole title — 「Zh-hk [AAC 2.0]」 — where the language half is the
+ *  heading and the region half is the only news. `zh-cn` and `zh-tw` are in `LANGS` already; these are
+ *  the ones that are not, and each names a place rather than guessing which dialect was recorded. */
+const LANG_TAG_REGION: Record<string, string> = { 'zh hk': 'HK', 'zh mo': 'MO', 'zh sg': 'SG', 'zh ch': 'CN' };
+/** Words about a track that are not a language and not a place, in the reader's own words. SDH and CC
+ *  are the same fact — subtitles for viewers who cannot hear the track — and 74 tracks carried one of them. */
+const WORDS_ZH: [string, string][] = [
+  ['audio descripition', '口述影像'], ['audio description', '口述影像'], ['closed captions', '听障'],
+  ['hearing impaired', '听障'], ['sdh', '听障'], ['cc', '听障'], ['commentary', '评论'],
+  ['full', '完整'], ['original', '原声'], ['dubbed', '配音'], ['dub', '配音'], ['forced', '强制'],
+  // A script, not a place: 搏击俱乐部's Serbian track is titled 「Latin」 for the alphabet it is set in.
+  ['latin', '拉丁'],
+  // What a French MULTI release calls its two dubs: VO the original, VFQ the Quebec one.
+  ['vo', '原声'], ['vfq', '加拿大'],
+  ['compatibility track', '兼容'], ['compatibility', '兼容'], ['track', ''],
+  // Under a 中文 heading these two are not restating it — they are the script, which is the fact two
+  // audio tracks of one Chinese film are told apart by, so they translate instead of dropping.
+  ['simplified', '简体'], ['traditional', '繁体'],
+  // Two dubs of one Japanese file, told apart by who is talking over it. They are the only words on those
+  // tracks, so a card that could not read them would print two identical rows.
+  ['キャストコメンタリー', '演员评论'], ['スタッフコメンタリー', '制作人员评论'],
+];
+/** Subtitle container names. They stay as codes on purpose — ASS and PGSSUB are the formats' own names,
+ *  the way mkv and HEVC are elsewhere on the same card — but spelled the one way the card spells them. */
+const FORMAT: Record<string, string> = {
+  srt: 'SRT', subrip: 'SRT', ass: 'ASS', ssa: 'SSA', pgssub: 'PGS', sup: 'PGS', pgs: 'PGS',
+  vtt: 'VTT', webvtt: 'VTT',
+};
+/** Codec and channel vocabulary: words a track title borrows from the fields the row already prints
+ *  (「English DTS-HD Master Audio 5.1 @ 3310 kbps」 over 「英语 · DTS · 5.1 · 3.3 Mbps」). A token matches
+ *  with its trailing digits off, so DDP5.1 is DDP. */
+const CODEC_WORDS = new Set([
+  'dolby', 'digital', 'plus', 'ddp', 'dd', 'dts', 'hd', 'master', 'atmos', 'truehd', 'ac', 'ac3',
+  'eac3', 'aac', 'pcm', 'lpcm', 'flac', 'express', 'surround', 's16le', 'with', 'audio', 'ch',
+  'channels', 'kbps', 'mbps', 'hz', 'khz', 'stereo', 'mono', 'x', 'dtsx', 'adts',
+]);
+/** ISO 3166-1 alpha-2 plus the UN blocks a release group writes as a number (`Spanish 419`) or as the
+ *  whole world (`العربية العالم` = Arabic, world). `Intl.supportedValuesOf('region')` is not in this
+ *  runtime, so the code list is the constant it would have returned. */
+const REGION_CODES = (
+  'AD AE AF AG AL AM AO AR AT AU AZ BA BB BD BE BF BG BH BI BJ BN BO BR BS BT BW BY BZ CA CD CF CG CH ' +
+  'CI CL CM CN CO CR CU CV CY CZ DE DJ DK DM DO DZ EC EE EG ER ES ET FI FJ FM FR GA GB GD GE GH GM GN ' +
+  'GQ GR GT GW GY HN HR HT HU ID IE IL IN IQ IR IS IT JM JO JP KE KG KH KI KM KN KP KR KW KZ LA LB LC ' +
+  'LI LK LR LS LT LU LV LY MA MC MD ME MG MH MK ML MM MN MR MT MU MV MW MX MY MZ NA NE NG NI NL NO NP ' +
+  'NR NZ OM PA PE PG PH PK PL PS PT PW PY QA RO RS RU RW SA SB SC SD SE SG SI SK SL SM SN SO SR SS ST ' +
+  'SV SY SZ TD TG TH TJ TL TM TN TO TR TT TV TW TZ UA UG US UY UZ VA VC VE VN VU WS YE ZA ZM ZW ' +
+  '001 002 005 009 011 013 014 015 017 018 019 021 029 030 034 035 039 053 054 057 061 142 143 145 ' +
+  '150 151 154 155 202 419'
+).split(' ');
+const REGION_LOCALES = ['en', 'es', 'pt', 'fr', 'de'];
+const regionIndexCache = new Map<string, Map<string, string>>();
+/** Region names in the languages a release group writes them in, plus the track's own — 「Brasil」 is
+ *  Portuguese, 「Latinoamérica」 Spanish, 「ಭಾರತ」 Kannada. Built on first need: a sheet whose titles are
+ *  all Chinese never pays for it. */
+function regionIndex(locale: string): Map<string, string> {
+  const hit = regionIndexCache.get(locale);
+  if (hit) return hit;
+  const m = new Map<string, string>();
+  const locales = [...REGION_LOCALES, locale];
+  for (const loc of locales) {
+    let dn: Intl.DisplayNames;
+    try {
+      dn = new Intl.DisplayNames([loc], { type: 'region' });
+    } catch {
+      continue;
+    }
+    for (const code of REGION_CODES) {
+      let name = '';
+      try {
+        name = dn.of(code) || '';
+      } catch {
+        continue;
+      }
+      for (const key of [fold(name), rawKey(name)]) if (key && !m.has(key)) m.set(key, code);
+    }
+  }
+  regionIndexCache.set(locale, m);
+  return m;
+}
+const regionZh = (code: string): string => {
+  // CLDR's zh-Hans names Taiwan bare while Hong Kong and Macau carry 中国; one island list should not
+  // read as three countries' worth of regions.
+  if (code === 'TW') return '中国台湾';
+  // The same CLDR file spells Hong Kong and Macau out to 中国香港特别行政区 and 中国澳门特别行政区, which is
+  // four times the width of every other region name on this card and says no more than the short form.
+  if (code === 'HK') return '中国香港';
+  if (code === 'MO') return '中国澳门';
+  // Chromium's zh-Hans CLDR has no name for the UN block 150 and hands the code straight back, where the
+  // same call in Node answers 欧洲 — measured 2026-10-26, and the difference put 「西班牙语 150」 on screen.
+  if (code === '150') return '欧洲';
+  try {
+    const name = ZH_REGION.of(code) || '';
+    // An unknown code comes back as itself, which on this card would read as a word nobody translated.
+    return name === code ? '' : name;
+  } catch {
+    return '';
+  }
+};
+/** A commentary credit is a fixed sentence around proper nouns: 「Commentary by director Robert
+ *  Zemeckis, producer Steve Starkey, and production designer Rick Carter」. The roles translate, the
+ *  names are names and stay. */
+/** What a Chinese language name adds over the heading it sits under, when the addition is a script. */
+const scriptOf = (rest: string): string => {
+  const inner = rest.replace(/[（）()]/g, '');
+  return inner === '简' ? '简体' : inner === '繁' ? '繁体' : inner;
+};
+const translateRoles = (s: string): string =>
+  /commentary/i.test(s)
+    ? s
+        .replace(/production designer/gi, '美术指导')
+        .replace(/\bdirector\b(?:\s*\/\s*(?:writer|editor)\b)+/gi, '导演/编剧/剪辑')
+        .replace(/\bdirector\b/gi, '导演')
+        .replace(/\bwriter\b/gi, '编剧')
+        .replace(/\beditor\b/gi, '剪辑')
+        .replace(/\bproducer\b/gi, '制片人')
+        .replace(/\band\b/gi, '、')
+        .replace(/,\s*/g, '、')
+        .replace(/\bby\b/gi, ' ')
+        .replace(/commentary/gi, '评论')
+        .replace(/、\s+/g, '、')
+        .replace(/、{2,}/g, '、')
+        .replace(/\s{2,}/g, ' ')
+        .trim()
+    : s;
+
+export const zhTrackWords = (title: string, code: string, keepFormats: boolean): string => {
+  const head = langName(code);
+  const spellings = langSpellings();
+  const regions = regionIndex(LOCALE[code] || code || 'en');
+  // The separators are not words: 「Eng/SUP」, 「guoyu_cmfa4hd4_51」 and 「English-DD_5.1」 carry their
+  // parts glued together, and every part has an entry of its own below. A bracket is a separator too, and
+  // a load-bearing one — 阿甘正传's five audio tracks are 「Chinese(德加拉国配)-DD_5.1」 and its sibling
+  // 「Chinese(央视国配)-DD_5.1」, where the only word telling them apart sits inside brackets glued to a
+  // word `fold` can read. Left glued, the Latin half matches the heading and takes the Chinese name down
+  // with it, and the two rows print identically.
+  const tokens = translateRoles(title || '')
+    .replace(/[（(\[]/g, ' $& ')
+    .replace(/[）)\]]/g, ' $& ')
+    .split(/[\s\-_/]+/)
+    .filter(Boolean);
+  // A token the fold cannot see — 「德加拉国配」, 「ไทย」 — is one no Latin key can stand for, so a
+  // multi-token match that spans it would be claiming words it never read: `fold` turns
+  // 「Chinese ( 德加拉国配 )」 into plain `chinese`, which is the heading, and the name that made the
+  // track itself goes with it. Those tokens are matched one at a time, on their own spelling.
+  const blind = tokens.map(t => !fold(t) && !!rawKey(t));
+  const out: string[] = [];
+  for (let i = 0; i < tokens.length; ) {
+    const tok = tokens[i];
+    // Punctuation the split left standing — the 「@」 of a bitrate, the colon of 「VFQ : Full」. Tested as
+    // ASCII because a Chinese or Japanese token folds to nothing too and is a word, not a separator.
+    if (/^[\x20-\x7e]+$/.test(tok) && !fold(tok)) {
+      i++;
+      continue;
+    }
+    const rest = tokens.slice(i);
+    const joined = (n: number) => fold(rest.slice(0, n).join(' '));
+    const joinedRaw = (n: number) => rawKey(rest.slice(0, n).join(' '));
+    // Longest match first: 「Latin America」 is one region, not an adjective plus a continent.
+    let took = 0;
+    let said = '';
+    for (let n = Math.min(rest.length, 4); n >= 1 && !took; n--) {
+      if (n > 1 && blind.slice(i, i + n).some(Boolean)) continue;
+      const k = joined(n);
+      const kr = joinedRaw(n);
+      if (!k && !kr) continue;
+      const lang = (k && spellings.get(k)) || spellings.get(kr);
+      if (lang) {
+        const zh = langName(lang);
+        took = n;
+        // The track's own language, in any spelling, is the heading saying itself a second time. A
+        // heading of bare 中文 over a title saying 中文（简） keeps the half that is news; a track with no
+        // language at all keeps the name, since nothing down there is saying it yet.
+        said = !head
+          ? zh
+          : zh === head || head.startsWith(zh)
+            ? ''
+            : zh.startsWith(head)
+              ? scriptOf(zh.slice(head.length))
+              : zh;
+        continue;
+      }
+      const adj = REGION_ADJ[k] || LANG_TAG_REGION[k] || REGION_ADJ[kr] || LANG_TAG_REGION[kr];
+      if (adj) {
+        took = n;
+        said = regionZh(adj);
+        continue;
+      }
+      const region = (k && regions.get(k)) || regions.get(kr);
+      if (region) {
+        took = n;
+        said = regionZh(region);
+        continue;
+      }
+      const word = WORDS_ZH.find(([w]) => w === k || w === kr)?.[1];
+      if (word) {
+        took = n;
+        said = word;
+        continue;
+      }
+      if (n === 1) {
+        const fmt = FORMAT[k];
+        if (fmt) {
+          took = 1;
+          said = keepFormats ? fmt : '';
+          continue;
+        }
+        // A place written as its own code — 「Spanish 419」 — where `Intl` knows the name and not the
+        // code. Uppercase only, so 「in」 or 「no」 inside a commentary credit is not India or Norway.
+        if (/^[A-Z0-9]{2,3}$/.test(tok) && REGION_CODES.includes(tok)) {
+          took = 1;
+          said = regionZh(tok);
+          continue;
+        }
+        // The numbers and codec words the row's own fields already print, with whatever punctuation the
+        // split left on them: 「5.1]」 is 5.1 and 「[Dolby」 is Dolby.
+        const bare = k.replace(/[^a-z0-9]/g, '');
+        if (CODEC_WORDS.has(bare) || CODEC_WORDS.has(bare.replace(/\d+$/, '')) || /^\d+$/.test(bare)) {
+          took = 1;
+          said = '';
+          continue;
+        }
+        // An encoder's own token rather than a word — 「cmfa4hd4」, 「hd2」, 「10bit」 — which no table in
+        // here has and no reader on this card is looking for.
+        if (/^[a-z]+\d+[a-z0-9]*$/.test(bare) || /^\d+[a-z]+$/.test(bare) || /^[a-z]$/.test(bare)) {
+          took = 1;
+          said = '';
+          continue;
+        }
+      }
+    }
+    if (took) {
+      if (said && out[out.length - 1] !== said) out.push(said);
+      i += took;
+    } else {
+      out.push(tokens[i]);
+      i++;
+    }
+  }
+  const z = out.join(' ').replace(/\s{2,}/g, ' ').trim();
+  // 「挪威语」 left over under a 挪威语 heading is the heading twice, and the fold is what catches the
+  // spelling the file used for it. A result written in Chinese folds to nothing, so the fold only counts
+  // when it says something: 听障 under a 英语 heading is the whole point of the pass and is not the
+  // heading twice, however empty both sides look to `fold`.
+  return z && z !== head && !(fold(z) && fold(z) === fold(head)) ? z : '';
 };
 
 /** Half the episodes on this server have no title of their own and come named 「第 2 集」, 「27」 or
