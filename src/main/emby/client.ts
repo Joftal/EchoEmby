@@ -155,6 +155,7 @@ const mapStreams = (raw: any): MediaStreamInfo[] =>
     profile: v.Profile,
     isDefault: v.IsDefault,
     isForced: v.IsForced,
+    isExternal: v.IsExternal,
   }));
 
 /** One version the server can serve. The id is what every progress report and every stream URL has to
@@ -170,6 +171,7 @@ const mapSources = (raw: any): PlaybackSource[] => {
       index,
       name: s.Name,
       container: s.Container,
+      protocol: s.Protocol,
       bitRate: s.Bitrate,
       sizeBytes: s.Size,
       video: streams.find(x => x.type === 'Video'),

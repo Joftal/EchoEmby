@@ -163,8 +163,9 @@ export interface LibraryItem {
   /** Detail endpoint only: the list payload does not carry People. */
   people?: Person[];
   /** Detail endpoint only: the technical description of the file the server can actually serve.
-   *  A source is one container with its video/audio/subtitle streams; this library only ever has one
-   *  per item, so it feeds the 视频/音频 table, not a source switcher. */
+   *  A source is one container with its video/audio/subtitle streams, and an item can hold several —
+   *  measured 6 of 444 files here carry a 2160p and a 1080p version of the same title. The 播放资源
+   *  sheet expands the first and lists the rest. */
   sources?: PlaybackSource[];
   /** Detail endpoint only: when the item entered the library. */
   dateCreated?: string;
@@ -437,16 +438,22 @@ export interface MediaStreamInfo {
   profile?: string;
   isDefault?: boolean;
   isForced?: boolean;
+  /** True when the track is a sidecar the server found next to the file rather than a stream inside it. */
+  isExternal?: boolean;
 }
 
-/** One playable version the server holds for an item. This library keeps exactly one per item, but the
- *  shape is a list because the API is, and the panel has to say something when there is only one. */
+/** One playable version the server holds for an item. Measured 2026-10-26 this is not always a list of one:
+ *  6 of 444 sampled files carry two (挽救计划 2160p/29.72 GB beside 1080p/5.09 GB), so anything reading
+ *  `sources[0]` owes the reader a hint that a second version exists. */
 export interface PlaybackSource {
   /** MediaSources[].Id — the id every progress report has to name. */
   id: string;
   index: number;
   name?: string;
   container?: string;
+  /** `File` when the bytes sit on the server's own disk, `Http` for a referral. Measured on 474 of 474
+   *  sampled sources, so the version strip can say where a file is instead of painting a ✓ on it. */
+  protocol?: string;
   bitRate?: number;
   sizeBytes?: number;
   video?: MediaStreamInfo;
