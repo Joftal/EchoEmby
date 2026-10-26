@@ -4,19 +4,17 @@ import type { CalendarPool } from '../../shared/types';
  *  → 韩剧 → 美剧) and 其他 keeps the last seat, because it holds whatever language this ladder does not
  *  name rather than another region.
  *
- *  One table because one colour paints three surfaces — the chip's dot, the day card's dot and the
- *  「还没排上」 row's dot — and a colour written twice is a colour that can disagree. It already had: 其他
- *  had no rule in the card's CSS and fell back to `--text-faint` while its chip was `#6b6b78`. */
-export const CAL_POOLS: { key: CalendarPool; label: string; color: string }[] = [
-  { key: 'cn', label: '国产剧', color: '#2f6bed' },
-  { key: 'cnova', label: '国创', color: '#b8611a' },
-  { key: 'jp', label: '日番', color: '#7b4bd1' },
-  { key: 'kr', label: '韩剧', color: '#b03a67' },
-  { key: 'en', label: '美剧', color: '#1f7a63' },
-  { key: 'other', label: '其他', color: '#6b6b78' },
+ *  The档 used to be painted: one colour keyed the chip's dot, the day card's dot and the 「还没排上」 row's
+ *  dot, from this one table so the three could not disagree. All three marks are gone now — a chip says its
+ *  own name and carries its count, and a colour with nothing left to key off is a second way of saying what
+ *  the words already say. */
+export const CAL_POOLS: { key: CalendarPool; label: string }[] = [
+  { key: 'cn', label: '国产剧' },
+  { key: 'cnova', label: '国创' },
+  { key: 'jp', label: '日番' },
+  { key: 'kr', label: '韩剧' },
+  { key: 'en', label: '美剧' },
+  { key: 'other', label: '其他' },
 ];
 
-const find = (p: CalendarPool | ''): { label: string; color: string } | undefined => CAL_POOLS.find((x) => x.key === p);
-
-export const poolColor = (p: CalendarPool | ''): string => find(p)?.color || '';
-export const poolLabel = (p: CalendarPool | ''): string => find(p)?.label || '';
+export const poolLabel = (p: CalendarPool | ''): string => CAL_POOLS.find((x) => x.key === p)?.label || '';

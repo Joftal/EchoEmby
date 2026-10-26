@@ -4,7 +4,6 @@ import { useRouter } from 'vue-router';
 import type { CalendarSlot } from '../../../shared/types';
 import { episodeName } from '../../lib/format';
 import { genreLabel } from '../../lib/genres';
-import { poolColor } from '../../lib/pools';
 import { vReveal } from '../../lib/reveal';
 
 /** One update on the 追剧日历's day timeline: the work's poster on the left, the show and its kind beside
@@ -16,8 +15,11 @@ import { vReveal } from '../../lib/reveal';
  *
  *  The bottom line states what it knows and stays quiet about what it does not: a clock is printed for a
  *  day that has passed too, because 「昨天 11:00」 is the answer to 「我是不是错过了」, and a 跳票 sentence
- *  rides beside the clock rather than behind it — Bilibili gives both for one row, and the pair is the
- *  useful reading (it was due at 11:00 and it slipped). */
+ *  takes a line of its own under it — Bilibili writes both for one row, and the pair is the useful reading
+ *  (it was due at 11:00 and it slipped). Its own line because the sentence is Bilibili's wording and not a
+ *  fixed length: measured 2026-10-26, the 9-character reason it actually served that week needed 117 px and
+ *  the footer has 245 at the narrowest card the grid produces, so riding beside the clock cost the bar its
+ *  whole width and then painted 78 px past the card edge (`.slot` does not clip). */
 const props = defineProps<{ slot: CalendarSlot; past: boolean }>();
 
 const router = useRouter();
@@ -62,7 +64,7 @@ function open(): void {
         <template v-else>{{ slot.name.slice(0, 1) }}</template>
       </span>
       <span class="bd">
-        <b class="nm"><i class="dot" :style="{ background: poolColor(slot.pool) }"></i>{{ slot.name }}</b>
+        <b class="nm">{{ slot.name }}</b>
         <i v-if="meta" class="kind">{{ meta }}</i>
         <em v-if="tail" class="epn">{{ tail }}</em>
 
@@ -70,7 +72,9 @@ function open(): void {
           <span class="pos">
             第{{ slot.season }}季
             <b v-if="slot.seasonTotal">集<u>{{ slot.episode }}</u>/{{ slot.seasonTotal }}</b>
-            <b v-else>集 {{ slot.episode }}</b>
+            <!-- No space: the counted branch above renders 「集1/2」, and the same mark on a card whose
+                 season has no denominator has to read the same way. -->
+            <b v-else>集{{ slot.episode }}</b>
           </span>
           <span v-if="segs" class="bar seg">
             <i v-for="n in segs" :key="n" :class="{ f: n <= slot.episode }"></i>
@@ -167,20 +171,6 @@ button.slot:active {
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-/* The pool dot rides inside the name line, because the name is the one line that must not wrap: as a flex
-   sibling it would be the thing that gets squeezed and the title would ellipsis at half its length. */
-.dot {
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  margin-right: 6px;
-  vertical-align: 0.12em;
-  border-radius: 50%;
-  /* The colour itself comes from lib/pools.ts, inline, because the chip's dot and the 「还没排上」 row's dot
-     say the same thing and must not be painted from a second copy of the table. This is only the floor for
-     a pool the table does not know. */
-  background: var(--text-faint);
-}
 .kind {
   font-size: 13px;
   font-style: normal;
@@ -203,6 +193,8 @@ button.slot:active {
 
 .foot {
   display: flex;
+  /* The 跳票 line below is the second row of this box; see `.dly`. */
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   min-width: 0;
@@ -274,7 +266,10 @@ button.slot:active {
   background: var(--chip);
 }
 .dly {
-  flex: none;
+  /* A whole line to itself, and it wraps rather than truncates: the sentence is Bilibili's, so its length
+     is not ours to promise anything about, and an ellipsis would hide the reason the card exists to give. */
+  flex: 1 1 100%;
+  min-width: 0;
   font-size: 13px;
   line-height: 18px;
   color: var(--danger);

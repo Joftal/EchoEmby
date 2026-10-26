@@ -23,13 +23,16 @@ import type { CalendarPool, CalendarQuiet, CalendarResult, CalendarSlot, Library
  *
  * What is deliberately *not* here: Trakt's calendars (its whole 7-day schedule names 4-6% of this
  * library's continuing shows) and the server's `Status` field as a verdict (one show's three Series
- * rows answered 1×`Ended` and 2×`Continuing` — it is a pre-filter, TMDB's `status` decides).
+ * rows answered 1×`Ended` and 2×`Continuing` — it is a pre-filter, and TMDB's own `status` is what the page
+ * prints 「已完结」 from).
  *
  * An answer is three lists, and the third is the one that keeps an empty page honest: the dated episodes,
  * the names TMDB did not answer for, and the followed shows it has put no day on (measured: 13 of the 22
  * titles this account follows land there — 3 finished their season before the page's past cut, 10 have a
- * `last_episode_to_air` and no `next` one). A reader who stars a show and sees nothing has to be told
- * which of those it is, because 「nothing is coming」 and 「this page lost my shows」 look identical otherwise.
+ * `last_episode_to_air` and no `next` one, and 5 of the whole 13 are shows TMDB itself calls finished). A
+ * reader who stars a show and sees nothing has to be told which of those it is, because 「nothing is
+ * coming」 and 「this page lost my shows」 look identical otherwise — and 「未排期」 is the wrong answer for
+ * the 10 that have a date, so this list is dated off the work reply rather than off the clipped one.
  *
  * The cache is its own file, `calendar.json`, and it is written once per answer rather than once per
  * entry: `tmdb.json` is 3 MB and its `persist()` rewrites the whole thing for a single key, so a
@@ -44,9 +47,13 @@ const SERIES_TTL = 3 * DAY;
  *  for this week, next week and October came back byte-identical), so it is re-read twice a day and
  *  always read as "the week it happens to be serving". */
 const BILI_TTL = 12 * 3600_000;
-/** Days kept on either side of today. A season of a long-running show numbers 200 episodes (凡人修仙传
- *  S1 answers 197+) and only the band a reader can scroll to is worth their bytes. */
+/** Days kept on either side of today, on the page and in the cache. A season of a long-running show numbers
+ *  200 episodes (凡人修仙传 S1 answers 197+) and only the band a reader can scroll to is worth their bytes. */
 const WINDOW_DAYS = 90;
+/** What the cache holds is the page's band widened by the longest an entry may be reused: the stored dates
+ *  are clipped against the day they were fetched, so an entry a third of its TTL old would otherwise lose
+ *  the last third of the tail the page promises. Reading clips to the asked days anyway. */
+const STORE_PAD = SERIES_TTL;
 /** TMDB is reached through the system proxy and one season reply is ~29 KB: measured 0.84-1.28 s each,
  *  so three at a time puts a 15-show month on screen in single-figure seconds rather than 20. */
 const CONCURRENCY = 3;
@@ -59,7 +66,10 @@ const ROSTER_LIMIT = 4000;
  *  The 韩语 pool is a meaning change and does need one: `pool` is stored per entry while the language it
  *  was derived from is not, so the three Korean titles already on disk would keep answering to 其他 until
  *  each one's own three-day TTL expired. Measured cost of the drop: 22 titles × 2 requests, one open in
- *  6.98 s — the same price the 刷新 button charges. */
+ *  6.98 s — the same price the 刷新 button charges.
+ *  `lastAir`, `status` and `airedBefore` deliberately do *not* bump it, even though `lastDate` reads a new
+ *  meaning off the first two: an entry without them answers `''` / `false` / `0`, which is exactly what the
+ *  page printed before they existed, so the 3-day TTL upgrades the wording instead of a mass refetch. */
 const SCHEMA = 3;
 
 interface SlotRow {
@@ -79,8 +89,20 @@ interface SeriesEntry {
   /** TMDB's own genre names for the work, already localised to 中文 by the `language=zh-CN` ask. */
   genres: string[];
   /** How many episodes this season holds, so 「集 4/12」 can be drawn as a bar as well as read as a pair.
-   *  0 when the season reply did not come. */
+   *  0 when the season reply did not come, and also when nothing of this season has aired yet — see
+   *  `airedBefore`, which is what keeps a one-episode-ahead schedule off the card as 「集 1/1」. */
   seasonTotal: number;
+  /** How many episodes of this season TMDB had already dated at or before the day this entry was fetched.
+   *  0 means the season has not started, so its episode count is 「announced so far」 and not a size. */
+  airedBefore: number;
+  /** TMDB's own `status` for the work, verbatim (`Ended` / `Returning Series` / …). The server's `Status`
+   *  is only a pre-filter — one show's three Series rows answered 1×Ended and 2×Continuing — so this is the
+   *  field that decides whether 「nothing is coming」 means 「it is finished」. */
+  status: string;
+  /** The latest day TMDB has dated for this show at all, from `last_episode_to_air`, `''` when it has
+   *  dated none. Unlike `slots` this is not clipped to the window, so it is the one answer that tells
+   *  「its days are all behind this page」 apart from 「it has never been scheduled」. */
+  lastAir: string;
   /** Every spelling this title is known by — the server's row name and TMDB's original title beside its
    *  own — because the Bilibili join is by name and the three sources disagree by design. */
   alt: string[];
@@ -248,6 +270,13 @@ async function scheduleOf(tmdbId: string, row: LibraryItem, token: string, force
     .filter((n: number) => Number.isFinite(n) && n > 0);
   const season = Number(next?.season_number ?? last?.season_number ?? 0) || Math.max(0, ...seasonNumbers);
 
+  /* The denominator comes off the work reply's own season table, which is the only place this pair counts a
+     season for free: measured 2026-10-26 over 13 titles, `next_episode_to_air` and `last_episode_to_air`
+     answer `episode_count` / `total_episode_count` as undefined on every one of them (including the three
+     that do have a next episode), while `seasons[]` carries the number for exactly the season named above —
+     鱿鱼游戏 6, 模范出租车 16, 菜鸟老警 1, each equal to what the season reply then repeats. So a 404 on the
+     season ask now costs the dated episodes and not the denominator. */
+  const seasonRow = (Array.isArray(j.seasons) ? j.seasons : []).find((x: any) => Number(x?.season_number) === season);
   const out: SeriesEntry = {
     fetchedAt: Date.now(),
     name,
@@ -256,27 +285,32 @@ async function scheduleOf(tmdbId: string, row: LibraryItem, token: string, force
     season,
     year,
     genres,
-    // The work reply already counts the season its next episode sits in, so a 404 on the season ask costs
-    // the dated episodes and not the denominator.
-    seasonTotal: Number(next?.episode_count ?? next?.total_episode_count ?? last?.episode_count ?? 0) || 0,
+    seasonTotal: Number(seasonRow?.episode_count) || 0,
+    airedBefore: 0,
+    status: String(j.status || ''),
+    lastAir: /^\d{4}-\d{2}-\d{2}$/.test(String(last?.air_date || '')) ? String(last.air_date) : '',
     alt: [name, row.name, String(j.original_name || ''), String(row.originalTitle || '')].map(normName).filter(Boolean),
     slots: [],
   };
+  const today = fmt(new Date());
   if (season > 0) {
     const ep = await fetchJson<any>(`${base}/season/${season}?language=zh-CN`, token);
     /* A season TMDB has not numbered yet answers 404, which is an answer and not a failure: the work-level
        reply already dated this show's next episode when it has one, and an empty slot list simply puts the
        title nowhere on the timeline. */
     if (ep.answered && ep.json && Array.isArray(ep.json.episodes)) {
-      const from = fmt(new Date(Date.now() - WINDOW_DAYS * DAY));
-      const to = fmt(new Date(Date.now() + WINDOW_DAYS * DAY));
+      const from = fmt(new Date(Date.now() - WINDOW_DAYS * DAY - STORE_PAD));
+      const to = fmt(new Date(Date.now() + WINDOW_DAYS * DAY + STORE_PAD));
       // The count is the whole season's, not the window's: 「集 4/12」 says where this episode sits in the
       // season a reader is watching, and a band that clipped the denominator would print 4/3.
       if (ep.json.episodes.length) out.seasonTotal = ep.json.episodes.length;
       for (const e of ep.json.episodes) {
         const air = String(e?.air_date || '');
+        if (air.length !== 10) continue;
+        // Counted over the whole season, not the band: this is the answer to 「has it started yet」.
+        if (air <= today) out.airedBefore++;
         // Dates are `YYYY-MM-DD`, so the window test is a string compare.
-        if (air.length !== 10 || air < from || air > to) continue;
+        if (air < from || air > to) continue;
         const n = Number(e?.episode_number);
         if (!Number.isFinite(n)) continue;
         out.slots.push({
@@ -286,8 +320,17 @@ async function scheduleOf(tmdbId: string, row: LibraryItem, token: string, force
         });
       }
       out.slots.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.episode - b.episode));
+    } else if (out.lastAir && out.lastAir <= today && Number(last?.season_number) === season) {
+      // The season ask did not answer, so this is all the proof of a start the entry can have: TMDB's own
+      // last episode sits inside this same season and its day has passed.
+      out.airedBefore = 1;
     }
   }
+  /* A season that has not aired one episode yet has no size to be 1/N of — TMDB's count for it is how many
+     it has announced, which is how 菜鸟老警's 第9季 reached the card as 「集 1/1」 with the bar full and the
+     episode ten weeks away. Dropping the denominator sends the card to its 「集 N」 branch: the half of the
+     statement that is true. */
+  if (!out.airedBefore) out.seasonTotal = 0;
   s.series[tmdbId] = out;
   dirty = true;
   return out;
@@ -321,8 +364,12 @@ const biliGet = async (url: string): Promise<any | null> => {
 };
 
 /** One week of Bilibili's own schedule, as name → dated clock rows. It is a supplement and not a source of
- *  record: it answers 22 distinct titles a week (`season_type=1` 番剧 plus `=4` 纪录片; `=2` 国创 is refused
- *  with `code=-400`), which is why nothing here waits on it beyond its own two requests.
+ *  record: measured 2026-10-26 it answers 43 rows / 26 distinct titles for the whole week (`season_type=1`
+ *  番剧 12 titles plus `=4`, whose rows are the 国创 ones — 凡人修仙传 and 牧神记, the only two this account
+ *  follows, both come out of `=4`; the label B 站 gives the number is not what its table holds), and
+ *  `=2`/`=3`/`=5`/`=6`/`=7` are refused with `code=-400`. The legacy v1 endpoint answers every type but
+ *  ignores the parameter, so it is not a second route to more titles. Which is why nothing here waits on it
+ *  beyond its own two requests.
  *  Re-read on every open when it comes back with nothing. A 0-row week read as an answer is how this ran
  *  for twelve hours with no clock on screen: the field inside a day group is `episodes` (measured 2026-10-25,
  *  `group keys: date,date_ts,day_of_week,episodes,is_today`), and the same shape read as `items` is an empty
@@ -420,7 +467,14 @@ export async function calendarSchedule(client: EmbyClient, from: string, to: str
       slots.push(slot);
     }
   }
-  slots.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.season - b.season || a.episode - b.episode));
+  // Inside one day, a Bilibili clock is the only order a reader can check, so the shows that have one come
+  // first by time and the rest follow by name. The season number used to decide this, which parked
+  // 樱桃小丸子's 第2季 between two 第1季 anime and put 相棒's 第25季 last every day it appeared.
+  const withinDay = (a: CalendarSlot, b: CalendarSlot): number =>
+    (a.clock ? 0 : 1) - (b.clock ? 0 : 1) ||
+    (a.clock || '').localeCompare(b.clock || '') ||
+    a.name.localeCompare(b.name, 'zh');
+  slots.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : withinDay(a, b)));
 
   const onScreen = new Set(slots.map((s) => s.tmdbId));
   const quiet: CalendarQuiet[] = [];
@@ -430,11 +484,15 @@ export async function calendarSchedule(client: EmbyClient, from: string, to: str
       tmdbId,
       seriesId: row.id,
       name: entry.name,
-      poster: entry.poster,
       pool: entry.pool,
       season: entry.season,
-      // `slots` is sorted, and a title that reached here has none of them inside the band.
-      lastDate: entry.slots.length ? entry.slots[entry.slots.length - 1].date : '',
+      /* Not the tail of `slots`: that array is clipped to the band the entry was fetched for, so its last day
+         answers 「nothing inside this page」 and not 「nothing TMDB knows」 — which is how 10 of the 13 rows
+         here printed 「未排期」 for shows TMDB has a dated last episode for (物语系列 2024-10-19, 瑞克和莫蒂
+         2026-07-26, 鬼灭之刃 2024-06-30). `lastAir` rides on the work reply and is never clipped; an entry
+         cached before it existed answers `''`, which is the old wording. */
+      lastDate: entry.lastAir || (entry.slots.length ? entry.slots[entry.slots.length - 1].date : ''),
+      ended: entry.status === 'Ended',
     });
   }
   // The ones that aired most recently are the ones a reader is most likely still waiting on.

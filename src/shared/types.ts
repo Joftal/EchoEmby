@@ -361,19 +361,22 @@ export interface CalendarSlot {
   seasonTotal: number;
 }
 
-/** A title the roster counts as 在追 that has no episode dated inside the window the page asked for. Two
- *  shapes land here and the page tells them apart: TMDB has not put the current season on the calendar yet
- *  (`lastDate` empty), or it dated that season and every one of those days is already off the page. */
+/** A title the roster counts as 在追 that has no episode dated inside the window the page asked for. Three
+ *  shapes land here and the page tells them apart: TMDB itself says the show is finished (`ended`), it dated
+ *  episodes and every one of those days is behind the page (`lastDate`), or it has never dated one at all
+ *  (neither). The first two used to read as the third, because `lastDate` was taken off a slot list the
+ *  cache had already clipped to its own band. */
 export interface CalendarQuiet {
   tmdbId: string;
   /** This server's Series row, so the row opens 详情页 like a card does. */
   seriesId?: string;
   name: string;
-  poster: string;
   pool: CalendarPool;
   season: number;
-  /** The latest day TMDB has dated for this season, `''` when it has dated none at all. */
+  /** The latest day TMDB has dated for this show, clipped by nothing; `''` when it has dated none at all. */
   lastDate: string;
+  /** TMDB's own `status` is `Ended` — the wait is over, not pending. */
+  ended: boolean;
 }
 
 export interface CalendarResult {

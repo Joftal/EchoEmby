@@ -3,9 +3,9 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router';
 import type { CalendarPool, CalendarQuiet, CalendarResult, CalendarSlot } from '../../shared/types';
 import CalendarDayCard from '../components/calendar/CalendarDayCard.vue';
-// The档 and their colours are one table shared with the day cards, so a chip's dot and a card's dot cannot
-// drift apart. See lib/pools.ts.
-import { CAL_POOLS as POOLS, poolColor, poolLabel } from '../lib/pools';
+// The档 and the order its chips read live in one table, because the 空态 sentences quote a档 name back and
+// have to say the same thing the chip says. See lib/pools.ts.
+import { CAL_POOLS as POOLS, poolLabel } from '../lib/pools';
 import { useAppStore } from '../stores/app';
 
 const store = useAppStore();
@@ -143,11 +143,17 @@ function noneText(): string {
   return l ? `这天没有「${l}」的更新。` : '这天没有排上日期的更新。';
 }
 
-/** Which of the two silences it is: the season has dates and they are all behind the page, or TMDB has
- *  dated nothing for it. `第N季` is dropped when TMDB never named a season at all. */
+/** Which of the three silences it is, newest answer first: the show is finished, it has aired and nothing is
+ *  dated ahead, or TMDB has never put a day on it. `第N季` is dropped when TMDB never named a season at all.
+ *  The year rides along whenever the date is not this page's own year — 「上一集 10/19」 for 物语系列 would
+ *  otherwise be read as this October, and it was 2024. Both notes carry a date and nothing else, because the
+ *  row is one line inside a 260 px column: the name beside it is what gives way. */
 function quietNote(q: CalendarQuiet): string {
   const s = q.season ? `第${q.season}季 · ` : '';
-  return q.lastDate ? `${s}上一集 ${mmdd(q.lastDate)}` : `${s}未排期`;
+  if (!q.lastDate) return `${s}未排期`;
+  const y = q.lastDate.slice(0, 4);
+  const d = y === today.slice(0, 4) ? mmdd(q.lastDate) : `${y}/${q.lastDate.slice(5, 7)}/${q.lastDate.slice(8, 10)}`;
+  return `${s}${q.ended ? '已完结' : '上一集'} ${d}`;
 }
 
 function openQuiet(q: CalendarQuiet): void {
@@ -160,17 +166,18 @@ const tlEl = ref<HTMLElement | null>(null);
 
 /** The band is sticky, so the distance a day group has to clear is its own height — and that height is not
  *  a constant: the chip row wraps when the rail collapses or the window narrows. Writing the measured number
- *  onto the scroller keeps one source of truth, because `topDay()` reads the same property back. */
+ *  onto the scroller keeps one source of truth, because `topDay()` reads the same property back and the
+ *  sticky date column hangs from it too. */
 function syncPad(): void {
   const band = bandEl.value;
   const page = pageEl.value;
   if (!band || !page) return;
-  page.style.scrollPaddingTop = `${band.offsetHeight + 10}px`;
+  page.style.setProperty('--band-cut', `${band.offsetHeight + 10}px`);
 }
 let bandRo: ResizeObserver | null = null;
 
-function gotoDay(date: string): void {
-  tlEl.value?.querySelector<HTMLElement>(`[data-day="${date}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+function gotoDay(date: string, behavior: ScrollBehavior = 'smooth'): void {
+  tlEl.value?.querySelector<HTMLElement>(`[data-day="${date}"]`)?.scrollIntoView({ behavior, block: 'start' });
 }
 
 /** The band never scrolls, so 「回到今天」 is a scroll, not a re-render. */
@@ -183,17 +190,60 @@ function backToToday(): void {
  *  threshold is the scroller's own `scroll-padding-top` so the two rules cannot drift apart.
  *  The grace is why a group whose header still hangs a little under the band counts as the one being read:
  *  without it the top of the page answers 「nothing」 and the first → leaps past every day above today. */
-function topDay(): string | null {
+function topEl(): HTMLElement | null {
   const root = tlEl.value;
   const page = pageEl.value;
   if (!root || !page) return null;
   const edge = page.getBoundingClientRect().top + (parseFloat(getComputedStyle(page).scrollPaddingTop) || 0) + 48;
-  let best: string | null = null;
+  let best: HTMLElement | null = null;
   for (const el of Array.from(root.querySelectorAll<HTMLElement>('[data-day]'))) {
-    if (el.getBoundingClientRect().top <= edge) best = el.dataset.day || null;
+    if (el.getBoundingClientRect().top <= edge) best = el;
     else break;
   }
   return best;
+}
+
+function topDay(): string | null {
+  return topEl()?.dataset.day || null;
+}
+
+/** Collapsing the rail re-columns `.cards`, so the list changes height under a reader who never scrolled: at
+ *  innerWidth 1360 and scrollTop 2596 the page went 10718 → 10378 tall and the day reading at the top walked
+ *  2026-11-04 → 11-07, while expanding the same page walked it back to 11-01. The gutter tweens over
+ *  --rail-dur and the column count flips partway through that tween, so one ask after the toggle lands on a
+ *  layout the reader never saw — the day being read is therefore held on every frame the scroller reports a
+ *  new width, at the exact height it was at, so a reader partway down a long day is not yanked to its header. */
+function navWidth(): number {
+  const page = pageEl.value;
+  return page ? parseFloat(getComputedStyle(page).getPropertyValue('--nav-w')) || 0 : 0;
+}
+let railW = 0;
+let pinned: string | null = null;
+let pinnedOff = 0;
+let releaseTimer = 0;
+let pageRo: ResizeObserver | null = null;
+
+function holdPinnedDay(): void {
+  const page = pageEl.value;
+  if (!page) return;
+  const w = navWidth();
+  if (w !== railW) {
+    railW = w;
+    const at = topEl();
+    pinned = at?.dataset.day || null;
+    pinnedOff = at ? at.getBoundingClientRect().top - page.getBoundingClientRect().top : 0;
+  }
+  if (!pinned) return;
+  const g = tlEl.value?.querySelector<HTMLElement>(`[data-day="${pinned}"]`);
+  if (!g) {
+    pinned = null;
+    return;
+  }
+  page.scrollTop += g.getBoundingClientRect().top - (page.getBoundingClientRect().top + pinnedOff);
+  window.clearTimeout(releaseTimer);
+  releaseTimer = window.setTimeout(() => {
+    pinned = null;
+  }, 120);
 }
 
 function stepDays(d: number): void {
@@ -216,6 +266,13 @@ function onKey(e: KeyboardEvent): void {
   }
 }
 
+/** Picking a档 is asking 「what is coming」 for it, and that answer starts today. Instant, not a glide: the
+ *  rows above have just changed height under the reader, so a smooth scroll would spend a second travelling
+ *  through a list that no longer exists. */
+watch(pool, () => {
+  void nextTick(() => gotoDay(today, 'auto'));
+});
+
 watch(
   () => store.account?.accountId,
   (id) => {
@@ -229,13 +286,25 @@ onMounted(() => {
     bandRo = new ResizeObserver(() => syncPad());
     bandRo.observe(bandEl.value);
   }
+  if (pageEl.value) {
+    // seeded first so the observer's opening callback is not read as a rail toggle
+    railW = navWidth();
+    pageRo = new ResizeObserver(() => holdPinnedDay());
+    pageRo.observe(pageEl.value);
+  }
   syncPad();
-  if (!data.value) void load().then(() => void nextTick(() => { syncPad(); gotoDay(today); }));
+  // The page opens on today, not on the week it also draws behind today. Instant: the reader is still
+  // sliding into this page, and a glide from the top of the band would spend a second showing them the
+  // days they did not ask for.
+  if (!data.value) void load().then(() => void nextTick(() => { syncPad(); gotoDay(today, 'auto'); }));
 });
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey);
+  window.clearTimeout(releaseTimer);
   bandRo?.disconnect();
   bandRo = null;
+  pageRo?.disconnect();
+  pageRo = null;
 });
 </script>
 
@@ -259,9 +328,11 @@ onBeforeUnmount(() => {
       </header>
 
       <div class="chips">
-        <button class="chip" :class="{ on: pool === '' }" @click="pool = ''">全部<b>{{ slots.length }}</b></button>
+        <!-- The count is the unit the page is made of, so it says so: 63 of these were 63 集 from 9 部, and a
+             bare number next to a pool name reads as a count of shows. -->
+        <button class="chip" :class="{ on: pool === '' }" @click="pool = ''">全部<b>{{ slots.length }} 集</b></button>
         <button v-for="p in POOLS" :key="p.key" class="chip" :class="{ on: pool === p.key }" @click="pool = p.key">
-          <i class="dot" :style="{ background: p.color }"></i>{{ p.label }}<b>{{ counts[p.key] || 0 }}</b>
+          {{ p.label }}<b>{{ counts[p.key] || 0 }} 集</b>
         </button>
       </div>
     </div>
@@ -291,7 +362,7 @@ onBeforeUnmount(() => {
       <p v-else-if="slots.length">
         「{{ poolLabel(pool) }}」这一档在往后 {{ BAND }} 天里没有更新。<button @click="pool = ''">看全部</button>
       </p>
-      <p v-else-if="quiet.length">名单里的 {{ quiet.length }} 部还在更，TMDB 一部也没排出日期 —— 列在下面。</p>
+      <p v-else-if="quiet.length">名单里的 {{ quiet.length }} 部最近都没有要播的一集 —— 列在下面。</p>
       <p v-else>这台服务器里没有「收藏 ∪ 在看」还认作在更的作品。</p>
     </div>
 
@@ -319,9 +390,10 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- The followed shows none of the timeline above carries a day for, spelled out rather than folded:
-         a click to discover that nothing is coming is the same silence this list exists to break. -->
+         a click to discover that nothing is coming is the same silence this list exists to break. The
+         heading says 近期 and not 排上, because five of the thirteen are shows TMDB itself has finished. -->
     <section v-if="!loading && quiet.length" class="quiet">
-      <h2>这些还没排上更新</h2>
+      <h2>这些近期没有更新</h2>
       <span class="qgrid">
         <component
           v-for="q in quiet"
@@ -331,7 +403,6 @@ onBeforeUnmount(() => {
           :class="{ go: !!q.seriesId }"
           @click="openQuiet(q)"
         >
-          <i class="dot" :style="{ background: poolColor(q.pool) }"></i>
           <b>{{ q.name }}</b>
           <em>{{ quietNote(q) }}</em>
         </component>
@@ -350,10 +421,11 @@ onBeforeUnmount(() => {
   overflow-y: auto;
   overflow-x: hidden;
   padding: 0 var(--side) 46px var(--gutter);
-  /* What `block: 'start'` means here: a day group stops this far below the top of the scroller, so the
-     sticky band never lands on the date column it is being scrolled to. syncPad() overwrites this with the
-     band's measured height the moment it mounts — the chip row wraps at narrow widths, so no constant fits. */
-  scroll-padding-top: calc(var(--titlebar-h) + 96px);
+  /* Where the sticky band ends, and so where a day has to stop when the page scrolls to it. syncPad()
+     overwrites this with the band's measured height — the chip row wraps at narrow widths, so no constant
+     fits — and both the scroll stop below and the sticky date column read this one number. */
+  --band-cut: calc(var(--titlebar-h) + 96px);
+  scroll-padding-top: var(--band-cut);
   transition: padding var(--rail-dur) var(--rail-ease);
 }
 /* The band is sticky and bleeds to both window edges, so a card travelling past it never shows beside it.
@@ -369,7 +441,12 @@ onBeforeUnmount(() => {
   background-color: var(--bg);
   background-image: var(--wash);
   background-attachment: fixed;
-  transition: padding var(--rail-dur) var(--rail-ease);
+  /* Both edges of this box are paid for with the gutter — the left by a negative margin that cancels the
+     page's padding, the words by the padding itself — and `--nav-w` snaps by design (App.vue). So the margin
+     has to ride the same curve as the padding: with only `padding` here, the collapse left the band's ground
+     starting at x=142 while its own title sat 142px right of the day column it is supposed to sit over
+     (measured 35 frames / 303 ms of >2px disagreement, peak exactly the 142px gutter delta, both directions). */
+  transition: padding var(--rail-dur) var(--rail-ease), margin var(--rail-dur) var(--rail-ease);
 }
 .head {
   display: flex;
@@ -483,12 +560,6 @@ h1 {
   font-variant-numeric: tabular-nums;
   color: var(--text);
 }
-.dot {
-  width: 7px;
-  height: 7px;
-  flex: none;
-  border-radius: 50%;
-}
 .err {
   margin: 0 0 16px;
   font-size: 13px;
@@ -549,6 +620,14 @@ h1 {
   gap: 1px;
   padding-top: 2px;
   text-align: left;
+  /* A day of five or six updates is taller than the window, and then the date that owns those cards scrolls
+     off the top while the reader is still reading them (measured: 679 px above the screen at the last card
+     of a nine-card day at 980 wide). Sticking it under the band keeps 「which day」 on screen for the whole
+     day; `align-self` is what makes sticking possible at all, because a stretched grid item has no room to
+     move inside its own row. */
+  position: sticky;
+  top: var(--band-cut);
+  align-self: start;
 }
 .dcol b {
   font-size: 16px;
@@ -607,8 +686,7 @@ h1 {
   text-decoration: underline;
 }
 
-/* The 还没排上 list is the page's footnote, not a second subject: no cards, no posters, one line each, and
-   the same pool dot so a name here is coded by the档 it would filter to. */
+/* The 还没排上 list is the page's footnote, not a second subject: no cards, no posters, one line each. */
 .quiet {
   margin: 26px 0 0;
   padding-top: 14px;
@@ -623,7 +701,12 @@ h1 {
 }
 .qgrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  /* 304 px is the widest row this list holds today measured, not a guess: 朋友的妹妹只喜欢烦我 needs 130 px
+     of name and its note 「第1季 · 已完结 2025/12/20」 needs 155, plus the gap and the row's own padding. At
+     the old 240 the name came out 「朋友的妹妹只喜欢烦…」 while the date stayed whole — the note is
+     `flex: none`, so the subject is what gives way, which is backwards. Four columns at 1360 became three of
+     the same 352 the two-column 980 layout already had. */
+  grid-template-columns: repeat(auto-fill, minmax(304px, 1fr));
   gap: 2px 14px;
 }
 .qrow {
@@ -694,17 +777,6 @@ button.qrow.go:hover b {
   .dcol.sk i,
   .card.sk {
     animation: sh 1.3s linear infinite;
-  }
-}
-@media (max-width: 900px) {
-  .grp {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 6px;
-  }
-  .dcol {
-    flex-direction: row;
-    align-items: baseline;
-    gap: 8px;
   }
 }
 </style>
