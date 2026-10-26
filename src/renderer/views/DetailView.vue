@@ -68,10 +68,6 @@ const seasonArt = ref('');
 const error = ref('');
 const playErr = ref('');
 const favBusy = ref(false);
-/** A sibling switch (详情 -> 详情) reuses this instance, so the old title dims out and the new one dims
- *  in rather than the page collapsing to a loading line and rebuilding: measured 2079px -> 816px ->
- *  2242px of height with scrollTop clamped 700 -> 0 on every switch. */
-const swap = ref(false);
 
 const stills = ref<TmdbStills>({});
 const backdrops = ref<string[]>([]);
@@ -1368,40 +1364,38 @@ watch(
     // The series above a Season page belongs to the title being left; keeping it would let the new
     // season borrow the old work's date, art and synopsis.
     if (seriesItem.value && seriesItem.value.id !== id) seriesItem.value = null;
-    // Nothing is cleared on a switch: the old title stays on screen, dimmed, until the new one is in
-    // hand, so the page never collapses to a skeleton and rebuilds its height under the reader.
-    swap.value = item.value !== null;
-    if (!swap.value) {
-      item.value = null;
-      heroPoster.value = '';
-      heroBackdrop.value = '';
-      serverSeasons.value = [];
-      seasonsAsked.value = false;
-      seasonN.value = -1;
-      episodeN.value = -1;
-      stillsSettled.value = false;
-      episodes.value = [];
-      loaded = '';
-      // The row the card was drawn from is already this title, so the hero paints from it instead of
-      // waiting out a round trip measured at 493ms — and 2.0s when the gateway is having a slow minute.
-      const row = seedItemFor(id);
-      item.value = row;
-      if (row) {
-        paint(row);
-        void loadChildren(row);
-      }
+    // A sibling switch takes the same path as a first arrival: clear, then paint from the row the card
+    // handed over, which every 相似卡 and every list card already hands over. The old title used to stay
+    // on screen at `opacity: 0` while the new one loaded — not a dim but a blank, measured at 80.1%
+    // near-white pixels across the content area against 22.2% once settled, and held for the whole
+    // round trip (243ms on a warm gateway, up to 2s on a slow minute).
+    item.value = null;
+    heroPoster.value = '';
+    heroBackdrop.value = '';
+    serverSeasons.value = [];
+    seasonsAsked.value = false;
+    seasonN.value = -1;
+    episodeN.value = -1;
+    stillsSettled.value = false;
+    episodes.value = [];
+    loaded = '';
+    // The row the card was drawn from is already this title, so the hero paints from it instead of
+    // waiting out a round trip measured at 493ms — and 2.0s when the gateway is having a slow minute.
+    const row = seedItemFor(id);
+    item.value = row;
+    if (row) {
+      paint(row);
+      void loadChildren(row);
     }
     const r = await embyCached('item', id, () => window.echoemby.emby.item(id));
     if (!r.ok || !r.data) {
       // A page the row already painted is not a failed page: the title is on screen, only the
       // detail-only blocks stay away. The error line is for when nothing could be shown at all.
       if (!item.value) error.value = r.error || '打不开这一项';
-      swap.value = false;
       return;
     }
     paint(r.data);
     void loadChildren(r.data);
-    swap.value = false;
   },
   { immediate: true },
 );
@@ -1502,7 +1496,7 @@ const LEVEL_WORD = ['无', '极少', '轻微', '中等', '较多', '严重'];
           class="hero-in"
           :style="{ opacity: Math.max(0, 1 - scroll / 260), transform: `translate3d(0, ${Math.round(scroll * 0.4)}px, 0)` }"
         >
-          <div class="copy sw" :class="{ on: swap }">
+          <div class="copy">
             <div v-if="plateSrc" class="art">
               <img v-if="plateSrc" :src="plateSrc" alt="" decoding="async" />
             </div>
@@ -1536,7 +1530,7 @@ const LEVEL_WORD = ['无', '极少', '轻微', '中等', '较多', '严重'];
     <p v-else-if="error" class="err pad">{{ error }}</p>
 
     <template v-else-if="item">
-      <div class="flow sw" :class="{ on: swap }">
+      <div class="flow">
         <HScroller v-if="band.length || noBand" ref="epiBand" class="block epi-row" :class="{ solo: noBand }">
           <template #header>
             <div class="ep-head">
@@ -2349,15 +2343,6 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
 .lightbox-leave-active { transition: opacity 0.22s var(--ease); }
 .lightbox-enter-from,
 .lightbox-leave-to { opacity: 0; }
-/* The dim a sibling switch puts on the text while the new title loads. The hero art is not part of
-   it: the art cross-fades old frame to new frame instead, which is the continuity the switch needs. */
-.sw {
-  transition: opacity 0.18s var(--ease), transform 0.18s var(--ease);
-}
-.sw.on {
-  opacity: 0;
-  transform: translate3d(0, 6px, 0);
-}
 /* Two frames of one band, crossing: the old photo lifts past the lens and fades while the new one comes up
    to meet it. Both are `position: absolute; inset: 0` in `.stage`, so they overlap by construction — and
    this is the one place a crossfade is the right answer rather than doubled text, because the two frames

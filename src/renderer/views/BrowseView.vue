@@ -666,7 +666,12 @@ onBeforeUnmount(() => {
               {{ kind === 'favorites' ? '还没有收藏的内容。' : '这个列表目前是空的。' }}
             </p>
 
-            <button v-if="hasMore && !busy && !loading" class="more" @click="load(false)">加载更多</button>
+            <!-- Stays in the layout while the batch is in flight and goes grey instead of disappearing:
+                 that took its own 67px box (41 tall + 26 margin) out of the scroll height, so the browser
+                 clamped scrollTop by the same amount (3132 -> 3065) and never gave it back — every
+                 加载更多 nudged the page up once before the new rows arrived. A reset is the one case
+                 that may drop it, and the skeleton has already replaced the grid it belongs to. -->
+            <button v-if="hasMore && !loading" class="more" :disabled="busy" @click="load(false)">加载更多</button>
           </div>
 
         </div>
@@ -1046,5 +1051,16 @@ h1 {
   color: var(--on-ink);
   box-shadow: var(--shadow);
   transform: translate3d(0, -2px, 0);
+}
+/* The same dead-while-it-runs reading as the calendar's 刷新: grey, and the hover lift stays off, which
+   Chromium would otherwise still apply to a disabled button. */
+.more:disabled {
+  opacity: 0.55;
+}
+.more:disabled:hover {
+  background: var(--bg-elev);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+  transform: none;
 }
 </style>
