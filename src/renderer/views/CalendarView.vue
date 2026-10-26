@@ -60,6 +60,14 @@ const quiet = computed<CalendarQuiet[]>(() => {
   return pool.value ? q.filter((x) => x.pool === pool.value) : q;
 });
 
+/* The 名单 is folded until asked for. Seventeen rows is taller than the day a reader opened the page to read,
+   and 「我的剧呢」 is a question that comes *after* the timeline, not before it.
+   The fold never gets to hide the page's only content: when the timeline above has nothing in it, the list
+   is the answer, so it is open. That is a rule about what is on screen rather than a flag load() sets, which
+   is what keeps a chip filter that empties the days from needing its own branch. */
+const quietOpen = ref(false);
+const quietShown = computed(() => quietOpen.value || !shown.value.length);
+
 const byDay = computed(() => {
   const m = new Map<string, CalendarSlot[]>();
   for (const s of shown.value) {
@@ -393,12 +401,31 @@ onBeforeUnmount(() => {
       <p class="end">已到底部 · 这一页往前 {{ PAST_DAYS }} 天、往后 {{ BAND }} 天</p>
     </div>
 
-    <!-- The followed shows none of the timeline above carries a day for, spelled out rather than folded:
-         a click to discover that nothing is coming is the same silence this list exists to break. The
-         heading says 近期 and not 排上, because five of the thirteen are shows TMDB itself has finished. -->
+    <!-- The followed shows none of the timeline above carries a day for, folded behind its own heading. The
+         count rides on the closed line, so the folded state still answers 「有没有」 before it answers 「哪些」;
+         it says 部 and not 集 because this list counts works while the chips above count episodes. The heading
+         says 近期 and not 排上, because eight of the seventeen are shows TMDB itself has finished. -->
     <section v-if="!loading && quiet.length" class="quiet">
-      <h2>这些近期没有更新</h2>
-      <span class="qgrid">
+      <h2 class="qh">
+        <button type="button" :aria-expanded="quietShown" @click="quietOpen = !quietOpen">
+          <svg
+            class="chev"
+            :class="{ on: quietShown }"
+            viewBox="0 0 24 24"
+            width="12"
+            height="12"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          ><path d="M9 5l7 7-7 7" /></svg>
+          <span>这些近期没有更新</span>
+          <b>{{ quiet.length }} 部</b>
+        </button>
+      </h2>
+      <span v-if="quietShown" class="qgrid">
         <component
           v-for="q in quiet"
           :is="q.seriesId ? 'button' : 'div'"
@@ -696,12 +723,48 @@ h1 {
   padding-top: 14px;
   border-top: 1px solid var(--line);
 }
-.quiet h2 {
+/* The heading *is* the toggle, so it is a button rather than a label beside one — a 26 px line to hit
+   instead of a 12 px arrow. The chevron turns rather than swapping to a different mark: an icon that
+   appears and disappears reads as content arriving, and this is the page revealing what it already held.
+   One step darker than the footnote it replaced: while the rows sat under it, this line was a label and
+   --text-faint was enough to name them. Folded, it is the only way to reach seventeen shows, so it carries
+   the information instead of describing it — which is the job --text-dim does elsewhere on this page
+   (`.tday`, the chips). Measured: 6.7:1 on the page plate against 11.4 for --text-dim. */
+.qh {
   margin: 0 0 10px;
   font-size: 13px;
   font-weight: 650;
   line-height: 18px;
-  color: var(--text-faint);
+  color: var(--text-dim);
+}
+.qh button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: -6px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--hov) var(--ease), background var(--hov) var(--ease);
+}
+.qh button:hover {
+  color: var(--text);
+  background: var(--bg-elev-2);
+}
+.qh b {
+  font-weight: 600;
+}
+.chev {
+  flex: none;
+  transition: transform var(--hov) var(--ease-out);
+}
+.chev.on {
+  transform: rotate(90deg);
 }
 .qgrid {
   display: grid;
