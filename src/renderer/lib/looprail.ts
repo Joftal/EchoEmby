@@ -149,6 +149,18 @@ class Rail implements LoopRail {
     this.el.removeEventListener('scrollend', this.onEnd);
     this.el.removeEventListener('click', this.onClick);
     this.el.removeEventListener('animationend', this.onAnimEnd);
+    /* Take the copies away with the row they were holding along, the way `stop()` does, or the browser clamps
+       the offset and the content jumps. Vue runs this hook at the START of a page leave, so the row is still
+       on screen for the whole transition clock: measured on the 相似栏 at 1360, the copies came out on frame 1
+       of the leave with the page still at x=0 — the row slid back 796px and the card the reader had just
+       pressed moved from x=554 to x=-290, off the window. 「onShift」 rides along because a rebuild
+       (DetailView's 分集栏 on a season change) destroys a rail whose element stays on screen, and the caller's
+       target is still in the coordinates these copies were holding. */
+    if (this.looped && this.home) {
+      const to = Math.max(0, this.el.scrollLeft - this.home);
+      this.onShift?.(to - this.el.scrollLeft);
+      this.put(to);
+    }
     this.head.remove();
     this.tail.remove();
     this.el.style.columnGap = '';
