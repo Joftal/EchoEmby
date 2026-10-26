@@ -25,15 +25,20 @@ const astream = computed<MediaStreamInfo | undefined>(() => {
 /** What the server used to tell two tracks of one language apart, in the reader's own language. The titles
  *  on these files are English even when everything else on the page is Chinese — 「中文（Chinese
  *  Simplified） / 中文（Chinese Traditional）」 said 简体 and 繁体 in two scripts to make one point — and a
- *  title that already carries parentheses, 「English (SDH)」, would have printed a second pair around it.
- *  What is left after the known shapes are named is the title itself; what is left of nothing is the codec. */
-const discName = (s: MediaStreamInfo): string => {
+ *  title that carries brackets of its own would print a second pair inside the ones added below. So they
+ *  come off, and with them the words: `Dansk (Danmark)` is 丹麦语（Dansk）, and 322 of the 1,980 stream
+ *  titles sampled here are that shape — the bracket restating the language in its own country.
+ *  `keep` puts the words back for the one case that earns it: a track the plain version would name exactly
+ *  like its sibling. 阿甘正传 is that file — 「简体中文-SRT_(导演评论)字幕」 and 「…_(监制评论)字幕」 both
+ *  stripped to 「简体中文-SRT_ 字幕」, so two of its nine subtitle tracks became one label and a dangling
+ *  underscore was all the difference left behind. What is left of nothing is the codec. */
+const discName = (s: MediaStreamInfo, keep: boolean): string => {
   const t = s.title || '';
   if (/simplified|chs\b/i.test(t)) return '简体';
   if (/traditional|cht\b/i.test(t)) return '繁体';
   if (/sdh|hearing/i.test(t)) return 'SDH';
   if (/forced/i.test(t)) return '强制';
-  return t.replace(/\([^)]*\)/g, ' ').replace(/\s+/g, ' ').trim() || s.codec?.toUpperCase() || '';
+  return t.replace(/[(（]([^)）]*)[)）]/g, keep ? '$1' : ' ').replace(/\s+/g, ' ').trim() || s.codec?.toUpperCase() || '';
 };
 /** Two subtitle tracks of one file share a language code on 36 of 40 files here — 简体 and 繁体 both come
  *  back `chi` — so a join of the codes alone printed 「chi / chi」 and told the reader nothing. Where a
@@ -44,10 +49,12 @@ const subLabels = computed<string[]>(() => {
   const subs = source.value?.subtitle || [];
   const langs = subs.map(s => s.lang || '');
   const repeated = new Set(langs.filter((l, i) => langs.indexOf(l) !== i));
-  const out = subs.map(s => {
+  const bare = subs.map(s => discName(s, false));
+  const out = subs.map((s, i) => {
     const lang = langName(s.lang) || '无语言';
-    const disc = repeated.has(s.lang || '') ? discName(s) : '';
-    return disc ? `${lang}（${disc}）` : lang;
+    if (!repeated.has(langs[i])) return lang;
+    const twin = subs.some((o, j) => j !== i && langs[j] === langs[i] && bare[j] === bare[i]);
+    return `${lang}（${discName(s, twin)}）`;
   });
   return [...new Set(out)];
 });
