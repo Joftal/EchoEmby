@@ -1,6 +1,7 @@
 import { net } from 'electron';
 import type { Account, FacetOption, LibraryItem, LibraryRow, MediaStreamInfo, Person, PlayMethod, PlaybackSource, Providers, StudioRef } from '../../shared/types';
 import { buildDeviceProfile } from './deviceProfile';
+import { cleanTrackTitle } from '../track-title';
 
 export interface Identity {
   deviceId: string;
@@ -140,7 +141,7 @@ const mapStreams = (raw: any): MediaStreamInfo[] =>
     codec: v.Codec,
     displayTitle: v.DisplayTitle,
     lang: v.Language,
-    title: v.Title,
+    title: cleanTrackTitle(v.Title),
     width: v.Width,
     height: v.Height,
     bitDepth: v.BitDepth,

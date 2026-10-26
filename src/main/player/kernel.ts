@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { MpvPipe, type MpvMessage } from './mpv-pipe';
+import { cleanTrackTitle } from '../track-title';
 import {
   VOLUME_MAX,
   type PlayerChapter,
@@ -125,7 +126,7 @@ const mapTrack = (t: any): Omit<PlayerTrack, 'ordinal'> | null => {
   return {
     id: t.id,
     kind,
-    title: typeof t.title === 'string' && t.title ? t.title : undefined,
+    title: typeof t.title === 'string' ? cleanTrackTitle(t.title) : undefined,
     lang: typeof t.lang === 'string' && t.lang ? t.lang : undefined,
     codec: typeof t.codec === 'string' ? t.codec : undefined,
     selected: !!t.selected,
