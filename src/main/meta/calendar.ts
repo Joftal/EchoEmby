@@ -69,10 +69,12 @@ const ROSTER_LIMIT = 4000;
  *  was derived from is not, so the three Korean titles already on disk would keep answering to 其他 until
  *  each one's own three-day TTL expired. Measured cost of the drop: 22 titles × 2 requests, one open in
  *  6.98 s — the same price the 刷新 button charges.
+ *  So does 日剧, for the same reason and at the same price: 相棒 and 月曜夜未央 are stored as `jp` and would
+ *  stay under a chip that says 番 until each TTL expired on its own. 3→4.
  *  `lastAir`, `status` and `airedBefore` deliberately do *not* bump it, even though `lastDate` reads a new
  *  meaning off the first two: an entry without them answers `''` / `false` / `0`, which is exactly what the
  *  page printed before they existed, so the 3-day TTL upgrades the wording instead of a mass refetch. */
-const SCHEMA = 3;
+const SCHEMA = 4;
 
 interface SlotRow {
   date: string;
@@ -175,9 +177,17 @@ const normName = (s: string): string => s.replace(NAME_MARKS, '').toLowerCase();
 
 const poolOf = (lang: string, genres: string[]): CalendarPool => {
   const anime = genres.some((g) => g === '动画' || g.toLowerCase() === 'animation');
-  if (lang === 'ja') return 'jp';
+  /* 番 is a word for animation, so `ja` splits on the genre rather than taking the whole language: measured
+     2026-10-26 over the 26 followed titles, 2 of the 14 `ja` shows carry no 动画 genre — 相棒 (剧情/犯罪/悬疑,
+     a 21-season live-action procedural) and 月曜夜未央, whose own TMDB `type` is Talk Show. The failure mode
+     this opens is the mirror one, an anime TMDB never tagged: 12 of the 12 animated ones are tagged today.
+     `type` cannot stand in for the genre — 凡人修仙传, 牧神记 and 全职高手 are all `Scripted`. */
+  if (lang === 'ja') return anime ? 'jp' : 'jplive';
   if (lang === 'ko') return 'kr';
-  if (lang === 'zh' || lang === 'yue' || lang === 'zht' || lang === 'zh-cn') return anime ? 'cnova' : 'cn';
+  // `yue` is the only other Chinese letter TMDB files anything under. The region-shaped codes this used to
+  // also accept (`zht`, `zh-cn`) are not TMDB's to give: its `original_language` is ISO 639-1 and the
+  // country lives in `origin_country` — measured over the 26 followed titles, which answer zh / en / ja / ko.
+  if (lang === 'zh' || lang === 'yue') return anime ? 'cnova' : 'cn';
   if (lang === 'en') return 'en';
   // A Chinese-library show TMDB files under some other letter still belongs where its audience is, and
   // 动画 under any language is 国创-adjacent — but inventing a pool from a genre guess is how a row lands

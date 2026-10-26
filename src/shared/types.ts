@@ -329,8 +329,13 @@ export type TmdbStills = Record<number, TmdbEpisodeRow>;
  *  mixed-language soup (measured: the gateway lists 23 中文 / 25 English / 2 Japanese spellings).
  *  `kr` joined the list because 其他 was holding nothing but Korean shows (measured 2026-10-26: 3 of the 22
  *  followed titles — 鱿鱼游戏 / 模范出租车 / 首尔破笑组 — and no other language at all), which left the last
- *  chip naming a bucket by what it is not. */
-export type CalendarPool = 'cn' | 'cnova' | 'jp' | 'en' | 'kr' | 'other';
+ *  chip naming a bucket by what it is not.
+ *  `jplive` joined the same way one round later: 番 means animation here, and the `ja` seat was taking in
+ *  相棒 (a 21-season live-action procedural) and 月曜夜未央 (TMDB's own `type` is Talk Show) under it —
+ *  measured 2026-10-26 over the 26 followed titles, 2 of the 14 `ja` shows carry no 动画 genre.
+ *  The `en` seat still speaks language, not country: all 5 of those titles answer `origin_country: ["US"]`
+ *  today, so an 英剧 would land here wrongly and nothing on this account does it yet. */
+export type CalendarPool = 'cn' | 'cnova' | 'jp' | 'jplive' | 'kr' | 'en' | 'other';
 
 /** One episode the calendar has a date for. The date is TMDB's, the clock is Bilibili's when it names one,
  *  and the absence of a clock is the honest answer for a show no source times — see `CalendarResult`. */
