@@ -18,7 +18,6 @@ import { useAppStore } from '../stores/app';
 import { accountName, episodeHead, fmtDate, fmtMinutes, fmtRuntime, seenLabel, seasonTitle, watchedRatio } from '../lib/format';
 import { PLAYABLE, PLAYABLE_PAGE, isStoppedRow, isUnfinishedRow, resumeTarget, seasonTarget } from '../lib/resume';
 import { mergeGenres } from '../lib/genres';
-import { resetPageScroll } from '../lib/scroll';
 import { createLoopRail, type LoopRail } from '../lib/looprail';
 import { embyCached } from '../lib/embycache';
 import { libraryWorks, useRelated, type WorkSeed } from '../lib/related';
@@ -682,9 +681,10 @@ const techPop = ref<{ id: string; title: string; item: LibraryItem | null; dead:
 /* The 轨道 bar is the one block a placeholder cannot read off the ask: measured on 31 episodes, 21 answer with
    that band and 10 — every web rip of 罚罪 — answer with none, and a bar drawn for a block that never arrives
    moves the whole sheet 43px when the file lands. A season is one release, so the page keeps the shape the
-   last answer came in and paints the next placeholder like it. The season's own id is the key, because this
-   view is not rebuilt when the reader jumps to another title: a guess left over from 罚罪 must not silence
-   the band on an anime, and an unknown season keeps drawing it — which is the answer two seasons in three. */
+   last answer came in and paints the next placeholder like it. The season's own id is the key, because a
+   page walks its seasons and the previous season's shape must not silence the next one's band: a guess left
+   over from 罚罪 must not silence it on an anime, and an unknown season keeps drawing it — which is the
+   answer two seasons in three. */
 const bandSeen = ref<{ key: string; band: boolean } | null>(null);
 const bandGuess = computed(() => {
   const seen = bandSeen.value;
@@ -736,11 +736,11 @@ const resumeIndex = computed(() => {
 /* One glide per season, keyed instead of unconditional: the cards re-paint again when TMDB's stills land a
    beat after the row, and a watcher that ran on every recompute would pull the reader back onto the stopped
    episode while they were already looking for the one past it. Index 0 is where the row opens anyway.
-   The band is a source because the switch unmounts it for the beat where `episodes` is empty: a key spent on
-   a band that is not there is the last glide that season gets. And the key is dropped in `paint`, because
-   vue-router hands the SAME instance to the next `/detail/*` — measured, 凡人修仙传's series page and its
-   第 1 季 page are one object over one stopped card, so the season page mounted to find the key already
-   spent and held scrollLeft 0 while the card sat 56206px away. */
+   The band is a source because a season switch unmounts it for the beat where `episodes` is empty: a key
+   spent on a band that is not there is the last glide that season gets. The key needs no dropping, because
+   the page is mounted for one title — 凡人修仙传's series page and its 第 1 季 page used to be one object
+   over one stopped card, and the season page mounted to find the key already spent and held scrollLeft 0
+   while the card sat 56206px away. */
 let focusedOn = '';
 watch([episodeN, resumeIndex, () => epiBand.value], async () => {
   if (episodeN.value < 0 || !epiBand.value) return;
@@ -1069,7 +1069,8 @@ const seasonVoteUrl = computed(() => {
  *  The collection page folds those into the work, so the page that owns the heart reads the same union
  *  or a folded card would open onto an empty heart. */
 const epFavIds = ref<string[]>([]);
-/** Which work the ids belong to; a page switch must not keep the previous show's episodes. */
+/** Which work the ids were asked for, so the watcher's second and third run for the same title — the type
+ *  landing after the id, the server's copy landing after the row's — does not ask twice. */
 let epFavFor = '';
 
 async function askEpisodeFavs(seriesId: string): Promise<{ ok: boolean; ids: string[] }> {
@@ -1158,7 +1159,6 @@ async function loadSeason(n: number) {
  *  the missing season on a sibling row, and a list built from one row would print that label on files the
  *  account really does hold. */
 async function askSiblings(series: LibraryItem): Promise<void> {
-  const page = props.id;
   const tmdb = String(series.providers?.tmdb || '');
   const kind = kindOf(series);
   if (!kind || !/^\d{1,8}$/.test(tmdb)) {
@@ -1168,13 +1168,12 @@ async function askSiblings(series: LibraryItem): Promise<void> {
   const rows = await libraryWorks(kind, tmdb, series.name);
   // `null` is a server that has not answered, not one that holds nothing: the list keeps its silence about
   // seasons nobody has been asked for rather than label them absent.
-  if (props.id !== page || rows === null) return;
+  if (rows === null) return;
   const groups = await Promise.all(
     rows
       .filter(x => x.id !== series.id)
       .map(async row => ({ id: row.id, s: await embyCached('seasons', row.id, () => window.echoemby.emby.seasons(row.id)) })),
   );
-  if (props.id !== page) return;
   const extra = groups.flatMap(g => (g.s.ok ? g.s.data || [] : []).map(season => ({ seriesId: g.id, season })));
   if (extra.length) serverSeasons.value = [...serverSeasons.value, ...extra];
   seasonsAsked.value = groups.every(g => g.s.ok);
@@ -1186,17 +1185,15 @@ async function askSiblings(series: LibraryItem): Promise<void> {
 async function loadSeries(seriesId: string): Promise<LibraryItem | null> {
   if (!seriesId) return null;
   if (seriesItem.value?.id === seriesId) return seriesItem.value;
-  const page = props.id;
   const r = await embyCached('item', seriesId, () => window.echoemby.emby.item(seriesId));
   const it = r.ok ? r.data || null : null;
-  // A switch to another title while this is out must not dress the new page in the previous work.
-  if (it && props.id === page) {
+  if (it) {
     seriesItem.value = it;
     /* A season row often carries no art at all (measured: 模范出租车's seasons 1 and 2 have neither a
        Primary nor a Backdrop tag), which left the hero a flat gradient. TMDB has no season-wide shot
        either, so the work's own backdrop is the stand-in the ladder calls for. */
     if (!item.value?.backdropImageTag && !item.value?.primaryImageTag && it.backdropImageTag)
-      void app.backdropUrl({ id: it.id, backdropImageTag: it.backdropImageTag }, 1600).then(u => (props.id === page ? (heroBackdrop.value = u) : u));
+      void app.backdropUrl({ id: it.id, backdropImageTag: it.backdropImageTag }, 1600).then(u => (heroBackdrop.value = u));
   }
   return it;
 }
@@ -1240,8 +1237,8 @@ function pickSeason(v: string | string[]): void {
  *  without paying for them again. */
 let painted = '';
 /** Set when the lobby's 播放 pressed on a slide it could not play itself — a Series names no file — and the
- *  page it opened is the only place that knows which episode to start. Held as an id so a switch to another
- *  title drops it: an arrival is a request about one work, not a mode the page stays in. */
+ *  page it opened is the only place that knows which episode to start. Held as an id so the note can only be
+ *  spent by the page it was made for, and spent once. */
 let autoplayFor = '';
 /** The same rule for the season list and its episodes: re-loading the rail when the server's copy lands
  *  would step on a season the reader may already have picked. */
@@ -1256,34 +1253,16 @@ function paint(it: LibraryItem): void {
   // Every art ask is fired rather than awaited. They were measured serial at 493ms for the hero, and the
   // three of them have no order to keep: each writes its own slot when it answers. 300px is the plate at
   // its widest on this window; the 1000px backdrop copy would be scaled away by it.
-  if (it.primaryImageTag) void app.imageUrl({ id: it.id, primaryImageTag: it.primaryImageTag }, 300).then(u => (props.id === id ? (heroPoster.value = u) : u));
+  if (it.primaryImageTag) void app.imageUrl({ id: it.id, primaryImageTag: it.primaryImageTag }, 300).then(u => (heroPoster.value = u));
   if (it.backdropImageTag)
-    void app.backdropUrl({ id: it.id, backdropImageTag: it.backdropImageTag }, 1600).then(u => (props.id === id ? (heroBackdrop.value = u) : u));
+    void app.backdropUrl({ id: it.id, backdropImageTag: it.backdropImageTag }, 1600).then(u => (heroBackdrop.value = u));
   else if (it.primaryImageTag) {
     // No wide art on the server: reuse the poster as a soft backdrop rather than a flat gradient.
-    void app.imageUrl({ id: it.id, primaryImageTag: it.primaryImageTag }, 1000).then(u => (props.id === id ? (heroBackdrop.value = u) : u));
+    void app.imageUrl({ id: it.id, primaryImageTag: it.primaryImageTag }, 1000).then(u => (heroBackdrop.value = u));
   }
 
   if (painted === id) return;
   painted = id;
-  /* The season state goes the moment a different title takes the page over — not earlier, because the
-     outgoing hero is still on screen and reading it, and not never, because `seasonRow` looks its id up
-     in the previous show's season list: measured, walking 咒术回战 → 007 left 「2023-07-06 · 59 集 ·
-     24小时6分」 printed under a movie that has neither episodes nor seasons. */
-  serverSeasons.value = [];
-  seasonsAsked.value = false;
-  seasonN.value = -1;
-  episodes.value = [];
-  episodeN.value = -1;
-  stillsSettled.value = false;
-  focusedOn = '';
-  stills.value = {};
-  seasonArt.value = '';
-  seasonCast.value = null;
-  // The line that says 「这一项还不能直接播放」 is about the title being left, not the one arriving.
-  playErr.value = '';
-  scroll.value = 0;
-  resetPageScroll(scroller.value);
   // A Season row carries no external id and no Logo, so every ask below would be made against nothing.
   // On those pages they come with the series, from loadChildren.
   if (it.type === 'Season') return;
@@ -1293,12 +1272,11 @@ function paint(it: LibraryItem): void {
 /** The title's own two asks: its ranked treatments and its backdrop strip. None of
  *  them has a season-level answer, so a Season page runs them for the series above it. */
 function askWork(series: LibraryItem): void {
-  const page = props.id;
-  void app.logoCandidates(series).then(u => (props.id === page ? (titleUrls.value = u) : undefined));
+  void app.logoCandidates(series).then(u => (titleUrls.value = u));
   const kind = kindOf(series);
   const tmdbId = String(series.providers?.tmdb || '');
   if (!kind || !/^\d{1,8}$/.test(tmdbId)) return;
-  void window.echoemby.meta.tmdbImages({ kind, tmdbId }).then(x => (props.id === page ? (backdrops.value = x.ok ? x.data || [] : []) : undefined));
+  void window.echoemby.meta.tmdbImages({ kind, tmdbId }).then(x => (backdrops.value = x.ok ? x.data || [] : []));
 }
 
 /** The season rail, started from whichever half of the pair painted the page — which is what takes the
@@ -1313,7 +1291,6 @@ async function loadChildren(it: LibraryItem): Promise<void> {
       embyCached('seasons', it.id, () => window.echoemby.emby.seasons(it.id)),
       app.ensureResumeRow(),
     ]);
-    if (props.id !== it.id) return;
     serverSeasons.value = (s.ok ? s.data || [] : []).map(season => ({ seriesId: it.id, season }));
     void askSiblings(it);
     /* Open on the season the viewer stopped in, not on whichever row the server listed first: 爱情公寓 was left
@@ -1322,7 +1299,6 @@ async function loadChildren(it: LibraryItem): Promise<void> {
        holds nothing is the server asked for the row this work is on, which costs 0.3-0.5s and no more than one
        ask per page. A show nobody has started falls back to the first season with episodes, exactly as before. */
     if (!shelfRowOf(it) && !clickedRow.value) await askWorkRow(it.id);
-    if (props.id !== it.id) return;
     const stop = workRow.value;
     const home =
       (stop && serverSeasons.value.find(x => x.season.id === stop.seasonId)) ||
@@ -1334,7 +1310,6 @@ async function loadChildren(it: LibraryItem): Promise<void> {
     /* A page opened on one season is still a page about a series: its scores, its logo and its season
        tabs all belong one level up, and the switcher cannot be drawn from a list nobody asked for. */
     const [series] = await Promise.all([loadSeries(it.parentId || ''), app.ensureResumeRow()]);
-    if (props.id !== it.id) return;
     if (series) {
       askWork(series);
       // The row this work is on rides beside the season list: the band and the hero both read it, and asking
@@ -1343,62 +1318,41 @@ async function loadChildren(it: LibraryItem): Promise<void> {
         embyCached('seasons', series.id, () => window.echoemby.emby.seasons(series.id)),
         shelfRowOf(series) || clickedRow.value ? Promise.resolve() : askWorkRow(series.id),
       ]);
-      if (props.id === it.id) {
-        serverSeasons.value = (s.ok ? s.data || [] : []).map(season => ({ seriesId: series.id, season }));
-        void askSiblings(series);
-      }
+      serverSeasons.value = (s.ok ? s.data || [] : []).map(season => ({ seriesId: series.id, season }));
+      void askSiblings(series);
     }
     await loadSeason(it.indexNumber ?? 0);
   }
 }
 
-watch(
-  () => props.id,
-  async id => {
-    autoplayFor = takeAutoplay(id) ? id : '';
-    error.value = '';
-    backdrops.value = [];
-    viewer.value = null;
-    titleUrls.value = [];
-    seasonArt.value = '';
-    // The series above a Season page belongs to the title being left; keeping it would let the new
-    // season borrow the old work's date, art and synopsis.
-    if (seriesItem.value && seriesItem.value.id !== id) seriesItem.value = null;
-    // A sibling switch takes the same path as a first arrival: clear, then paint from the row the card
-    // handed over, which every 相似卡 and every list card already hands over. The old title used to stay
-    // on screen at `opacity: 0` while the new one loaded — not a dim but a blank, measured at 80.1%
-    // near-white pixels across the content area against 22.2% once settled, and held for the whole
-    // round trip (243ms on a warm gateway, up to 2s on a slow minute).
-    item.value = null;
-    heroPoster.value = '';
-    heroBackdrop.value = '';
-    serverSeasons.value = [];
-    seasonsAsked.value = false;
-    seasonN.value = -1;
-    episodeN.value = -1;
-    stillsSettled.value = false;
-    episodes.value = [];
-    loaded = '';
-    // The row the card was drawn from is already this title, so the hero paints from it instead of
-    // waiting out a round trip measured at 493ms — and 2.0s when the gateway is having a slow minute.
-    const row = seedItemFor(id);
-    item.value = row;
-    if (row) {
-      paint(row);
-      void loadChildren(row);
-    }
-    const r = await embyCached('item', id, () => window.echoemby.emby.item(id));
-    if (!r.ok || !r.data) {
-      // A page the row already painted is not a failed page: the title is on screen, only the
-      // detail-only blocks stay away. The error line is for when nothing could be shown at all.
-      if (!item.value) error.value = r.error || '打不开这一项';
-      return;
-    }
-    paint(r.data);
-    void loadChildren(r.data);
-  },
-  { immediate: true },
-);
+/* The one load this page ever does. App.vue keys the page component on the path, so this instance is bound
+   to one id for its whole life and nothing here has to be cleared for a next title: the season state, the
+   band's focus key, the scroll offset and the outgoing hero all go with the element. The block of resets
+   that used to sit in `paint` was measured into existence — walking 咒术回战 → 007 left 「2023-07-06 ·
+   59 集 · 24小时6分」 printed under a movie that has neither — and a rebuild cannot carry that over.
+   The page starts from the row the clicked card handed over, which every 相似卡 and every list card hands
+   over, so a sibling switch paints its first frame from it exactly as a cold arrival does. */
+async function loadPage(): Promise<void> {
+  const id = props.id;
+  autoplayFor = takeAutoplay(id) ? id : '';
+  // The row the card was drawn from is already this title, so the hero paints from it instead of
+  // waiting out a round trip measured at 493ms — and 2.0s when the gateway is having a slow minute.
+  const row = seedItemFor(id);
+  if (row) {
+    paint(row);
+    void loadChildren(row);
+  }
+  const r = await embyCached('item', id, () => window.echoemby.emby.item(id));
+  if (!r.ok || !r.data) {
+    // A page the row already painted is not a failed page: the title is on screen, only the
+    // detail-only blocks stay away. The error line is for when nothing could be shown at all.
+    if (!item.value) error.value = r.error || '打不开这一项';
+    return;
+  }
+  paint(r.data);
+  void loadChildren(r.data);
+}
+void loadPage();
 
 /** The hero's own label is the promise: 「播放」 opens the file at 0, 「继续播放」 takes the server's
  *  offset. Measured on both hosts, every row the button calls unwatched really has no offset (12/12 在看
@@ -1416,8 +1370,8 @@ async function play(id = playableId.value, fromStart = !resume.value?.resumed) {
 }
 
 /* The lobby's note fires the moment this page knows what to open, which for a show is after its season
-   arrives — and only against the title this page actually painted: on a page-to-page switch the outgoing
-   hero stays on screen a beat, and its episode is not the one that was asked for. */
+   arrives — and only once this page has actually painted, so the note is played against the title it was
+   made for rather than against a hero still on its way. */
 watch(
   playableId,
   id => {
@@ -1894,8 +1848,8 @@ const LEVEL_WORD = ['无', '极少', '轻微', '中等', '较多', '严重'];
 h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px; color: var(--text); }
 
 /* The switcher used to hang in the hero's top-right corner, where it faded out with the hero's parallax and
-   had to clear the back disc. It is the title line of the row it decides now, so it rides the page and the
-   sibling-switch dim like everything else under the hero. */
+   had to clear the back disc. It is the title line of the row it decides now, so it rides the page like
+   everything else under the hero. */
 .ep-head {
   display: flex;
   align-items: center;
@@ -2346,8 +2300,8 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
 /* Two frames of one band, crossing: the old photo lifts past the lens and fades while the new one comes up
    to meet it. Both are `position: absolute; inset: 0` in `.stage`, so they overlap by construction — and
    this is the one place a crossfade is the right answer rather than doubled text, because the two frames
-   are the same shape in the same place. It is what a sibling switch shows you: the page stays, only the
-   title changes. */
+   are the same shape in the same place: the plate the clicked card handed over, then the server's own photo
+   under it, and the same pair again whenever a season chip changes which season is being dressed. */
 .heroart-enter-active,
 .heroart-leave-active {
   transition: opacity var(--arrive-dur) var(--ease), transform var(--arrive-dur) var(--ease);
@@ -2359,14 +2313,14 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
 /* `img` and the element tag are load-bearing, not decoration: the band's frame also carries v-reveal, whose
    global `.rv.on` rule (base.css) pins opacity to 1 at the same specificity a bare scoped class reaches, and
    the loser is the frame that is supposed to leave. Measured 2026-10-25 with the TMDB-first band, which makes
-   this hand-off fire on every first load rather than only on a sibling switch: the outgoing server photo held
+   this hand-off fire on every first load: the outgoing server photo held
    at opacity 1 and its node was never unmounted (still two frames at +14s). */
 .stage img.heroart-leave-to {
   opacity: 0;
   transform: scale(1.03);
 }
-/* Blocks are placed as the page settles, one after another. They mount once per title, so a sibling
-   switch that only swaps their data replays nothing. */
+/* Blocks are placed as the page settles, one after another. They mount once per title, because the page is
+   built for one title, so this entrance plays once per 详情 opened — including the one a 相似卡 opens. */
 .flow > .block {
   animation: block-in var(--arrive-dur) var(--ease-out) backwards;
 }

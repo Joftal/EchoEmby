@@ -17,7 +17,6 @@ import { mergeGenres } from '../lib/genres';
 import { beginPlay, workSeedFor } from '../lib/handoff';
 import { accountName, episodeHead, fmtDate, fmtMinutes, fmtRuntime, seenLabel, seasonTitle, watchedRatio } from '../lib/format';
 import { seasonTarget } from '../lib/resume';
-import { resetPageScroll } from '../lib/scroll';
 import { useAppStore } from '../stores/app';
 import { vReveal } from '../lib/reveal';
 
@@ -497,10 +496,6 @@ watch([seasonPick, () => serverBand.value, () => eps.value.length, () => epiBand
   if (epiBand.value.focusCard(i, i > 0)) focusedOn = key;
 });
 
-/** One run per work and per season. A still that answers after the reader has moved to another season is a
- *  write into the wrong band. */
-let run = 0;
-
 /** Which season the band on screen was drawn for. A re-run for the season already showing is not a reader's
  *  move but the server's row arriving late — after TMDB's stills have painted the band — and blanking then
  *  takes away rows the reader is looking at for as long as one request (measured: 311 ms, 416 ms, 9.7 s).
@@ -510,7 +505,6 @@ let drawnSeason: number | null = null;
 /** A season this account has no row for has nothing behind TMDB's episode list, so the row is drawn from
  *  those rows alone: their stills, their names, their paragraphs. */
 async function loadSeason(): Promise<void> {
-  const mine = run;
   const k = kind.value;
   const n = Number(seasonPick.value);
   if (drawnSeason !== n) {
@@ -525,14 +519,14 @@ async function loadSeason(): Promise<void> {
   filesAnswered.value = false;
   if (!k || !seasonPick.value || Number.isNaN(n)) return;
   const s = await window.echoemby.meta.tmdbStills({ tmdbId: props.tmdbId, season: n });
-  if (mine !== run || n !== Number(seasonPick.value)) return;
+  if (n !== Number(seasonPick.value)) return;
   if (s.ok && s.data) {
     stills.value = s.data;
     drawnSeason = n;
   }
   if (k === 'tv') {
     const c = await window.echoemby.meta.tmdbSeasonCast({ tmdbId: props.tmdbId, season: n });
-    if (mine === run && n === Number(seasonPick.value) && c.ok && c.data) seasonCast.value = c.data;
+    if (n === Number(seasonPick.value) && c.ok && c.data) seasonCast.value = c.data;
   }
   const held = serverRow.value;
   // A season nobody holds is answered by TMDB's list alone, so TMDB's answer is the whole answer.
@@ -544,7 +538,8 @@ async function loadSeason(): Promise<void> {
   const e = await embyCached('episodes', { seriesId: series.id, seasonId: season.id }, () =>
     window.echoemby.emby.episodes({ seriesId: series.id, seasonId: season.id }),
   );
-  if (mine !== run) return;
+  // The season the reader is on is the only thing a late answer may write into.
+  if (n !== Number(seasonPick.value)) return;
   // The list has answered either way, and the pairing needs that fact before it needs the rows: a
   // request the gateway never answers must not hold a season's marks back for the rest of the visit.
   filesAnswered.value = true;
@@ -552,34 +547,10 @@ async function loadSeason(): Promise<void> {
   serverEps.value = e.data || [];
   bandAsked.value = true;
 }
+/* The page is mounted for one work and thrown away when the route moves, so this runs once and clears
+   nothing: the refs arrive at their initial values with the instance. */
 async function loadWork(): Promise<void> {
-  const mine = ++run;
   const k = kind.value;
-  meta.value = null;
-  error.value = '';
-  settled.value = false;
-  libRows.value = [];
-  libAsked.value = false;
-  libPending.value = false;
-  rowArt.value = '';
-  rowWide.value = '';
-  serverSeasons.value = [];
-  seasonsAnswered.value = false;
-  serverEps.value = [];
-  drawnSeason = null;
-  backdrops.value = [];
-  logos.value = [];
-  stills.value = {};
-  seasonCast.value = null;
-  bandAsked.value = false;
-  filesAnswered.value = false;
-  seasonPick.value = '';
-  serverPeople.value = [];
-  serverFaces.value = {};
-  peopleSeries = '';
-  // vue-router hands the next `/work/*` the same instance, so this is where a new work takes over the page.
-  scroll.value = 0;
-  resetPageScroll(scroller.value);
   if (!k || !idKey.value) {
     error.value = '这个链接打不开';
     return;
@@ -594,15 +565,12 @@ async function loadWork(): Promise<void> {
   if (cardTerm) {
     libPending.value = true;
     void libraryWorks(k, props.tmdbId, cardTerm).then(rows => {
-      if (mine === run) takeRows(rows, mine);
+      takeRows(rows);
     });
   }
-  const grace = setTimeout(() => {
-    if (mine === run) settled.value = true;
-  }, REVEAL_MS);
+  const grace = setTimeout(() => (settled.value = true), REVEAL_MS);
   const r = await window.echoemby.meta.tmdb({ kind: k, tmdbId: props.tmdbId });
   clearTimeout(grace);
-  if (mine !== run) return;
   settled.value = true;
   if (!r.ok || !r.data) {
     // The main process already words a transport failure as 「TMDB 没有答上（…）」, so wrapping it here twice
@@ -612,10 +580,10 @@ async function loadWork(): Promise<void> {
     meta.value = r.data;
     seasonPick.value = String(firstSeasonN(r.data.seasons) ?? '');
     void window.echoemby.meta.tmdbImages({ kind: k, tmdbId: props.tmdbId }).then(x => {
-      if (mine === run && x.ok) backdrops.value = x.data || [];
+      if (x.ok) backdrops.value = x.data || [];
     });
     void app.workLogos(k, props.tmdbId).then(u => {
-      if (mine === run) logos.value = u;
+      logos.value = u;
     });
   }
   /* When TMDB replies the rows are what badges 「可播」 and tell the seasons apart; when it does not, they are
@@ -629,7 +597,7 @@ async function loadWork(): Promise<void> {
     if (term && term !== cardTerm && !libRows.value.length) {
       libPending.value = true;
       void libraryWorks(k, props.tmdbId, term, cardTerm).then(rows => {
-        if (mine === run) takeRows(rows, mine);
+        takeRows(rows);
       });
     }
     return;
@@ -637,32 +605,32 @@ async function loadWork(): Promise<void> {
   if (!term) return;
   libPending.value = true;
   void libraryWorks(k, props.tmdbId, term).then(rows => {
-    if (mine === run) takeRows(rows, mine);
+    takeRows(rows);
   });
 }
 
 /** One server answer, whichever of the page's two asks brought it. `null` is a server that has not answered,
  *  not one that holds nothing: the hero keeps its silence rather than promise 「这台服务器上没有」 about a
  *  title nobody has been asked for. */
-function takeRows(rows: LibraryItem[] | null, mine: number): void {
+function takeRows(rows: LibraryItem[] | null): void {
   libPending.value = false;
   if (!rows) return;
   libRows.value = rows;
   libAsked.value = true;
-  void askSeasons(rows, mine);
+  void askSeasons(rows);
 }
 
 /** The seasons of every Series row this account holds for the work, and the episodes of the one on screen.
  *  Both paths into the page ask through here: the answered one, over all of the rows a TMDB title matches,
  *  and the fallback, over the single row the click came from. */
-async function askSeasons(rows: LibraryItem[], mine: number): Promise<void> {
+async function askSeasons(rows: LibraryItem[]): Promise<void> {
   // The page running on the server's record should carry the server's picture, but only when TMDB's half did
   // not arrive: on a finished page the card's own art is already the plate and this would repaint it. Asked
   // for the row the hero speaks for, so the plate and the 播放 button are the same row's.
   const home = libItem.value;
   if (!meta.value && home?.primaryImageTag) {
     void app.imageUrl({ id: home.id, primaryImageTag: home.primaryImageTag }, 300).then(u => {
-      if (mine === run) rowArt.value = u;
+      rowArt.value = u;
     });
   }
   const series = rows.filter(x => x.type === 'Series');
@@ -673,7 +641,6 @@ async function askSeasons(rows: LibraryItem[], mine: number): Promise<void> {
   const groups = await Promise.all(
     series.map(async row => ({ row, s: await embyCached('seasons', row.id, () => window.echoemby.emby.seasons(row.id)) })),
   );
-  if (mine !== run) return;
   const before = serverRow.value;
   const picked = seasonPick.value;
   serverSeasons.value = groups.flatMap(g => (g.s.ok ? g.s.data || [] : []).map(season => ({ row: g.row, season })));
@@ -691,7 +658,7 @@ async function askSeasons(rows: LibraryItem[], mine: number): Promise<void> {
   if (seasonPick.value === picked && serverRow.value !== before) void loadSeason();
 }
 
-watch(idKey, loadWork, { immediate: true });
+void loadWork();
 watch(seasonPick, () => void loadSeason());
 
 /* The band behind a fallback hero. Asked once the page is known to be running on the server's record rather
@@ -703,7 +670,9 @@ watch(seasonPick, () => void loadSeason());
 watch([fallback, libItem], () => {
   const home = libItem.value;
   if (!fallback.value || !home) return;
-  const mine = run;
+  // This watch runs again when a split work learns which of its rows is the fullest, so a band still on its
+  // way from the previous row has to be dropped rather than painted under the new one.
+  const homeId = home.id;
   const wide = home.backdropImageTag
     ? app.backdropUrl({ id: home.id, backdropImageTag: home.backdropImageTag }, 1600)
     : home.primaryImageTag
@@ -711,7 +680,7 @@ watch([fallback, libItem], () => {
       : Promise.resolve('');
   rowWide.value = '';
   void wide.then(u => {
-    if (mine === run) rowWide.value = u;
+    if (libItem.value?.id === homeId) rowWide.value = u;
   });
 });
 

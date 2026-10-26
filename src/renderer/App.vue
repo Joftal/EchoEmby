@@ -51,16 +51,17 @@ onMounted(() => {
         <!-- type="animation" because the move is keyframes, not a transition (see base.css). No mode:
              both pages are on screen for the length of the push, which is the whole effect — one page
              carries the other off. `pageDir` (router.ts) picks the direction, and its 'flat' is the hard
-             cut kept for the one swap that must not travel: out of the transparent player window. A
-             navigation that keeps this component instance gets no classes at all, since there is no
-             element to swap. keep-alive covers the lobby
-             only: it is the one page a reader returns to often, and the one whose rebuild was
-             measurable (scroll position, carousel slide and 157 card entrances all replayed). No :key
-             on the component: DetailView reuses its instance across a sibling switch and that reuse is
-             what lets the second title fade over the first instead of tearing the page down. -->
+             cut kept for the one swap that must not travel: out of the transparent player window.
+             The key is the path, so a page is rebuilt whenever the thing it is about changes — a 相似卡
+             that opens another 详情, one work to the next — which is what gives those pairs the same push
+             every other pair has. It is deliberately not `fullPath`: the 在看/收藏/资源库 shelves are one
+             component answering a query, and keying on the query would tear the whole shelf down for what
+             the pane layer inside it already slides. keep-alive covers the lobby only: it is the one page a
+             reader returns to often, and the one whose rebuild was measurable (scroll position, carousel
+             slide and 157 card entrances all replayed). -->
         <transition :name="overlay ? 'fade' : pageDir" type="animation">
           <keep-alive include="HomeView">
-            <component :is="Component" />
+            <component :is="Component" :key="route.path" />
           </keep-alive>
         </transition>
       </router-view>

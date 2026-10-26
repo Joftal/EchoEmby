@@ -16,10 +16,11 @@ import SettingsView from './views/SettingsView.vue';
  *  A navigation the history did not produce (a rail button, a poster card, the title bar's Esc) is
  *  placed by rank: 详情 sits past every shelf it can be opened from, and the shelves sit in the order
  *  the rail lists them, so 首页 -> 设置 reads as going forward and Esc back to 首页 as going home.
- *  `flat` means there is no page to carry across. A navigation that keeps the component (详情 to 详情, one
- *  work to the next) swaps no element, so the transition never runs at all; the one swap left flat is either
- *  side of the transparent player window, which must not slide over mpv's picture. Two shelves in two
- *  components (在看 and 追剧日历, 详情 and 作品页) are two pages and travel, whatever their ranks say. */
+ *  `flat` is only the transparent player window: it sits over mpv's picture, so it must neither travel nor
+ *  be travelled to. Every other pair is two pages, including the ones that share a route — 详情 to 详情 and
+ *  one work to the next now rebuild the page (App.vue keys the component on the path), so they travel like
+ *  everything else. Two shelves in two components (在看 and 追剧日历) are two pages too, whatever their ranks
+ *  say. */
 export const pageDir = ref<'push' | 'pop' | 'flat'>('flat');
 
 /** Which way the panes *inside* one page travel. The 在看/收藏/资源库 shelves are one component answering a
@@ -57,16 +58,20 @@ router.beforeEach((to, from) => {
   // 在看 -> 收藏 -> 在看 walks the rail back onto the shelf behind us, and it arrives from the left even
   // though both shelves sit at rank 1. Measured here: that click reads `back=/browse?kind=favorites` at the
   // guard and lands as a pop, while the click ahead of it reads `back=/` and lands as a push.
-  // What this cannot see is a navigation the browser produced (Alt+←, a page's own 返回): by the time the
-  // guard runs, history.state is already the destination's, whose `back` names the entry one further along.
-  // Those fall through to the rank, which is the right answer for every pair except two shelves at equal
-  // depth — 在看 <-> 追剧日历 and 详情 <-> 作品页 — where it now reads as a push either way.
+  // A navigation the browser produced (Alt+←, a page's own 返回) is the case where the guard already runs
+  // with the *destination's* state, whose `back` names the entry one further along. That state does carry one
+  // true fact: its `forward` is the entry the browser just left. So `forward === from` reads a return too —
+  // measured on 详情 2735 -> 2493 by 返回, where the destination's state is `back=/browse?kind=favorites`
+  // (useless) and `forward=/detail/2735` (exactly the page being left). This is what puts the equal-rank
+  // pairs the rank cannot separate — 在看 <-> 追剧日历, 详情 <-> 作品页, and now 详情 <-> 详情 — on the
+  // right side on the way back. A programmatic push can never satisfy it: the source's `forward` is the
+  // entry ahead of it, never itself.
   const h = window.history.state as { back?: string | null; forward?: string | null } | null;
-  const back = h?.back === to.fullPath;
+  const back = h?.back === to.fullPath || h?.forward === from.fullPath;
   paneDir.value = back ? 'pop' : 'push';
   // The overlay is the one exception the rank cannot see through: the player window is transparent over
   // mpv's picture, so it must neither travel nor be travelled to.
-  if (to.name === from.name || to.meta.overlay === true || from.meta.overlay === true) pageDir.value = 'flat';
+  if (to.meta.overlay === true || from.meta.overlay === true) pageDir.value = 'flat';
   else if (back) pageDir.value = 'pop';
   else if (h?.forward === to.fullPath) pageDir.value = 'push';
   else pageDir.value = Number(to.meta.rank ?? 0) >= Number(from.meta.rank ?? 0) ? 'push' : 'pop';
