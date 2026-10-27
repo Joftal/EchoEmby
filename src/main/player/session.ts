@@ -22,6 +22,7 @@ import {
   type QualityTier,
   type WatchedRecord,
 } from '../../shared/types';
+import { episodeSlot } from '../../shared/episode-slot';
 import { versionLabel } from '../../shared/version-label';
 import { MpvKernel } from './kernel';
 import { StreamBridge } from './bridge';
@@ -50,6 +51,12 @@ interface Current {
   name: string;
   seriesId?: string;
   seasonId?: string;
+  /** The position this episode holds in its season, as the server numbers it. The 选集 panel marks its own
+   *  row with it (see `navFor` for why the id alone is not enough), and nothing else reads it. */
+  indexNumber?: number;
+  /** Which season that position is in, as a number: the shelf and the series' own season list can hand out
+   *  two ids for one season, so `seasonId` cannot be the panel's "am I looking at the playing season" test. */
+  seasonNumber?: number;
   sources: PlaybackSource[];
   sourceIndex: number;
   playSessionId: string;
@@ -166,6 +173,8 @@ export class PlayerController {
       prev: c.prev,
       seriesId: c.seriesId,
       seasonId: c.seasonId,
+      indexNumber: c.indexNumber,
+      seasonNumber: c.seasonNumber,
       danmaku: c.danmaku,
     };
   }
@@ -259,6 +268,8 @@ export class PlayerController {
       name: item.name,
       seriesId: item.seriesId,
       seasonId: item.type === 'Episode' ? item.seasonId || item.parentId : undefined,
+      indexNumber: item.type === 'Episode' ? item.indexNumber : undefined,
+      seasonNumber: item.type === 'Episode' ? item.parentIndexNumber : undefined,
       sources: neg.sources,
       sourceIndex: neg.sourceIndex,
       playSessionId: neg.playSessionId,
@@ -311,7 +322,8 @@ export class PlayerController {
     const seasonId = item.seasonId || item.parentId;
     if (!seasonId) return none;
     const eps = await c.episodes(item.seriesId, seasonId).catch(() => []);
-    const i = eps.findIndex(x => x.id === item.id);
+    // One season's rows, so the list is the season and `sameSeason` is simply true here.
+    const i = episodeSlot(eps, item, true);
     if (i < 0) return none;
     const at = (x?: LibraryItem): PlayerNav | null => (x ? { itemId: x.id, label: navLabel(x) } : null);
     return { next: at(eps[i + 1]), prev: at(eps[i - 1]) };

@@ -643,6 +643,12 @@ export interface PlayerSession {
   /** Both ids the 选集 panel needs to list the rest of the show without asking the player first. */
   seriesId?: string;
   seasonId?: string;
+  /** Which episode of its season is on screen, for the 选集 panel to mark: the id alone cannot always say,
+   *  because a season can hold two rows for one episode and list only one of them. See `episodeSlot`. */
+  indexNumber?: number;
+  /** Which season that position is in, as a number rather than an id: the shelf and the series' own season
+   *  list can hand out two ids for one season, and only the number survives the trip. */
+  seasonNumber?: number;
   /** What the danmaku search asks about. An episode called 「第 3 集」 matches nothing, so the series name
    *  travels with it and the layer keys the track to this item. */
   danmaku: DanmakuQuery | null;

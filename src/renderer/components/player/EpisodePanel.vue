@@ -8,17 +8,33 @@ import { embyCached } from '../../lib/embycache';
 import { createLoopRail, type LoopRail } from '../../lib/looprail';
 import { vReveal } from '../../lib/reveal';
 import type { LibraryItem, TmdbSeasonRow } from '../../../shared/types';
+import { episodeSlot } from '../../../shared/episode-slot';
 
 const player = usePlayerStore();
 const app = useAppStore();
 
 const seriesId = computed(() => player.session?.seriesId || '');
 const seasonId = computed(() => player.session?.seasonId || '');
-const itemId = computed(() => player.session?.itemId || '');
 
 const seasons = ref<LibraryItem[]>([]);
 const episodes = ref<LibraryItem[]>([]);
 const active = ref('');
+/* The cell that is the episode on screen. The session's id answers it whenever the row the shelf handed the
+   player and the row this season lists are the same row; when the server holds two rows for one episode
+   they are not, and the position number settles it — see `episodeSlot`.
+   The season is compared by its number, not by id, because the two can name different rows for one season:
+   measured 2026-10-28, 骗中播 第 1 季 is `72423` to `/Shows/319444/Seasons` and `319665` to the item the
+   shelf opened, and both list the same ten episodes (72430, 72433, 72436 …, IndexNumber 1..10). Gating on
+   the id therefore refused the fallback on the very season it was meant for, and the strip stayed unmarked
+   while the 上一集/下一集 buttons next to it worked. */
+const currentCell = computed(() => {
+  const s = player.session;
+  if (!s) return '';
+  const shown = seasons.value.find(x => x.id === active.value)?.indexNumber;
+  const sameSeason = s.seasonNumber != null && s.seasonNumber === shown;
+  const i = episodeSlot(episodes.value, { id: s.itemId, indexNumber: s.indexNumber }, sameSeason);
+  return i < 0 ? '' : episodes.value[i].id;
+});
 const loading = ref(false);
 const art = ref<Record<string, string[]>>({});
 const artDead = ref<Record<string, true>>({});
@@ -145,7 +161,7 @@ watch([seriesId, seasonId], async () => {
 }, { immediate: true });
 
 async function choose(id: string): Promise<void> {
-  if (id === itemId.value) return;
+  if (id === currentCell.value) return;
   await player.play(id);
 }
 
@@ -164,7 +180,7 @@ const titleOf = (ep: LibraryItem): string =>
 
     <p v-if="loading" class="pl-empty">载入中…</p>
     <div v-else ref="strip" class="pl-strip">
-      <button v-for="ep in episodes" :key="ep.id" class="pl-cell" :class="{ on: ep.id === itemId }" @click="choose(ep.id)">
+      <button v-for="ep in episodes" :key="ep.id" class="pl-cell" :class="{ on: ep.id === currentCell }" @click="choose(ep.id)">
         <span class="art">
           <img v-reveal v-if="artOf(ep)" :src="artOf(ep)" :alt="ep.name" loading="lazy" @error="onArtFail(ep)" />
           <template v-else>{{ ep.indexNumber ?? '' }}</template>
