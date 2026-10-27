@@ -4,7 +4,7 @@ import SubPopover from './SubPopover.vue';
 import SubRow from './SubRow.vue';
 import StepRow from './StepRow.vue';
 import { usePlayerStore } from '../../stores/player';
-import { langName, openBrackets, zhTrackWords } from '../../lib/format';
+import { langName, openBrackets, saidLang, zhTrackWords } from '../../lib/format';
 import type { MediaStreamInfo, PlayerTrack, TrackSelection } from '../../../shared/types';
 
 /** Body only: the card that holds this belongs to SheetLayer, and so does its title. */
@@ -46,11 +46,11 @@ const rowLabel = (t: PlayerTrack): string => {
   return `${t.id}. ${head}${t.forced ? '（强制）' : ''}`;
 };
 /** The language rides beside the row only when the row does not already say it — 「12. 巴西 葡萄牙语」
- *  needs both halves, 「12. 葡萄牙语 葡萄牙语」 says one thing twice. */
-const subLang = (t: PlayerTrack): string => {
-  const lang = langName(t.lang);
-  return lang && rowLabel(t).includes(lang) ? '' : lang;
-};
+ *  needs both halves, 「12. 葡萄牙语 葡萄牙语」 says one thing twice. `saidLang` is the version of that
+ *  test which counts a script word as the language it qualifies: a sidecar titled 「简体」 under a `zh-cn`
+ *  language has already said 中文（简）, and the plain `includes` this line used to run read it as news and
+ *  printed 「简体 / 中文（简）」 on the two lines of one row. */
+const subLang = (t: PlayerTrack): string => (saidLang(rowLabel(t), t.lang) ? '' : langName(t.lang));
 
 const meta = (t: PlayerTrack): string => [t.selected ? '正在用' : '', t.codec ? t.codec.toUpperCase() : ''].filter(Boolean).join(' · ');
 
@@ -71,10 +71,7 @@ const sidecarName = (s: MediaStreamInfo): string => {
 };
 /** The same rule the 内封 rows follow: the language rides beside the row only when the row does not already
  *  say it, because 「简体中文 中文（简）」 is one fact printed twice. */
-const sidecarLang = (s: MediaStreamInfo): string => {
-  const lang = langName(s.lang);
-  return lang && sidecarName(s).includes(lang) ? '' : lang;
-};
+const sidecarLang = (s: MediaStreamInfo): string => (saidLang(sidecarName(s), s.lang) ? '' : langName(s.lang));
 const sidecarMeta = (s: SidecarRow): string =>
   [inUse(s) ? '正在用' : '', s.codec ? s.codec.toUpperCase() : ''].filter(Boolean).join(' · ');
 
