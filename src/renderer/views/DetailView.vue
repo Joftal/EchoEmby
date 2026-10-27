@@ -708,6 +708,10 @@ let techTrigger: HTMLElement | null = null;
    popup's card and the 选集 row it was opened from name the same episode. */
 const wantedSource = ref<Record<string, string>>({});
 const onTechPick = (itemId: string, sourceId: string): void => { wantedSource.value[itemId] = sourceId; };
+/** The card has to open on the version the page would play, not on the first strip: the popup is `v-if`, so
+ *  it remounts every time it opens, and a locally-held `picked = 0` there showed 第一格 pressed while 播放
+ *  still loaded the second. */
+const wantedFor = (it: LibraryItem | null): string | undefined => (it ? wantedSource.value[it.id] : undefined);
 /* Three plates are a guess, because the ask has not answered yet: whether the 字幕 band appears at all, and how
    tall the version strip, the 音频 card and that band came in. Measured 2026-10-26: 罚罪's web rips answer with
    no band at all (10 of the 31 episodes sampled), while 小林家的龙女仆 answers 10 consecutive episodes with one
@@ -1605,7 +1609,7 @@ const LEVEL_WORD = ['无', '极少', '轻微', '中等', '较多', '严重'];
 
         <section v-if="techInline" class="block">
           <h2>播放资源</h2>
-          <TechCard :item="techInline" @pick="onTechPick" />
+          <TechCard :item="techInline" :wanted="wantedFor(techInline)" @pick="onTechPick" />
         </section>
 
         <HScroller v-if="crew.length" title="演职员" :count="crew.length" class="block">
@@ -1691,7 +1695,7 @@ const LEVEL_WORD = ['无', '极少', '轻微', '中等', '较多', '严重'];
                 <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6.5 6.5 17.5 17.5M17.5 6.5 6.5 17.5" /></svg>
               </button>
             </header>
-            <TechCard v-if="techPop.item" :item="techPop.item" @pick="onTechPick" />
+            <TechCard v-if="techPop.item" :item="techPop.item" :wanted="wantedFor(techPop.item)" @pick="onTechPick" />
             <p v-else-if="techPop.dead" class="tp-msg">这台服务器读不出这一集的文件参数。</p>
             <div v-else class="tp-load" aria-hidden="true">
               <i class="strip" :style="plate.strip"></i>

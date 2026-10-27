@@ -108,6 +108,11 @@ export class PlayerController {
   private sidecar: { index: number; file: string; trackId: number } | null = null;
   /** Scratch directory for those files, created on the first pick and cleared with the viewing. */
   private sidecarDir: string | null = null;
+  /** The version of a show this machine has been playing, keyed by series and spelled by the gateway's own
+   *  label for the version (「2160p」 / 「1080p」 on every two-version file measured 2026-10-27). A
+   *  `MediaSourceId` belongs to one file, so it cannot travel to the next episode; the name can. See
+   *  `play`, which answers a sibling's negotiation from it. */
+  private seriesVersion = new Map<string, string>();
 
   constructor(
     private windows: PlayerWindows,
@@ -186,7 +191,19 @@ export class PlayerController {
     // The card the reader picked a version on is the one surface that knows which of the file's versions
     // was being read; without its answer the negotiation takes sources[0], which on a two-version file is
     // the 4K one this machine decodes at 0.15× real time.
-    const neg = await c.negotiate(itemId, { tier: prefs.tier, sourceId });
+    // A walk through a season does not come back through that card: 下一集, the 选集 panel and the manual
+    // next/prev all ask for a sibling by id alone. So the version carries itself by the name the gateway
+    // gave it — recorded from whatever this machine actually played, and applied to the next file only when
+    // that file offers a version under the same name. A sibling that has no such row takes its own first,
+    // which is where it would have landed anyway; measured 2026-10-27, no two-version file in either corpus
+    // is an episode, so today this changes nothing on screen and closes the hole for the day one appears.
+    const sameName = item.seriesId ? this.seriesVersion.get(item.seriesId) : undefined;
+    const fromSeries = sameName && (item.sources || []).length > 1 ? item.sources?.find(s => s.name === sameName)?.id : undefined;
+    const neg = await c.negotiate(itemId, { tier: prefs.tier, sourceId: sourceId || fromSeries });
+    if (item.seriesId) {
+      const chosen = neg.sources[neg.sourceIndex]?.name;
+      if (chosen) this.seriesVersion.set(item.seriesId, chosen);
+    }
 
     // The windows only open once the server has agreed to serve something: a refused negotiation should
     // fail on the page 播放 was pressed from, not on a black screen with no controls.
