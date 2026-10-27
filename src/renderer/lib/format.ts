@@ -389,9 +389,15 @@ const WORDS_ZH: [string, string][] = [
   ['キャストコメンタリー', '演员评论'], ['スタッフコメンタリー', '制作人员评论'],
 ];
 /** Subtitle container names. They stay as codes on purpose — ASS and PGSSUB are the formats' own names,
- *  the way mkv and HEVC are elsewhere on the same card — but spelled the one way the card spells them. */
+ *  the way mkv and HEVC are elsewhere on the same card — but spelled the one way the card spells them.
+ *  The three long keys are what mpv calls the same stream: measured 2026-10-28 by playing the one file per
+ *  codec name both gateways send and matching mpv's track against the server's row by container stream
+ *  number, mpv answers `hdmv_pgs_subtitle` where the server says `PGSSUB` (48 of the 127 tracks walked),
+ *  `dvd_subtitle` for `DVDSUB`, and `webvtt-webm` for `webvtt`. Without them the player's menu would print
+ *  HDMV_PGS_SUBTITLE beside a card that says PGS for one subtitle. */
 const FORMAT: Record<string, string> = {
   srt: 'SRT', subrip: 'SRT', ass: 'ASS', ssa: 'SSA', pgssub: 'PGS', sup: 'PGS', pgs: 'PGS',
+  hdmv_pgs_subtitle: 'PGS', dvd_subtitle: 'DVDSUB', 'webvtt-webm': 'VTT',
   vtt: 'VTT', webvtt: 'VTT',
 };
 /** One container's name on a card, from the codec the gateway reports. It is the same table `zhTrackWords`

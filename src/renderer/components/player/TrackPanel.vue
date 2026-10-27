@@ -4,7 +4,7 @@ import SubPopover from './SubPopover.vue';
 import SubRow from './SubRow.vue';
 import StepRow from './StepRow.vue';
 import { usePlayerStore } from '../../stores/player';
-import { langName, NO_LANG, openBrackets, saidLang, zhTrackWords } from '../../lib/format';
+import { langName, NO_LANG, openBrackets, saidLang, zhTrackWords, formatWord } from '../../lib/format';
 import type { MediaStreamInfo, PlayerTrack, TrackSelection } from '../../../shared/types';
 
 /** Body only: the card that holds this belongs to SheetLayer, and so does its title. */
@@ -54,7 +54,11 @@ const rowLabel = (t: PlayerTrack): string => {
  *  printed 「简体 / 中文（简）」 on the two lines of one row. */
 const subLang = (t: PlayerTrack): string => (saidLang(rowLabel(t), t.lang) ? '' : langName(t.lang));
 
-const meta = (t: PlayerTrack): string => [t.selected ? '正在用' : '', t.codec ? t.codec.toUpperCase() : ''].filter(Boolean).join(' · ');
+/* The codec column is the same word the 播放资源 card prints for the same stream, not the raw id: mpv names
+   a subtitle `subrip` where the card says SRT, and `hdmv_pgs_subtitle` where it says PGS — measured
+   2026-10-28 over the 127 tracks of the one-file-per-codec walk. It is also the only thing that tells two
+   rows apart once their titles fold to the same words, so it stays on the row, just spelled one way. */
+const meta = (t: PlayerTrack): string => [t.selected ? '正在用' : '', formatWord(t.codec)].filter(Boolean).join(' · ');
 
 /** A sidecar named by the same pass the 播放资源 card runs, so one track cannot read 巴西 葡萄牙语 there and
  *  Brazilian Portuguese here. The card clusters by language and lets the head carry it; these rows are one
@@ -76,7 +80,7 @@ const sidecarName = (s: MediaStreamInfo): string => {
  *  say it, because 「简体中文 中文（简）」 is one fact printed twice. */
 const sidecarLang = (s: MediaStreamInfo): string => (saidLang(sidecarName(s), s.lang) ? '' : langName(s.lang));
 const sidecarMeta = (s: SidecarRow): string =>
-  [inUse(s) ? '正在用' : '', s.codec ? s.codec.toUpperCase() : ''].filter(Boolean).join(' · ');
+  [inUse(s) ? '正在用' : '', formatWord(s.codec)].filter(Boolean).join(' · ');
 
 async function pick(id: TrackSelection): Promise<void> {
   await player.cmd({ action: 'track', value: { kind: props.kind, id } });
