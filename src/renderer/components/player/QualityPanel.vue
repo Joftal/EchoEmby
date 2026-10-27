@@ -106,7 +106,7 @@ const playingRange = computed(() => {
         <button :class="{ on: prefs.render === 'hq' }" @click="patch({ render: 'hq' })">清晰优先</button>
       </span>
     </div>
-    <p class="pl-note">清晰优先开的是 gpu-hq 加插帧，会换一个新的 mpv 进程：画面会黑一下。</p>
+    <p class="pl-note">清晰优先开的是 gpu-hq，会换一个新的 mpv 进程：画面会黑一下。</p>
   </SubPopover>
 
   <SubPopover name="range" title="动态范围">
