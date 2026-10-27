@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { enName, fmtDateTime, fmtRate, fmtRuntime, fmtSize, formatWord, langName, openBrackets, rangeWord, zhTrackWords } from '../../lib/format';
+import { versionLabel } from '../../../shared/version-label';
 import { hasContent, type LibraryItem, type MediaStreamInfo } from '../../../shared/types';
 
 /** One file's technical sheet: the version strip, the video card, every audio track, the subtitle list,
@@ -294,22 +295,27 @@ const fmtLayout = (s?: string): string =>
  *  nothing. `Protocol` is the server's own answer: File on 474 of 474 sources here, Http on a referral. */
 const WHERE: Record<string, string> = { File: '服务器文件', Http: '网络地址' };
 const where = (p?: string): string => (!p ? '' : WHERE[p] || p);
-/** Each version strip answers 「this file」 with its own name when the name is a label: 挽救计划's two are
- *  literally 「2160p」 and 「1080p」. Where the server put the whole filename there instead — 僵尸世界大战
- *  carries 「僵尸世界大战 (2013) - 2160p」 on both of its versions — it restates the page headline and,
- *  twice over, restates the card beside it, so those strips fall back to the dynamic range: the one file
- *  fact no card below repeats.
- *  The compare runs on the name with its bracketed tail cut off, because on 23,027 sources measured
- *  2026-10-27, 50 of the 1,418 that print the server's `Name` as the head are the page headline with the
- *  year bolted on (「岳父大人 (2022)」) — the whole-string test below used to fail on every one of them, so
- *  the gate that is supposed to stop a strip re-reading the title never fired on a titled-with-year file. */
+/** A lone version's head, where the server's name is the only word that could name it. With rivals to
+ *  compare against, the head comes from `versionLabel` instead — see that file for why a length cap cannot
+ *  tell a filename from a label. Here nothing is being compared, so a name is only worth printing when it
+ *  is short enough to be a label and is not the page headline said again: on 23,027 sources measured
+ *  2026-10-27, 50 of the 1,418 strips that printed `Name` as the head are the headline with the year bolted
+ *  on (「岳父大人 (2022)」), and a strip that re-reads the title above it says nothing a version switch
+ *  could act on. The compare runs on the name with its bracketed tail cut off, because that is exactly the
+ *  shape those 50 have. */
 const versionName = (name?: string): string => {
   if (!name || name.length > 12) return '';
   const t = props.item?.name || '';
   return t.includes(name.replace(/[（(].*$/, '').trim()) ? '' : name;
 };
-/** What every version strip prints, worked out together because two of the values are facts about the set
+/** What every version strip prints, worked out together because three of the values are facts about the set
  *  of versions rather than about one file.
+ *
+ *  With more than one version, the head is the shape word out of the server's own name — 挽救计划's two are
+ *  literally 「2160p」 and 「1080p」, 哺乳动物星球 S01E01's are 「tv」 and 「mobile」 glued behind a 23-character
+ *  filename — and the dynamic range only when the name holds no such word. A name is not asked to restate
+ *  the headline here, because `versionLabel` cuts the headline out of it along with everything else that is
+ *  not a shape.
  *
  *  The length is printed only where the versions disagree on it: one file's runtime is already on the page
  *  above this card, so a lone version saying it again is the same number twice, and two versions that agree
@@ -317,10 +323,12 @@ const versionName = (name?: string): string => {
  *  differ once the length is rounded to the minute the card prints — 3小时27分 against 3小时21分 — which is
  *  the whole reason to pick one of them over the other.
  *
- *  The ordinal is what is left when nothing on the strip differs. 僵尸世界大战's two versions are reported as
- *  one file to the byte — one name, one size, one bitrate, one length, one range — and the only thing the
- *  gateway knows apart is a subtitle the second lacks, so the two buttons read identically and picking
- *  between them was a guess. 1 of those 8 items needs it.
+ *  The track counts join the small line when two or more strips head with the same word. Two buttons that
+ *  open on the same word read as the same file twice, and the file the reader is choosing between is not
+ *  twice the same: 僵尸世界大战's two 「2160p」 differ by a subtitle track (4 against 3), 无职转生's two SDR
+ *  rows by eight (12 against 4) — and those counts are the version's own, answered by no other line on the
+ *  sheet, because the 音频 and 字幕 cards below describe the picked version only. Where the counts match too,
+ *  the ordinal is what is left, and where nothing else differs it is the only word telling two buttons apart.
  *
  *  A source with no video stream has no range to print and no picture the 视频 card can describe, so the
  *  strip says that instead of falling through to 'SDR' — the one value the server never reported.
@@ -336,7 +344,9 @@ const strips = computed(() => {
   const showRun = list.length > 1 && runs.size > 1;
   const rows = list.map(s => {
     const range = rangeWord(s.video?.range);
-    const head = hasContent(s) ? versionName(s.name) || range || (s.video ? '' : '无视频轨') : '无内容';
+    const head = hasContent(s)
+      ? (multi.value ? versionLabel(s.name) : versionName(s.name)) || range || (s.video ? '' : '无视频轨')
+      : '无内容';
     const meta = [
       showRun ? fmtRuntime(s.runTimeTicks) : '',
       fmtSize(s.sizeBytes),
@@ -347,6 +357,12 @@ const strips = computed(() => {
     ].filter(Boolean);
     return { src: s, head, meta };
   });
+  const same = new Map<string, number>();
+  for (const r of rows) same.set(r.head, (same.get(r.head) || 0) + 1);
+  for (const r of rows) {
+    if ((same.get(r.head) || 0) < 2 || !hasContent(r.src)) continue;
+    r.meta.push(`音频 ${r.src.audio?.length || 0} 条`, `字幕 ${r.src.subtitle?.length || 0} 条`);
+  }
   const sigs = rows.map(r => [r.head, ...r.meta].join('|'));
   const dup = new Set(sigs.filter((g, i, all) => all.indexOf(g) !== i));
   return rows.map((r, i) => ({
@@ -479,7 +495,11 @@ button.srccard {
    where nothing else differs it is the only word telling two buttons apart, and it still must not outrank
    the range beside it. */
 .sc-ord { margin-left: 8px; font-size: 13px; font-weight: 500; color: var(--text-dim); }
-.sc-meta { margin: 2px 0 0; display: flex; gap: 14px; font-size: 13px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+/* Wraps, because a strip that shares its headline with a rival carries two more facts than one that does
+   not, and at 836px of dialog each of two cards gets 411px — a line of 七 values would have run out of box.
+   Both rivals gain the counts together, and `.src` stretches them to one height, so the second row costs
+   the strip's own card nothing it was not already going to pay. */
+.sc-meta { margin: 2px 0 0; display: flex; gap: 4px 14px; flex-wrap: wrap; font-size: 13px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 
 /* Two codec cards side by side, then the subtitle list across the whole band. `flex-start` is what keeps the
    shorter card honest: a file with one audio track asks 音频 for one line while 视频 still carries seven,

@@ -22,6 +22,7 @@ import {
   type QualityTier,
   type WatchedRecord,
 } from '../../shared/types';
+import { versionLabel } from '../../shared/version-label';
 import { MpvKernel } from './kernel';
 import { StreamBridge } from './bridge';
 import { PlayerWindows } from './windows';
@@ -108,11 +109,17 @@ export class PlayerController {
   private sidecar: { index: number; file: string; trackId: number } | null = null;
   /** Scratch directory for those files, created on the first pick and cleared with the viewing. */
   private sidecarDir: string | null = null;
-  /** The version of a show this machine has been playing, keyed by series and spelled by the gateway's own
-   *  label for the version (「2160p」 / 「1080p」 on every two-version file measured 2026-10-27). A
-   *  `MediaSourceId` belongs to one file, so it cannot travel to the next episode; the name can. See
-   *  `play`, which answers a sibling's negotiation from it. */
+  /** The version of a show this machine has been playing, keyed by series and spelled by the one word the
+   *  version's own name says about its shape — 「2160p」, 「tv」, 「mobile」 — which is the word
+   *  `versionLabel` reads out and the 播放资源 card and the player's 播放源 card both print. A
+   *  `MediaSourceId` belongs to one file, so it cannot travel to the next episode; the shape word can.
+   *  See `play`, which answers a sibling's negotiation from it. */
   private seriesVersion = new Map<string, string>();
+  /** The version of *this* file the player last ended up on, per item. The 播放源 card inside the player
+   *  writes it, and so does every negotiation, because a switch made there is the user's most recent word
+   *  on a file that has more than one — and until it existed, the next 播放 of the same file went back to
+   *  whichever row the negotiation happened to take first. */
+  private itemVersion = new Map<string, string>();
 
   constructor(
     private windows: PlayerWindows,
@@ -191,19 +198,28 @@ export class PlayerController {
     // The card the reader picked a version on is the one surface that knows which of the file's versions
     // was being read; without its answer the negotiation takes sources[0], which on a two-version file is
     // the 4K one this machine decodes at 0.15× real time.
-    // A walk through a season does not come back through that card: 下一集, the 选集 panel and the manual
-    // next/prev all ask for a sibling by id alone. So the version carries itself by the name the gateway
-    // gave it — recorded from whatever this machine actually played, and applied to the next file only when
-    // that file offers a version under the same name. A sibling that has no such row takes its own first,
-    // which is where it would have landed anyway; measured 2026-10-27, no two-version file in either corpus
-    // is an episode, so today this changes nothing on screen and closes the hole for the day one appears.
-    const sameName = item.seriesId ? this.seriesVersion.get(item.seriesId) : undefined;
-    const fromSeries = sameName && (item.sources || []).length > 1 ? item.sources?.find(s => s.name === sameName)?.id : undefined;
-    const neg = await c.negotiate(itemId, { tier: prefs.tier, sourceId: sourceId || fromSeries });
-    if (item.seriesId) {
-      const chosen = neg.sources[neg.sourceIndex]?.name;
-      if (chosen) this.seriesVersion.set(item.seriesId, chosen);
-    }
+    // Two memories stand behind that answer. `itemVersion` holds the version this machine last actually
+    // played for this exact file — including one switched inside the player's 播放源 card, which the page
+    // can never see — and `seriesVersion` holds the version's shape word for the whole show, because a walk
+    // through a season does not come back through any card: 下一集, the 选集 panel and the manual
+    // next/prev all ask for a sibling by id alone. It is keyed on `versionLabel` rather than on the
+    // server's `Name` because a name cannot travel — measured 2026-10-27 over the item endpoint's 800
+    // sampled rows, 5 of 400 episode rows carry two or three versions and 14,992 of 15,000 episode version
+    // names embed their own 「S01E04」, so 「… - S01E01 - 第 1 集 - tv」 is never the next episode's name and
+    // the raw comparison hit nothing at all in a live three-episode walk. The shape word is the one that
+    // repeats: asked of the live item endpoint over eight episodes per show, 哺乳动物星球 S01 carries
+    // 「tv」 on 6 of 6 of them, so a pick made on 第 1 集 answers 第 2–6 集. The other four two-version
+    // shows name their versions with no shape word at all — 黑袍纠察队 gives both rows the same
+    // 「… - S03E08 - 第 8 集」 — and those write nothing, so their siblings take their own first source,
+    // which is where they would have landed anyway.
+    // An explicit pick from the card outranks both, because the card is showing it pressed.
+    const sameShape = item.seriesId ? this.seriesVersion.get(item.seriesId) : undefined;
+    const fromSeries = sameShape && (item.sources || []).length > 1
+      ? item.sources?.find(s => versionLabel(s.name).toLowerCase() === sameShape)?.id
+      : undefined;
+    const wanted = sourceId || this.itemVersion.get(itemId) || fromSeries;
+    const neg = await c.negotiate(itemId, { tier: prefs.tier, sourceId: wanted });
+    this.rememberVersion(itemId, item.seriesId, neg.sources[neg.sourceIndex]);
 
     // The windows only open once the server has agreed to serve something: a refused negotiation should
     // fail on the page 播放 was pressed from, not on a black screen with no controls.
@@ -615,6 +631,17 @@ export class PlayerController {
     await this.replay({ tier: bitrate, sourceId: c.sources[c.sourceIndex]?.id });
   }
 
+  /** File the player is now on, into both memories. Called from `play` and from `replay`, which is what a
+   *  播放源 or 画质 card inside the player drives — a switch made there is as much the user's answer as one
+   *  made on the page, and the page has no way to see it: the player is a second window whose session object
+   *  never reaches the library renderer. */
+  private rememberVersion(itemId: string, seriesId: string | undefined, src: PlaybackSource | undefined): void {
+    if (!src) return;
+    this.itemVersion.set(itemId, src.id);
+    const shape = versionLabel(src.name).toLowerCase();
+    if (seriesId && shape) this.seriesVersion.set(seriesId, shape);
+  }
+
   private async replay(opts: { tier: number; sourceId?: string }): Promise<void> {
     const c = this.current;
     const k = this.kernel;
@@ -629,6 +656,7 @@ export class PlayerController {
     const url = await this.bridge.mount(neg.url);
     c.sourceIndex = neg.sourceIndex;
     c.sources = neg.sources;
+    this.rememberVersion(itemId, c.seriesId, neg.sources[neg.sourceIndex]);
     c.playSessionId = neg.playSessionId || c.playSessionId;
     c.method = neg.method;
     c.hdr = neg.hdr;

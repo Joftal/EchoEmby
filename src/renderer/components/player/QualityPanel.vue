@@ -6,6 +6,7 @@ import SubRow from './SubRow.vue';
 import { usePlayerStore } from '../../stores/player';
 import { useAppStore } from '../../stores/app';
 import { fmtRate, fmtSize, rangeWord } from '../../lib/format';
+import { versionNames } from '../../../shared/version-label';
 import { hasContent, type PlayMethod, type PlaybackSource, type PlayerPrefs } from '../../../shared/types';
 
 const player = usePlayerStore();
@@ -52,6 +53,12 @@ function pickSource(index: number): void {
   void player.cmd({ action: 'source', value: index });
 }
 
+/** The version's own word, from the same shape vocabulary the 播放资源 card reads. This row used to print
+ *  the server's `Name` whole, which on a movie is 「僵尸世界大战 (2013) - 2160p」 — the film title, the year
+ *  and a resolution, in a card that already prints its size, its bitrate and its range — and on an episode
+ *  is the filename. Two surfaces then named one file two ways, and only one of them said anything the card
+ *  below it had not already said. */
+const names = computed(() => versionNames(session.value?.sources || []));
 /** The versions this panel offers, with the seat each one holds in the session's own list — `source` is a
  *  command argument, so a filtered view has to carry the index it was cut from. The rows the server lists
  *  but cannot probe (no stream at all: 133 of 23,027 sources measured 2026-10-27) are left out: pressing one
@@ -90,7 +97,7 @@ const playingRange = computed(() => {
         <span>{{ rate(v.src.bitRate) }}</span>
         <span class="who">
           <Shield :size="17" :fill="session?.sourceIndex === v.i ? '#6ddc8f' : 'rgba(255,255,255,.4)'" stroke-width="1.6" />
-          {{ v.src.name || `版本 ${v.i + 1}` }}
+          {{ names[v.i] }}
         </span>
       </button>
     </div>
