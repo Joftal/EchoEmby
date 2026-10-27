@@ -442,7 +442,8 @@ export class PlayerController {
   }
 
   /** Say once, at the moment the item is left, where it actually stopped — the only write that decides
-   *  what 看到 shows anywhere in the app. Returns the number the server took, or null when there was
+   *  what 看到 shows anywhere in the app. Returns the number the server took — asked for after
+   *  the report lands, because a 2xx only says it was heard (see confirmHeld) — or null when there was
    *  nothing to say or the server did not take it; a caller must not patch a card with a position the
    *  server refused, because the next re-read would contradict it.
    *  `atMs` is the end-of-file override: mpv's clock at the last frame is a frame short of the runtime.
@@ -488,8 +489,34 @@ export class PlayerController {
     // What the server took, even when it took 0: an accepted number that the item never shows is only
     // tellable apart from a write that never went out by having the number on the record.
     console.log('[player] 停止已写', reason, c.itemId, `pos=${Math.round(at)}`, `len=${durationMs}`);
+    const held = await this.confirmHeld(client, c.itemId, at, durationMs, reason);
     c.flushedMs = at;
-    return { itemId: c.itemId, positionMs: at, durationMs };
+    // The server's number, not ours: publishing the sent one is how a button came to read 「看到 1:07」
+    // over a film the gateway had just zeroed (measured 2026-10-28, 240037).
+    return { itemId: c.itemId, positionMs: held ?? at, durationMs };
+  }
+
+  /** The item's own answer about where it now parks the viewer. A 2xx on the report only means the gateway
+   *  heard it, not that it kept the number: measured 2026-10-28 on bangumi, a stop at 66,858 ms (1.08% of
+   *  小鬼当家's 6,173,633) was accepted and the item came back 0 — and the 369,828 ms (5.99%) it had been
+   *  holding went to 0 with it. A position under this gateway's threshold (which the three runs put in
+   *  (2.55%, 3.47%], the same rule OkEmby's 325273 answers by at (2.56%, 34.4%]) is not ignored but cleared,
+   *  so the write the card is patched from has to be the read-back. One read is not enough: the gateway
+   *  folds a report in a moment after it answers, so a disagreement is re-read before it is believed, and
+   *  only then published. A stop at the file's own length is the 已看 case, where the position is meaningless
+   *  and markPlayed is the authority — that one goes unverified. Null means the item could not be asked, and
+   *  the caller keeps today's behaviour of publishing what it sent. */
+  private async confirmHeld(client: EmbyClient, itemId: string, at: number, durationMs: number, reason: string): Promise<number | null> {
+    if (at >= durationMs - 1500) return null;
+    const ask = () => client.resumePoint(itemId).catch(() => null);
+    const first = await ask();
+    if (!first) return null;
+    if (Math.abs(first.startMs - at) <= 1500) return first.startMs;
+    await new Promise(r => setTimeout(r, 700));
+    const again = await ask();
+    const held = again ? again.startMs : first.startMs;
+    console.warn('[player] 停止被抹', reason, itemId, `sent=${Math.round(at)}`, `held=${Math.round(held)}`, `start=${Math.round(this.current?.startMs ?? 0)}`);
+    return held;
   }
 
   /** Every control the overlay can ask for. Each arm returns once mpv has been told; the state comes back
