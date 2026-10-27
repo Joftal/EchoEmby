@@ -16,7 +16,10 @@ import type { LibraryItem, MediaStreamInfo } from '../../../shared/types';
  *  it」 — one row each, because measured 2026-10-26 on 468 files, 107 of them hold more than one audio
  *  track and in 52 of those the hidden ones are a different language. A reader picking a dub cannot do
  *  that from 「共 5 条」. */
-const props = defineProps<{ item: LibraryItem | null }>();
+/* The version this page already pointed at, when it has one: the popup is `v-if`, so closing it destroys
+   this component and reopening it starts at 0 — while the page still holds the pick and 播放 would load the
+   second file under a card showing the first pressed. The page owns the answer, so it passes it in. */
+const props = defineProps<{ item: LibraryItem | null; wanted?: string }>();
 /** The pick is not only this card's business: 播放 on this page has to load the version the reader was
  *  reading, so the page keeps the id and hands it to the player when playback starts. */
 const emit = defineEmits<{ pick: [itemId: string, sourceId: string] }>();
@@ -26,7 +29,11 @@ const sources = computed(() => props.item?.sources || []);
  *  for. `0` is where it starts because that is the file the player loads when nothing else is asked for;
  *  the strips are buttons from there, because measured 2026-10-26 on 444 files, 6 of them carry a second
  *  version (挽救计划 2160p/29.72 GB beside 1080p/5.09 GB) whose own tracks are the reason it exists. */
-const picked = ref(0);
+const wantedIndex = (): number => {
+  const i = props.wanted ? sources.value.findIndex(s => s.id === props.wanted) : -1;
+  return i > 0 ? i : 0;
+};
+const picked = ref(wantedIndex());
 const at = computed(() => Math.min(picked.value, sources.value.length - 1));
 /** With one version there is nothing to switch, so the strip is not a tab bar: no button, no cursor, and
  *  no selected tint painted on a card that has no rival to be selected over. */
@@ -34,7 +41,7 @@ const multi = computed(() => sources.value.length > 1);
 const described = computed(() => sources.value[at.value]);
 /* A new item is a new question: the second version of one file must not stay selected while the reader
    opens another, whose strips may not even be two. */
-watch(() => props.item?.id, () => { picked.value = 0; });
+watch(() => props.item?.id, () => { picked.value = wantedIndex(); });
 const pick = (i: number): void => {
   picked.value = i;
   const s = sources.value[i];
@@ -75,7 +82,7 @@ const onlyDefault = <T extends { isDefault?: boolean }>(list: T[]): number => {
 const audioRows = computed(() => {
   const list = described.value?.audio || [];
   const def = onlyDefault(list);
-  return list.map((a, i) => {
+  const rows = list.map((a, i) => {
     const nums = [
       langName(a.lang) || '无语言',
       codecLabel(a),
@@ -85,6 +92,17 @@ const audioRows = computed(() => {
     ].filter(Boolean).join(' · ');
     return { nums, name: audioName(a, nums), isDefault: i === def };
   });
+  /* Two rows that come out word for word the same are two tracks the gateway reports no field apart.
+     Measured 2026-10-27 over 23,027 sources: 231 files hold 550 such rows, 18 of them three or more alike,
+     and only 38 of the groups differ in any real field. The list does not merge them — both print — so the
+     sign a reader needs is that they are two: the row's own position, on the colliding ones only. An
+     ordinal on every row would be a number nobody asks for. */
+  const count = new Map<string, number>();
+  for (const r of rows) {
+    const id = `${r.nums} ${r.name}`;
+    count.set(id, (count.get(id) || 0) + 1);
+  }
+  return rows.map((r, i) => ({ ...r, ord: (count.get(`${r.nums} ${r.name}`) || 0) > 1 ? `第 ${i + 1} 条` : '' }));
 });
 /** The server's own words for a track, in the reader's language: `zhTrackWords` drops every part that
  *  restates the language the row already heads (in English, in the language's own spelling, or in
@@ -181,7 +199,12 @@ const subGroups = computed(() => {
     // `DisplayTitle`, which no card reads — so 左撇子女孩 printed one 「听障」 over a row the server does
     // not flag and hid the row it does under 「普通×2」.
     const extra = [
-      s.isExternal ? '外挂' : '',
+      // 外挂 says where the bytes sit, and for three rows it has to say which kind: measured 2026-10-27
+      // on the 784 sidecar subtitle rows in both corpora, 781 are text (srt 397, ass 376, ssa 8) and 3 are
+      // pictures (复活她 idx5, 酷儿 idx7, 战·争 idx5 — all `.sup`). The player's own menu filters those out
+      // because mpv decodes a bitmap only inside a container, so a bare 外挂 on one of the three names a
+      // track the menu will not offer and clicking the file cannot deliver.
+      s.isExternal ? (s.isTextSubtitle === false ? '外挂（图片）' : '外挂') : '',
       s.isForced && !/强制|forced/i.test(label) ? '强制' : '',
       s.isHearingImpaired && !/听障|sdh/i.test(label) ? '听障' : '',
       i === defSub ? '默认' : '',
@@ -263,10 +286,15 @@ const where = (p?: string): string => (!p ? '' : WHERE[p] || p);
  *  literally 「2160p」 and 「1080p」. Where the server put the whole filename there instead — 僵尸世界大战
  *  carries 「僵尸世界大战 (2013) - 2160p」 on both of its versions — it restates the page headline and,
  *  twice over, restates the card beside it, so those strips fall back to the dynamic range: the one file
- *  fact no card below repeats. */
+ *  fact no card below repeats.
+ *  The compare runs on the name with its bracketed tail cut off, because on 23,027 sources measured
+ *  2026-10-27, 50 of the 1,418 that print the server's `Name` as the head are the page headline with the
+ *  year bolted on (「岳父大人 (2022)」) — the whole-string test below used to fail on every one of them, so
+ *  the gate that is supposed to stop a strip re-reading the title never fired on a titled-with-year file. */
 const versionName = (name?: string): string => {
+  if (!name || name.length > 12) return '';
   const t = props.item?.name || '';
-  return name && name.length <= 12 && !t.includes(name) ? name : '';
+  return t.includes(name.replace(/[（(].*$/, '').trim()) ? '' : name;
 };
 /** What every version strip prints, worked out together because two of the values are facts about the set
  *  of versions rather than about one file.
@@ -283,19 +311,27 @@ const versionName = (name?: string): string => {
  *  between them was a guess. 1 of those 8 items needs it.
  *
  *  A source with no video stream has no range to print and no picture the 视频 card can describe, so the
- *  strip says that instead of falling through to 'SDR' — the one value the server never reported. */
+ *  strip says that instead of falling through to 'SDR' — the one value the server never reported.
+ *
+ *  The range is the last thing the small line says whenever the big line is not already saying it. On the
+ *  same 23,027 sources, 1,418 strips head with the server's own `Name`, and 1,414 of those were hiding a
+ *  dynamic range the gateway had reported — 87 of them 杜比视界 or HDR10 — because the range only ever
+ *  reached the strip as the fallback head, and 21,479 strips already head with it. A reader asking 「is
+ *  this file HDR」 had no answer anywhere on the page. */
 const strips = computed(() => {
   const list = sources.value;
   const runs = new Set(list.map(s => fmtRuntime(s.runTimeTicks)));
   const showRun = list.length > 1 && runs.size > 1;
   const rows = list.map(s => {
-    const head = versionName(s.name) || rangeWord(s.video?.range) || (s.video ? '' : '无视频轨');
+    const range = rangeWord(s.video?.range);
+    const head = versionName(s.name) || range || (s.video ? '' : '无视频轨');
     const meta = [
       showRun ? fmtRuntime(s.runTimeTicks) : '',
       fmtSize(s.sizeBytes),
       fmtRate(s.bitRate),
       s.container || '',
       where(s.protocol),
+      head === range ? '' : range,
     ].filter(Boolean);
     return { head, meta, sig: [head, ...meta].join('|') };
   });
@@ -343,7 +379,6 @@ const strips = computed(() => {
             ['编码', vstream.codec?.toUpperCase()],
             ['配置', vstream.profile],
             ['位深', vstream.bitDepth ? vstream.bitDepth + ' 位' : ''],
-            ['色度', vstream.chroma],
           ] as Array<[string, string]>" :key="row[0]">
             <template v-if="row[1]"><dt>{{ row[0] }}</dt><dd>{{ row[1] }}</dd></template>
           </template>
@@ -353,13 +388,19 @@ const strips = computed(() => {
         <h3>音频<span v-if="audioRows.length > 1" class="cnt">{{ audioRows.length }} 条</span></h3>
         <ul class="tracks">
           <li v-for="(a, i) in audioRows" :key="i" class="trk" :class="{ def: a.isDefault }">
-            <p class="tk">{{ a.nums }}<span v-if="a.name" class="tk-name">{{ a.name }}</span><span v-if="a.isDefault" class="tk-tag">默认</span></p>
+            <p class="tk">{{ a.nums }}<span v-if="a.name" class="tk-name">{{ a.name }}</span><span v-if="a.ord" class="tk-tag">{{ a.ord }}</span><span v-if="a.isDefault" class="tk-tag">默认</span></p>
           </li>
         </ul>
       </div>
-      <div v-if="subGroups.length" class="tcard wide">
+      <div v-if="subGroups.length || multi" class="tcard wide">
         <h3>字幕<span v-if="subTotal > 1" class="cnt">{{ subTotal }} 条</span></h3>
-        <p class="labs"><span v-for="g in subGroups" :key="g.lang" class="lg"><span class="lead"><b>{{ g.lang }}</b><span v-if="g.vars[0]" class="v" :class="{ tail: g.vars.length > 1 }">{{ g.vars[0] }}</span></span><span v-for="(v, j) in g.vars.slice(1)" :key="j" class="v" :class="{ tail: j < g.vars.length - 2 }">{{ v }}</span></span></p>
+        <p v-if="subGroups.length" class="labs"><span v-for="g in subGroups" :key="g.lang" class="lg"><span class="lead"><b>{{ g.lang }}</b><span v-if="g.vars[0]" class="v" :class="{ tail: g.vars.length > 1 }">{{ g.vars[0] }}</span></span><span v-for="(v, j) in g.vars.slice(1)" :key="j" class="v" :class="{ tail: j < g.vars.length - 2 }">{{ v }}</span></span></p>
+        <!-- A version with no subtitle track has no list, and 9,165 of the 23,027 sources are that way with
+             no second version to press — on those, the card's absence is the honest answer. Under a switch
+             it is not: measured on OkEmby 197229 阿甘正传, the 字幕 card holding 30 tracks vanished the
+             moment the reader pressed the other strip and the sheet gave no reason for losing a block. One
+             line, and only where a strip made it go away. -->
+        <p v-else class="labs none">这个版本没有字幕</p>
       </div>
     </div>
 
@@ -490,6 +531,8 @@ button.srccard {
    longest cluster would run past the card. */
 .labs .lg + .lg::before { content: ' '; }
 .labs .lg + .lg { margin-left: 16px; }
+/* The one line that stands where a list would be, at the weight of the list's own qualifiers. */
+.labs.none { color: var(--text-dim); font-weight: 500; }
 
 /* The block ends on the one line about the file that no other surface answers: when the server took it in.
    Which release this is moved up into the version strip, where each version can say it for itself. */
