@@ -44,6 +44,9 @@ export interface PlayerOut {
  *  while a quality change is in flight. */
 interface Current {
   itemId: string;
+  /** The server this viewing was opened on, kept for its whole life: `client()` reads it, because the
+   *  lobby can move to another machine while a stream is still running. */
+  accountId: string;
   name: string;
   seriesId?: string;
   seasonId?: string;
@@ -172,10 +175,25 @@ export class PlayerController {
     return { deviceId: c.deviceId, deviceName: c.deviceName, clientName: c.clientName, clientVersion: c.clientVersion, language: 'zh-cn' };
   }
 
+  /** The server the thing being talked about lives on. While a viewing is open that is the one it was
+   *  opened on, not whichever one the lobby moved to: 换服务器 does not close the player window, and an
+   *  item id means something only on the machine that issued it — measured 2026-10-28, 240037 is 小鬼当家
+   *  on emby.bangumi.ca and 「Erlinda Villalobos」 on OkEmby, so a stop sent after a switch wrote to, and
+   *  then believed, a stranger's film. `play` below is the one caller that must not read this answer,
+   *  because the item it is loading belongs to the lobby's new server. */
   private client(): EmbyClient {
-    const acc = config.activeAccount();
+    const id = this.current?.accountId;
+    const acc = (id && config.get().accounts.find(a => a.accountId === id)) || config.activeAccount();
     if (!acc) throw new Error('还没有登录任何服务器');
     return new EmbyClient(acc, this.identity());
+  }
+
+  /** Whether the viewing's own server has left the account list. `client()` falls back to whichever one
+   *  is active for reads, the least-bad answer for a stream that is still running; a *write* about an id
+   *  that machine has never seen has no acceptable answer, so the reports refuse instead. */
+  private serverGone(): boolean {
+    const id = this.current?.accountId;
+    return !!id && !config.get().accounts.some(a => a.accountId === id);
   }
 
   /** Load one item into a player that may or may not exist yet. Everything the user can start — a card,
@@ -191,7 +209,11 @@ export class PlayerController {
       const w = await this.flushStop(undefined, 'switch');
       if (w) this.out.watched(w);
     }
-    const c = this.client();
+    // A new item is asked for from the server the lobby is pointed at; `this.current` is still the episode
+    // being left, so its account cannot be the answer here.
+    const acc = config.activeAccount();
+    if (!acc) throw new Error('还没有登录任何服务器');
+    const c = new EmbyClient(acc, this.identity());
     const prefs = config.get().settings.player;
     const item = await c.item(itemId);
     const [resume, nav] = await Promise.all([c.resumePoint(itemId), this.navFor(c, item)]);
@@ -233,6 +255,7 @@ export class PlayerController {
 
     this.current = {
       itemId,
+      accountId: acc.accountId,
       name: item.name,
       seriesId: item.seriesId,
       seasonId: item.type === 'Episode' ? item.seasonId || item.parentId : undefined,
@@ -377,7 +400,8 @@ export class PlayerController {
     // Reaching the end is what earns the 已播放 mark, and it does not depend on the position write having
     // landed. These were chained: a stopped report the server refused used to leave a finished film
     // unmarked as well as unfindable.
-    const played = await this.client().markPlayed(c.itemId);
+    // Same answer as the position write: no 已播放 mark is left on a machine that never served the file.
+    const played = this.serverGone() ? false : await this.client().markPlayed(c.itemId);
     if (w) {
       w.played = played;
       this.out.watched(w);
@@ -458,6 +482,10 @@ export class PlayerController {
     console.log('[player] 退出', reason, c.itemId, `pos=${Math.round(this.state.positionMs)}`,
       `dur=${Math.round(this.state.durationMs)}`, `runtime=${Math.round(c.runtimeMs)}`, `start=${Math.round(c.startMs)}`,
       `flushed=${c.flushedMs}`, `mpv=${this.kernel?.running ? '在' : '没'}`);
+    if (this.serverGone()) {
+      console.warn('[player] 停止没写：这条流来的服务器已被移除', reason, c.itemId, `account=${c.accountId}`);
+      return null;
+    }
     // mpv's length when it has reported one, the server's when it has not — the same two sources 开场 reads,
     // in the same order of preference.
     const durationMs = this.state.durationMs || c.runtimeMs;
