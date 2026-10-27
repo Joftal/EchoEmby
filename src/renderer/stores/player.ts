@@ -78,9 +78,9 @@ export const usePlayerStore = defineStore('player', () => {
     if (m.ok && m.data) media.value = m.data;
   }
 
-  async function play(itemId: string, fromStart = false): Promise<boolean> {
+  async function play(itemId: string, fromStart = false, sourceId?: string): Promise<boolean> {
     busy.value = true;
-    const r = await window.echoemby.player.play(itemId, fromStart);
+    const r = await window.echoemby.player.play(itemId, fromStart, sourceId);
     busy.value = false;
     if (!r.ok) say(r.error || '无法开始播放');
     return !!r.ok;

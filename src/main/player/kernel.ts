@@ -118,14 +118,18 @@ const OBSERVED = [
 const sec = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
 
 /** mpv calls a subtitle track `sub`; everything else on the panel is named the way the app names it.
- *  An attached picture is a cover inside an audio file, not a picture anyone chose to watch. */
-const mapTrack = (t: any): Omit<PlayerTrack, 'ordinal'> | null => {
+ *  An attached picture is a cover inside an audio file, not a picture anyone chose to watch: measured on
+ *  the bundled 0.41 build against a file of known stream order, that row comes back as `image:true` and
+ *  there is no `attached_pic` key at all. `id` restarts at 1 inside each kind and is what sid/aid/vid take,
+ *  while `ff-index` is the container's own number for the stream — the number the server uses too. */
+const mapTrack = (t: any): PlayerTrack | null => {
   if (!t || typeof t.id !== 'number') return null;
-  if (t.type === 'video' && t.attached_pic) return null;
+  if (t.type === 'video' && t.image) return null;
   const kind: PlayerTrack['kind'] = t.type === 'sub' ? 'subtitle' : t.type === 'audio' ? 'audio' : 'video';
   return {
     id: t.id,
     kind,
+    ffIndex: sec(t['ff-index']),
     title: typeof t.title === 'string' ? cleanTrackTitle(t.title) : undefined,
     lang: typeof t.lang === 'string' && t.lang ? t.lang : undefined,
     codec: typeof t.codec === 'string' ? t.codec : undefined,
@@ -134,13 +138,6 @@ const mapTrack = (t: any): Omit<PlayerTrack, 'ordinal'> | null => {
     forced: !!t.forced,
     external: !!t.external,
   };
-};
-
-/** Emby counts each kind on its own, and mpv lists the demuxer's order, so the ordinal is simply the
- *  position within the group. It is what a progress report has to send for the streams to be remembered. */
-const withOrdinals = (list: Omit<PlayerTrack, 'ordinal'>[]): PlayerTrack[] => {
-  const seen = { video: 0, audio: 0, subtitle: 0 };
-  return list.map(t => ({ ...t, ordinal: seen[t.kind]++ }));
 };
 
 /** sid/aid/vid read back as a track id, or as the string "auto". Measured against the bundled 0.41
@@ -165,8 +162,18 @@ export class MpvKernel {
   private raw: Raw = freshRaw();
   private startAt = 0;
   private timer: NodeJS.Timeout | null = null;
-  /** A process we asked to quit is not a crash, so its exit must not be reported as a failure. */
+  /** A process we asked to quit is not a crash, so neither its exit nor the socket that goes down with it
+   *  may reach `onGone` - that is the session's last-resort write of the position, and a socket with no
+   *  such guard turned every deliberate teardown into a server report: measured 2026-10-27, one viewing
+   *  whose two render-profile restarts each logged `[player] 退出 gone` + `停止已写` before the real
+   *  `close` one. */
   private quitting = false;
+  /** One process dies once. A real death announces itself twice - the child's `exit`, and the pipe socket
+   *  that `exit` closes a line later - and each notice used to run the write: measured the same day by
+   *  killing a playing mpv, two `退出 gone` lines and two identical POSTs, because `flushStop` reads
+   *  `flushedMs` before it awaits the request, so the second one checks a number the first has not
+   *  stamped yet. */
+  private goneReported = false;
   /** The launch's render profile, so a change to it is visible without re-reading the config. */
   private launchedRender = '';
   readonly pipeName = `echoemby-mpv-${randomUUID().slice(0, 8)}`;
@@ -211,8 +218,16 @@ export class MpvKernel {
       '--gpu-api=d3d11',
       `--profile=${hq ? 'gpu-hq' : 'fast'}`,
       '--hr-seek=yes',
-      '--video-sync=' + (hq ? 'display-resample' : 'audio'),
-      '--interpolation=' + (hq ? 'yes' : 'no'),
+      // Pacing never comes from the display. Measured 2026-10-27 on a 144 Hz screen with a 24 fps file:
+      // `display-resample` advanced mpv's own `time-pos` at 5.94-6.05× wall clock (6 = 144 ÷ 24) while
+      // `speed` stayed 1, `duration` matched the server's to the second and not one frame was dropped —
+      // so the film's clock, not the picture, was running fast, and every 看到 offset inherited it.
+      // Switching `video-sync` at runtime wedges playback outright (the clock froze for 90 s and did not
+      // resume when switched back), so the only place to decide this is here, before the process starts.
+      '--video-sync=audio',
+      // Interpolation is display-sync's companion — mpv's own docs warn about A/V drift when it runs on an
+      // audio clock — so the tier that used to buy it keeps its scalers and lets this one go.
+      '--interpolation=no',
       '--demuxer-max-bytes=220MiB',
       '--demuxer-max-back-bytes=120MiB',
       '--demuxer-readahead-secs=20',
@@ -237,19 +252,27 @@ export class MpvKernel {
     return a;
   }
 
+  /** The one door out of a live process: a teardown we asked for never goes through it, and a death that
+   *  announces itself twice only gets one notice through. */
+  private fireGone(message?: string): void {
+    if (this.quitting || this.goneReported) return;
+    this.goneReported = true;
+    this.onGone(message);
+  }
+
   async start(l: KernelLaunch): Promise<void> {
     if (this.proc) throw new Error('mpv 已经在运行');
     const exe = mpvExecutable();
     this.launchedRender = l.prefs.render;
     this.quitting = false;
+    this.goneReported = false;
     this.raw = { ...freshRaw(), volume: 100 };
     this.proc = spawn(exe, this.args(l), { cwd: path.dirname(exe), windowsHide: true });
     this.proc.on('exit', (code, signal) => {
       this.proc = null;
       this.pipe.close();
       this.clearTimer();
-      if (this.quitting) return;
-      this.onGone(signal ? undefined : `播放器进程退出了（代码 ${code}）`);
+      this.fireGone(signal ? undefined : `播放器进程退出了（代码 ${code}）`);
     });
     this.proc.stderr?.setEncoding('utf8');
     this.proc.stderr?.on('data', d => {
@@ -259,7 +282,7 @@ export class MpvKernel {
 
     await this.pipe.connect(this.pipeName);
     this.pipe.onEvent = m => this.onMessage(m);
-    this.pipe.onSocketClose = () => this.onGone('播放器断开了连接');
+    this.pipe.onSocketClose = () => this.fireGone('播放器断开了连接');
     await Promise.all(OBSERVED.map(name => this.pipe.tryCall(['observe_property', 1, name])));
     // mpv only reports the first volume/speed values on change, so read the launch defaults once.
     for (const name of ['volume', 'mute', 'pause', 'speed']) await this.pullInitial(name);
@@ -361,7 +384,7 @@ export class MpvKernel {
         }
         return;
       case 'track-list':
-        r.tracks = Array.isArray(v) ? withOrdinals(v.map(mapTrack).filter(Boolean) as Omit<PlayerTrack, 'ordinal'>[]) : [];
+        r.tracks = Array.isArray(v) ? v.map(mapTrack).filter(Boolean) as PlayerTrack[] : [];
         return;
       case 'chapter-list':
         r.chapters = Array.isArray(v)
@@ -592,6 +615,24 @@ export class MpvKernel {
   async setTrack(kind: 'video' | 'audio' | 'subtitle', id: TrackSelection): Promise<void> {
     const prop = kind === 'video' ? 'vid' : kind === 'audio' ? 'aid' : 'sid';
     await this.pipe.call(['set_property', prop, id]);
+  }
+
+  /** Hand mpv a subtitle that lives outside the stream it opened. `sub-add` gives it a track of its own,
+   *  numbered after the file's, and the only way to learn that number is to read the list back — which is
+   *  also what makes a second pick replace the first instead of piling up. */
+  async addSubtitleFile(file: string, title: string): Promise<number | null> {
+    await this.pipe.call(['sub-add', file, 'auto', title]);
+    const list = await this.pipe.tryCall(['get_property', 'track-list']);
+    const subs = Array.isArray(list) ? list as any[] : [];
+    for (let i = subs.length - 1; i >= 0; i--) {
+      const t = subs[i];
+      if (t?.type === 'sub' && t?.external && typeof t.id === 'number') return t.id;
+    }
+    return null;
+  }
+
+  async removeSubtitleFile(id: number): Promise<void> {
+    await this.pipe.call(['sub-remove', id]);
   }
 
   async setSubtitleDelay(ms: number): Promise<void> {

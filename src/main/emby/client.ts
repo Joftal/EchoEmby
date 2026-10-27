@@ -137,6 +137,7 @@ const mapStudios = (r: any): StudioRef[] | undefined => {
 
 const mapStreams = (raw: any): MediaStreamInfo[] =>
   (raw || []).map((v: any): MediaStreamInfo => ({
+    index: v.Index,
     type: v.Type,
     codec: v.Codec,
     displayTitle: v.DisplayTitle,
@@ -146,6 +147,7 @@ const mapStreams = (raw: any): MediaStreamInfo[] =>
     height: v.Height,
     bitDepth: v.BitDepth,
     range: v.VideoRange || v.VideoRangeType,
+    isInterlaced: v.IsInterlaced,
     chroma: v.ChromaSubsampling,
     fps: v.NominalFrameRate || v.AverageFrameRate,
     bitRate: v.BitRate,
@@ -156,6 +158,8 @@ const mapStreams = (raw: any): MediaStreamInfo[] =>
     isDefault: v.IsDefault,
     isForced: v.IsForced,
     isExternal: v.IsExternal,
+    isHearingImpaired: v.IsHearingImpaired,
+    isTextSubtitle: v.IsTextSubtitleStream,
   }));
 
 /** One version the server can serve. The id is what every progress report and every stream URL has to
@@ -174,6 +178,7 @@ const mapSources = (raw: any): PlaybackSource[] => {
       protocol: s.Protocol,
       bitRate: s.Bitrate,
       sizeBytes: s.Size,
+      runTimeTicks: s.RunTimeTicks,
       video: streams.find(x => x.type === 'Video'),
       audio: streams.filter(x => x.type === 'Audio'),
       subtitle: streams.filter(x => x.type === 'Subtitle'),
@@ -687,6 +692,26 @@ export class EmbyClient {
     q.set('maxWidth', String(width));
     q.set('format', 'png');
     return `${this.base}/Items/${item.id}/Images/Logo?${q}`;
+  }
+
+  /** The bytes of a subtitle the server keeps next to the file. Measured 2026-10-27 against the four
+   *  address shapes this fork might answer: only the one ending in the codec extension exists —
+   *  `/Subtitles/{index}/Stream.srt` returned 200 `text/plain` with real cues on 4 of 4 probed sidecars
+   *  (112,809 bytes for 挽救计划's index 8), while `/Stream`, `/Download` and the source-less form all
+   *  answered 找不到文件. It is fetched here rather than handed to the player as a URL because the route to
+   *  this host sometimes needs the proxy and the player process knows nothing about it — one of those four
+   *  only arrived through the proxy. */
+  async subtitleBytes(itemId: string, sourceId: string, index: number, codec: string): Promise<Buffer> {
+    const q = authQuery(this.identity);
+    const res = await http(
+      `${this.base}/Videos/${itemId}/${sourceId}/Subtitles/${index}/Stream.${codec}?${q}`,
+      { method: 'GET', headers: this.headers() },
+      20000,
+    );
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (!res.ok) throw new EmbyError(buf.subarray(0, 160).toString('utf8') || res.statusText, res.status);
+    if (!buf.length) throw new EmbyError('这台服务器把那条字幕返回成空文件', 502);
+    return buf;
   }
 
   /** What one negotiation round decided: which version, by which method, from which address. */

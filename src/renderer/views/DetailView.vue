@@ -435,11 +435,33 @@ function centerStrip(i: number): void {
   stripRun = true;
   if (!stripFrame) stripFrame = requestAnimationFrame(followStrip);
 }
+/** The 播放资源 sheet, and the focus ring that has to stay inside it. `role="dialog" aria-modal="true"` is
+ *  a claim about the page, not a mechanism: with no trap the Tab after the × button landed on the 分集 rail
+ *  behind the backdrop, where the reader could keep walking with no ring visible anywhere on screen.
+ *  The card itself is in the ring because it is what takes focus on open — a trap that skipped it would
+ *  send the first Tab straight to the × and lose the fact that the dialog, not a control, was addressed. */
+const popCard = (): HTMLElement | null => document.querySelector<HTMLElement>('.tech-pop .tp-card');
+const POP_FOCUSABLE = 'a[href], button:not(:disabled), input, select, textarea, [tabindex]:not([tabindex="-1"])';
+function trapPopTab(e: KeyboardEvent): void {
+  const card = popCard();
+  if (!card) return;
+  const ring = [card, ...Array.from(card.querySelectorAll<HTMLElement>(POP_FOCUSABLE))];
+  const at = ring.indexOf(document.activeElement as HTMLElement);
+  e.preventDefault();
+  if (at < 0) {
+    ring[0].focus();
+    return;
+  }
+  ring[(at + (e.shiftKey ? -1 : 1) + ring.length) % ring.length].focus();
+}
 function onViewerKey(e: KeyboardEvent): void {
   if (techPop.value) {
     if (e.key === 'Escape') {
       e.stopPropagation();
       closeTech();
+    } else if (e.key === 'Tab') {
+      e.stopPropagation();
+      trapPopTab(e);
     }
     return;
   }
@@ -678,6 +700,14 @@ const techInline = computed<LibraryItem | null>(() =>
    episode (6.0KB/0.77s on OkEmby, 23.0KB/0.79s on nyamedia) — so the ask goes out when the reader asks
    for it, and the 10-minute cache every other ask uses makes a second look at that episode instant. */
 const techPop = ref<{ id: string; title: string; item: LibraryItem | null; dead: boolean } | null>(null);
+/** The element focus returns to when the sheet closes. A plain binding rather than a ref: it is a node, it
+ *  is never rendered, and making it reactive would only ask Vue to walk a subtree it does not own. */
+let techTrigger: HTMLElement | null = null;
+/* The version the reader was reading on a 播放资源 card, per item: picking a strip is a reading act until
+   播放 is pressed, and then it is the version the negotiation has to take. Keyed by item id because the
+   popup's card and the 选集 row it was opened from name the same episode. */
+const wantedSource = ref<Record<string, string>>({});
+const onTechPick = (itemId: string, sourceId: string): void => { wantedSource.value[itemId] = sourceId; };
 /* Three plates are a guess, because the ask has not answered yet: whether the 字幕 band appears at all, and how
    tall the version strip, the 音频 card and that band came in. Measured 2026-10-26: 罚罪's web rips answer with
    no band at all (10 of the 31 episodes sampled), while 小林家的龙女仆 answers 10 consecutive episodes with one
@@ -700,8 +730,17 @@ const plate = computed(() => {
   return { band: same ? same.wide > 0 : true, strip: px(same?.strip), aud: px(same?.aud), wide: px(same?.wide) };
 });
 
-async function openTech(r: BandRow): Promise<void> {
+async function openTech(r: BandRow, ev?: MouseEvent): Promise<void> {
+  // The dot that opened the sheet, kept because focus has to go back to it: `currentTarget` is null by the
+  // time the await below returns, so it is read here and not in `closeTech`.
+  techTrigger = (ev?.currentTarget as HTMLElement | null) || (document.activeElement as HTMLElement | null);
   techPop.value = { id: r.id, title: r.title, item: null, dead: false };
+  // Focus moves as soon as the dialog exists rather than when the item answers. The ask takes 0.77s on
+  // OkEmby and 0.79s on nyamedia (measured 2026-10-22), which is long enough for a reader who tabs straight
+  // after opening to have walked into the rail behind the backdrop — `aria-modal` says the page behind is
+  // inert, and until this moved it was a claim with nothing enforcing it.
+  await nextTick();
+  popCard()?.focus();
   const res = await embyCached('item', r.id, () => window.echoemby.emby.item(r.id));
   const pop = techPop.value;
   // Closed, or replaced by another card while this was out: that answer belongs to a dialog nobody is
@@ -728,6 +767,11 @@ async function openTech(r: BandRow): Promise<void> {
 
 function closeTech(): void {
   techPop.value = null;
+  // Back to the dot that opened it, which is where the reader's hands were. Without this the sheet closed
+  // onto <body> and the next Tab started over at the top of the page, so leaving the dialog cost the place
+  // in the 分集 rail it had been opened from.
+  techTrigger?.focus();
+  techTrigger = null;
 }
 /** Whether the season on screen is one this server holds nothing for. Only answers that cannot be taken
  *  back count, because a promise retracted a frame later is the same lie in reverse: a TMDB-only season
@@ -1385,7 +1429,7 @@ async function play(id = playableId.value, fromStart = !resume.value?.resumed) {
     return;
   }
   playErr.value = '';
-  const ok = await player.play(id, fromStart);
+  const ok = await player.play(id, fromStart, wantedSource.value[id]);
   if (!ok) playErr.value = player.error;
 }
 
@@ -1549,7 +1593,7 @@ const LEVEL_WORD = ['无', '极少', '轻微', '中等', '较多', '严重'];
                 <p v-if="r.ov" class="eov">{{ r.ov }}</p>
               </div>
             </button>
-            <button v-if="r.id" type="button" class="res" aria-label="播放资源" @click="openTech(r)"><i></i><i></i><i></i></button>
+            <button v-if="r.id" type="button" class="res" aria-label="播放资源" @click="openTech(r, $event)"><i></i><i></i><i></i></button>
           </div>
           <!-- Two empties, and only one of them gets a sentence here: a season this server holds nothing
                for is answered by the hero's own 「当前服务器无资源」, which is where the reader was about to
@@ -1561,7 +1605,7 @@ const LEVEL_WORD = ['无', '极少', '轻微', '中等', '较多', '严重'];
 
         <section v-if="techInline" class="block">
           <h2>播放资源</h2>
-          <TechCard :item="techInline" />
+          <TechCard :item="techInline" @pick="onTechPick" />
         </section>
 
         <HScroller v-if="crew.length" title="演职员" :count="crew.length" class="block">
@@ -1637,7 +1681,7 @@ const LEVEL_WORD = ['无', '极少', '轻微', '中等', '较多', '严重'];
     <Teleport to="body">
       <Transition name="techpop">
         <div v-if="techPop" class="tech-pop" role="dialog" aria-modal="true" aria-label="播放资源" @click.self="closeTech">
-          <section class="tp-card">
+          <section class="tp-card" tabindex="-1">
             <header class="tp-head">
               <div>
                 <h2>播放资源</h2>
@@ -1647,7 +1691,7 @@ const LEVEL_WORD = ['无', '极少', '轻微', '中等', '较多', '严重'];
                 <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6.5 6.5 17.5 17.5M17.5 6.5 6.5 17.5" /></svg>
               </button>
             </header>
-            <TechCard v-if="techPop.item" :item="techPop.item" />
+            <TechCard v-if="techPop.item" :item="techPop.item" @pick="onTechPick" />
             <p v-else-if="techPop.dead" class="tp-msg">这台服务器读不出这一集的文件参数。</p>
             <div v-else class="tp-load" aria-hidden="true">
               <i class="strip" :style="plate.strip"></i>
@@ -2078,6 +2122,14 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
   transition: background var(--hov) var(--ease), color var(--hov) var(--ease);
 }
 .tp-x:hover { background: var(--chip-hi); color: var(--text); }
+/* The sheet's one control of its own, and the first stop of a Tab that starts where the dialog put it. It
+   had no ring at all, so a keyboard reader who opened this sheet with Enter had no way to see that focus
+   had moved — the audit measured exactly that: focus stayed on the dot behind the backdrop. */
+.tp-x:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+/* The card is where focus lands on open, so that the dialog and not the page behind it is what a screen
+   reader addresses. It is not a control and wears no ring; the first Tab puts one on the × or on a version
+   strip, which is where a ring says something. */
+.tp-card:focus { outline: none; }
 .tp-msg { margin: 0; padding: 30px 0; font-size: 13px; color: var(--text-dim); text-align: center; }
 /* The ask is half a second (measured 2026-10-26: 443-574ms for three episodes of 爱的迫降 opened with a cold
    cache), so the dialog opens on the shape of the answer rather than on a spinner: every block below is one the

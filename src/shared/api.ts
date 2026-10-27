@@ -55,8 +55,10 @@ export interface EchoEmbyApi {
   };
   player: {
     /** `fromStart` is the button's promise, not a preference: a hero that says 「播放」 rather than
-     *  「继续播放」 must land at 0 even if the server still holds an offset for this item. */
-    play(itemId: string, fromStart?: boolean): Promise<IpcResult<boolean>>;
+     *  「继续播放」 must land at 0 even if the server still holds an offset for this item. `sourceId` is
+     *  the version the 播放资源 card was reading when 播放 was pressed; absent, the negotiation takes
+     *  the file's first version. */
+    play(itemId: string, fromStart?: boolean, sourceId?: string): Promise<IpcResult<boolean>>;
     command(cmd: PlayerCommand): Promise<IpcResult<boolean>>;
     close(): Promise<IpcResult<boolean>>;
     state(): Promise<PlayerState>;

@@ -5,7 +5,8 @@ import SubPopover from './SubPopover.vue';
 import SubRow from './SubRow.vue';
 import { usePlayerStore } from '../../stores/player';
 import { useAppStore } from '../../stores/app';
-import type { PlayMethod, PlayerPrefs } from '../../../shared/types';
+import { fmtRate, fmtSize, rangeWord } from '../../lib/format';
+import type { PlayMethod, PlaybackSource, PlayerPrefs } from '../../../shared/types';
 
 const player = usePlayerStore();
 const app = useAppStore();
@@ -36,12 +37,29 @@ const HWDECS: { value: PlayerPrefs['hwdec']; label: string }[] = [
   { value: 'no', label: '软解' },
 ];
 
-const gb = (bytes?: number): string => (bytes ? `${(bytes / 1024 ** 3).toFixed(2)} GB` : '—');
-const mbps = (k?: number): string => (k ? `${(k / 1000).toFixed(2)}Mbps` : '—');
+/** Each card answers for its own version, so the range is that version's and not the session's: every card
+ *  in this popover used to print the one word the playing file decided, which read 「HDR」 on a 1080p SDR
+ *  version sitting beside the 4K Dolby Vision one that was actually playing. */
+const kind = (src: PlaybackSource): string => rangeWord(src.video?.range) || (src.video ? '—' : '无视频轨');
+/** Size and rate come from the same two formatters the 播放资源 card reads, because one file's 834749497
+ *  bytes are not two facts: this panel divided by 1024³ and always said GB, so a 3 MB 特别篇 read
+ *  「0.00 GB」, and it said Mbps for a 192 kbps audio track, which is one significant figure standing in for
+ *  the number that separates two dubs. The dash is this panel's own word for 「the server did not say」. */
+const size = (n?: number): string => fmtSize(n) || '—';
+const rate = (n?: number): string => fmtRate(n) || '—';
 
 function pickSource(index: number): void {
   void player.cmd({ action: 'source', value: index });
 }
+
+/** The version actually playing, whose range is what the 动态范围 row answers for. `session.hdr` is a
+ *  yes/no, so that row called Dolby Vision and HDR10 both 「HDR」 while the cards it opens named them — two
+ *  spellings of one fact on one panel. mpv's own flag is the fallback for the source that reports no video
+ *  stream at all, where the server has nothing to say and the decoder still does. */
+const playingRange = computed(() => {
+  const s = session.value;
+  return rangeWord(s?.sources[s.sourceIndex]?.video?.range) || (s?.hdr || media.value.hdr ? 'HDR' : 'SDR');
+});
 </script>
 
 <template>
@@ -55,14 +73,14 @@ function pickSource(index: number): void {
   <div class="pl-sep"></div>
   <SubRow name="sources" label="播放源" :value="`${session?.sources.length || 0} 个版本`" />
   <SubRow name="decode" label="解码与渲染" :value="media.hwdec || '软解'" />
-  <SubRow name="range" label="动态范围" :value="session?.hdr || media.hdr ? 'HDR' : 'SDR'" />
+  <SubRow name="range" label="动态范围" :value="playingRange" />
 
   <SubPopover name="sources" title="播放源">
     <div class="pl-grid">
       <button v-for="(src, i) in session?.sources || []" :key="src.id" class="pl-card" :class="{ on: session?.sourceIndex === i }" @click="pickSource(i)">
-        <span class="kind">{{ session?.hdr || media.hdr ? 'HDR' : 'SDR' }}</span>
-        <span>{{ gb(src.sizeBytes) }}</span>
-        <span>{{ mbps(src.bitRate) }}</span>
+        <span class="kind">{{ kind(src) }}</span>
+        <span>{{ size(src.sizeBytes) }}</span>
+        <span>{{ rate(src.bitRate) }}</span>
         <span class="who">
           <Shield :size="17" :fill="session?.sourceIndex === i ? '#6ddc8f' : 'rgba(255,255,255,.4)'" stroke-width="1.6" />
           {{ src.name || `版本 ${i + 1}` }}
@@ -92,7 +110,7 @@ function pickSource(index: number): void {
   </SubPopover>
 
   <SubPopover name="range" title="动态范围">
-    <div class="pl-line"><span class="label">这条片源</span><span class="pl-text">{{ session?.hdr || media.hdr ? 'HDR' : 'SDR' }}</span></div>
+    <div class="pl-line"><span class="label">这条片源</span><span class="pl-text">{{ playingRange }}</span></div>
     <div class="pl-line"><span class="label">色彩空间</span><span class="pl-text">{{ media.colorSpace || '—' }}</span></div>
     <div class="pl-switch" role="switch" tabindex="0" :aria-checked="!!prefs.hdrHint" :class="{ on: prefs.hdrHint }" @click="patch({ hdrHint: !prefs.hdrHint })">
       <span class="label">把 HDR 信号交给显示器</span>

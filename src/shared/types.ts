@@ -420,6 +420,11 @@ export interface TmdbCredits {
 /** One video/audio/subtitle track as the server describes it. Field presence depends on Type, so all
  *  are optional; the table renders whichever the stream carries. */
 export interface MediaStreamInfo {
+  /** The server's own number for this stream inside the file. It counts every stream of every kind with
+   *  one running number — measured 2026-10-26, `DefaultAudioStreamIndex` on 22,002 of 22,002 sources is
+   *  one of these, never a position within the audio rows — so it is the only address a session event may
+   *  send back. Absent on the handful of servers that omit `Index`. */
+  index?: number;
   type: string; // Video | Audio | Subtitle
   codec?: string;
   displayTitle?: string;
@@ -429,6 +434,10 @@ export interface MediaStreamInfo {
   height?: number;
   bitDepth?: number;
   range?: string; // HDR / HDR10 / SDR / DoVi
+  /** Fields of interlaced frames, which the height alone cannot say: 1080i and 1080p are the same number of
+   *  lines. Measured 2026-10-27 on 58 of 23,027 sources, and it agrees with the 「1080i」 the server spells
+   *  into `DisplayTitle` on all 58 — the one fact in that string no other field carries. */
+  isInterlaced?: boolean;
   chroma?: string;
   fps?: number;
   bitRate?: number;
@@ -440,6 +449,17 @@ export interface MediaStreamInfo {
   isForced?: boolean;
   /** True when the track is a sidecar the server found next to the file rather than a stream inside it. */
   isExternal?: boolean;
+  /** Whether the subtitle is written text rather than a picture. Measured 2026-10-27 on the 784 external
+   *  subtitle rows in both gateways' corpora: 781 are true (srt 397, ass 376, ssa 8) and 3 are false (sup).
+   *  Only the text ones can be handed to mpv as a file — a bare .sup is a bitmap stream mpv decodes inside a
+   *  container and nothing else — so this is the line between a selectable row and one that would fail. */
+  isTextSubtitle?: boolean;
+  /** The server's own word for a subtitle written for viewers who cannot hear the track. Measured
+   *  2026-10-27 over 212,468 streams on both gateways: the key is on every one of them, 1,817 subtitle
+   *  rows are true, and 440 of those 1,817 carry no SDH/CC/听障 word in their own `Title` — the word sits
+   *  only in `DisplayTitle`, which no card reads. So this is the one route to 听障 for 440 rows, and it
+   *  never contradicts the words: 0 flagged rows say nothing about it anywhere. */
+  isHearingImpaired?: boolean;
 }
 
 /** One playable version the server holds for an item. Measured 2026-10-26 this is not always a list of one:
@@ -456,6 +476,10 @@ export interface PlaybackSource {
   protocol?: string;
   bitRate?: number;
   sizeBytes?: number;
+  /** How long this version runs, in the server's ticks. Absent on the one source of 480 that has no video
+   *  stream at all, so a strip that prints a length has to be able to print none. Two versions of one item
+   *  can disagree here — 七武士's cuts are 3小时27分 and 3小时21分 — which is the fact that decides the pick. */
+  runTimeTicks?: number;
   video?: MediaStreamInfo;
   audio: MediaStreamInfo[];
   subtitle: MediaStreamInfo[];
@@ -521,12 +545,14 @@ export interface QualityTier {
 /** What the current file contains, as mpv reports it after the demuxer has opened it. Everything here
  *  can differ from what the server advertised (a subtitle the muxer dropped, a second audio track). */
 export interface PlayerTrack {
-  /** mpv's track id, which is what sid/aid/vid take. */
+  /** mpv's track id, which is what sid/aid/vid take. mpv numbers each kind from 1, so this is also the
+   *  number a row shows; it is not what the server calls the same stream — see `MediaStreamInfo.index`. */
   id: number;
   kind: 'video' | 'audio' | 'subtitle';
-  /** Position among the tracks of its own kind, which is the index Emby's progress report wants: the
-   *  server counts audio and subtitle streams separately, while mpv numbers each kind from 1. */
-  ordinal: number;
+  /** The stream's own number inside the container, read off mpv. It is the same number the server puts in
+   *  `MediaStreamInfo.index`, and the only one a session event may send back. Missing when the demuxer is
+   *  not libavformat — mpv's own image/external tracks. */
+  ffIndex?: number;
   title?: string;
   lang?: string;
   codec?: string;
@@ -567,6 +593,10 @@ export interface PlayerMedia {
   /** 'no' means fit to the window; a number is a forced display aspect. */
   aspect: TrackSelection;
   panscan: number;
+  /** The sidecar subtitle this viewing has handed to mpv, if one is loaded: mpv's track id for it and the
+   *  server's stream index it came from. The menu needs both — the id to mark the row 正在用, the index
+   *  because that is how a row in the 外挂字幕 list is addressed. */
+  sidecar?: { trackId: number; index: number } | null;
 }
 
 export interface PlayerNav {
@@ -676,6 +706,9 @@ export type PlayerCommand =
   | { action: 'volume'; value: number }
   | { action: 'mute'; value: boolean }
   | { action: 'track'; value: { kind: 'video' | 'audio' | 'subtitle'; id: TrackSelection } }
+  /** Pick a subtitle the server keeps next to the file, by the stream number it calls that sidecar. mpv's
+   *  `sid` cannot reach one — it only knows the stream it opened — so this goes and fetches the file. */
+  | { action: 'sidecarSubtitle'; value: number }
   | { action: 'subtitleDelay'; value: number }
   | { action: 'audioDelay'; value: number }
   | { action: 'subtitleStyle'; value: { scale?: number; pos?: number } }

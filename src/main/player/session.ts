@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import * as config from '../config';
 import { QUALITY_TIERS } from '../config';
 import { EmbyClient, type Identity, type ProgressInput } from '../emby/client';
@@ -99,6 +102,12 @@ export class PlayerController {
   private seenMethods = new Map<string, Record<number, PlayMethod>>();
   /** A deliberate close must not be reported as a crash by the process's exit handler. */
   private tearing = false;
+  /** The sidecar subtitle this viewing has handed to mpv: the server row it came from, the file its bytes
+   *  were written to, and the track number mpv gave it. One at a time, because two sets of cues on the same
+   *  frame is not a choice anyone made. */
+  private sidecar: { index: number; file: string; trackId: number } | null = null;
+  /** Scratch directory for those files, created on the first pick and cleared with the viewing. */
+  private sidecarDir: string | null = null;
 
   constructor(
     private windows: PlayerWindows,
@@ -161,7 +170,7 @@ export class PlayerController {
    *  下一集, the 选集 panel — comes through here, so a switch is a reload and never a restart.
    *  `fromStart` drops the server's offset: the heroes pass it whenever their own button reads 「播放」,
    *  so a label can never promise a first view the player then starts halfway through. */
-  async play(itemId: string, fromStart = false): Promise<void> {
+  async play(itemId: string, fromStart = false, sourceId?: string): Promise<void> {
     this.tearing = false;
     // Leaving an item for another one is an exit just as surely as closing the window is, so the episode
     // the user walked away from gets its stop written before anything new is asked for.
@@ -174,7 +183,10 @@ export class PlayerController {
     const prefs = config.get().settings.player;
     const item = await c.item(itemId);
     const [resume, nav] = await Promise.all([c.resumePoint(itemId), this.navFor(c, item)]);
-    const neg = await c.negotiate(itemId, { tier: prefs.tier });
+    // The card the reader picked a version on is the one surface that knows which of the file's versions
+    // was being read; without its answer the negotiation takes sources[0], which on a two-version file is
+    // the 4K one this machine decodes at 0.15× real time.
+    const neg = await c.negotiate(itemId, { tier: prefs.tier, sourceId });
 
     // The windows only open once the server has agreed to serve something: a refused negotiation should
     // fail on the page 播放 was pressed from, not on a black screen with no controls.
@@ -308,8 +320,17 @@ export class PlayerController {
   }
 
   private onKernelMedia(m: PlayerMedia): void {
-    this.media = m;
-    this.out.media(m);
+    // mpv's own track list is the only witness that a sidecar is still loaded. Loading another file — a
+    // quality rung, a version switch, 下一集 — drops every track `sub-add` made, and a menu that kept
+    // marking its row 正在用 would be pointing at a track the process no longer has.
+    const loaded = this.sidecar;
+    const live = loaded && m.tracks.some(t => t.kind === 'subtitle' && t.id === loaded.trackId) ? loaded : null;
+    if (loaded && !live) {
+      this.sidecar = null;
+      void rm(loaded.file, { force: true }).catch(() => undefined);
+    }
+    this.media = { ...m, sidecar: live ? { trackId: live.trackId, index: live.index } : null };
+    this.out.media(this.media);
   }
 
   /** Reaching the end is the only moment the server is told this item is finished, and it is also what
@@ -332,9 +353,26 @@ export class PlayerController {
     if (next) await this.play(next.itemId);
   }
 
+  /** Emby's session event names a stream by the server's own number for it inside the file, while the menu
+   *  the viewer clicked is numbered by mpv, which restarts at 1 inside each kind — so the two never share
+   *  an address. They do share the container's number: mpv reports `ff-index`, and measured 2026-10-27 over
+   *  212,468 server stream rows the server's `Index` is that same probe-order number (it names the default
+   *  audio track on 22,890 of 23,027 sources, where a position within the audio rows would fit 79). A
+   *  track the server has no row for — a cover, a sidecar subtitle the file never carries — sends nothing,
+   *  which `progressBody` omits rather than guessing: the gateway writes what it is told into the item, and
+   *  the next client then resumes on a track the viewer never picked. */
+  private serverStreamIndex(kind: 'video' | 'audio' | 'subtitle'): number | undefined {
+    const c = this.current;
+    const src = c ? c.sources[c.sourceIndex] : undefined;
+    if (!src) return undefined;
+    const picked = this.media.tracks.find(t => t.kind === kind && t.selected && !t.external);
+    if (picked?.ffIndex === undefined) return undefined;
+    const rows = kind === 'video' ? (src.video ? [src.video] : []) : kind === 'audio' ? src.audio : src.subtitle;
+    return rows.some(r => r.index === picked.ffIndex) ? picked.ffIndex : undefined;
+  }
+
   private progressInput(paused: boolean, atMs: number, durationMs = this.state.durationMs): ProgressInput {
     const c = this.current!;
-    const ordinal = (kind: 'video' | 'audio' | 'subtitle') => this.media.tracks.find(t => t.kind === kind && t.selected)?.ordinal;
     return {
       itemId: c.itemId,
       sourceId: c.sources[c.sourceIndex]?.id || '',
@@ -344,9 +382,9 @@ export class PlayerController {
       paused,
       rate: this.state.speed,
       volume: this.state.muted ? 0 : this.state.volume,
-      videoIndex: ordinal('video'),
-      audioIndex: ordinal('audio'),
-      subtitleIndex: ordinal('subtitle'),
+      videoIndex: this.serverStreamIndex('video'),
+      audioIndex: this.serverStreamIndex('audio'),
+      subtitleIndex: this.serverStreamIndex('subtitle'),
     };
   }
 
@@ -450,6 +488,9 @@ export class PlayerController {
       case 'track':
         await k.setTrack(cmd.value.kind, cmd.value.id);
         return;
+      case 'sidecarSubtitle':
+        await this.useSidecar(cmd.value);
+        return;
       case 'subtitleDelay':
         await k.setSubtitleDelay(cmd.value);
         return;
@@ -491,6 +532,49 @@ export class PlayerController {
         if (this.current?.prev) await this.play(this.current.prev.itemId);
         else throw new Error('这已经是第一集');
         return;
+    }
+  }
+
+  /** A subtitle the server keeps as a file beside the video is not inside the stream mpv opened, so `sid`
+   *  cannot reach it and its bytes have to be fetched. The gateway answers at exactly one address —
+   *  `/Videos/{item}/{source}/Subtitles/{index}/Stream.{codec}`, measured 2026-10-27 on 4 of 4 sidecars
+   *  while `/Stream`, `/Download` and the source-less form all said 找不到文件 — and main fetches it rather
+   *  than handing mpv a URL because the route to that host sometimes needs the system proxy (one of those
+   *  four arrived only through it) and the child process knows nothing about a proxy or a token.
+   *  The old sidecar is dropped after the new one is in: a fetch that fails mid-click must leave the
+   *  subtitle the viewer was reading where it was, not on screen with nothing. */
+  private async useSidecar(index: number): Promise<void> {
+    const c = this.current;
+    const k = this.kernel;
+    if (!c || !k) throw new Error('没有在播放任何东西');
+    const src = c.sources[c.sourceIndex];
+    if (!src) throw new Error('没有这个播放源');
+    // `isTextSubtitle !== false` rather than `=== true`: the field is absent on servers that do not answer
+    // it, and 781 of the 784 rows that do carry it are true — the 3 that are not are .sup pictures mpv
+    // can only decode inside a container, and a row that dies when clicked belongs in no menu.
+    const row = src.subtitle.find(t => t.index === index && t.isExternal && t.isTextSubtitle !== false);
+    if (!row) throw new Error('这台服务器没有把这条外挂字幕放在当前版本里');
+    if (this.sidecar?.index === index) {
+      await k.setTrack('subtitle', this.sidecar.trackId);
+      return;
+    }
+    const dir = this.sidecarDir || (this.sidecarDir = await mkdtemp(join(tmpdir(), 'echoemby-sub-')));
+    const codec = (row.codec || 'srt').toLowerCase();
+    const bytes = await this.client().subtitleBytes(c.itemId, src.id, index, codec);
+    if (this.current !== c) return;
+    const file = join(dir, `sub-${index}.${codec}`);
+    await writeFile(file, bytes);
+    const trackId = await k.addSubtitleFile(file, row.displayTitle || row.title || '外挂字幕');
+    if (trackId === null) {
+      await rm(file, { force: true }).catch(() => undefined);
+      throw new Error('播放器读不了这条字幕文件');
+    }
+    const prev = this.sidecar;
+    this.sidecar = { index, file, trackId };
+    await k.setTrack('subtitle', trackId);
+    if (prev) {
+      await k.removeSubtitleFile(prev.trackId).catch(() => undefined);
+      void rm(prev.file, { force: true }).catch(() => undefined);
     }
   }
 
@@ -580,6 +664,15 @@ export class PlayerController {
     this.raise();
   }
 
+  /** The fetched sidecars are a copy of something the server still holds, so they live only as long as the
+   *  viewing does. Both teardown paths call this, and neither waits on the delete: a scratch file that
+   *  outlives the app by a few seconds is a worse trade than the exit it would have delayed. */
+  private dropSidecar(): void {
+    this.sidecar = null;
+    if (this.sidecarDir) void rm(this.sidecarDir, { recursive: true, force: true }).catch(() => undefined);
+    this.sidecarDir = null;
+  }
+
   async close(): Promise<void> {
     this.tearing = true;
     // The stop is written before anything is torn down: mpv still holds the real position, and the number
@@ -590,6 +683,7 @@ export class PlayerController {
     this.kernel = null;
     this.bridge.close();
     this.windows.close();
+    this.dropSidecar();
     this.state = emptyPlayerState();
     this.media = emptyPlayerMedia();
     this.out.state(this.state);
@@ -609,5 +703,6 @@ export class PlayerController {
     this.kernel = null;
     this.bridge.close();
     this.windows.close();
+    this.dropSidecar();
   }
 }

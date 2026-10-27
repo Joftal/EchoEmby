@@ -182,8 +182,8 @@ export class AppServices {
 
     // The player is one object with the whole lifecycle; every channel below is a thin pass-through, so
     // nothing the overlay can ask for needs a second copy of the logic here.
-    ipcMain.handle('player:play', (_e, itemId: string, fromStart?: boolean) =>
-      wrap('player:play', async () => (await this.player.play(itemId, fromStart), true)),
+    ipcMain.handle('player:play', (_e, itemId: string, fromStart?: boolean, sourceId?: string) =>
+      wrap('player:play', async () => (await this.player.play(itemId, fromStart, sourceId), true)),
     );
     ipcMain.handle('player:command', (_e, cmd: PlayerCommand) => wrap('player:command', async () => (await this.player.command(cmd), true)));
     ipcMain.handle('player:close', () => wrap('player:close', async () => (await this.player.close(), true)));

@@ -175,6 +175,11 @@ const EXTRA_SPELLINGS: Record<string, string> = {
   // for 普通话 — 6 audio tracks in the census, every one under a 中文 head where it is the only thing
   // telling two dubs apart — never resolves on its own. 国语 is the same track spelled in Latin.
   'mandarin': 'cmn', 'guoyu': 'cmn', 'putonghua': 'cmn',
+  // A script of Chinese written as the language's own name instead of as a qualifier of it. CLDR spells
+  // `zh-cn` as 中文（简）, so 「简体中文-SRT_(导演评论)字幕」 carries a word no computed spelling answers
+  // for, and it rode onto the card untranslated under a 中文 heading that was already saying 中文. Cantonese
+  // in its traditional spelling is the same gap: `Intl` answers 粤语 for `yue`, and the file said 粵語.
+  '简体中文': 'zh-cn', '簡體中文': 'zh-cn', '繁体中文': 'zh-tw', '繁體中文': 'zh-tw', '粵語': 'yue',
 };
 let LANG_SPELLINGS: Map<string, string> | null = null;
 function langSpellings(): Map<string, string> {
@@ -214,10 +219,24 @@ const WORDS_ZH: [string, string][] = [
   ['latin', '拉丁'],
   // What a French MULTI release calls its two dubs: VO the original, VFQ the Quebec one.
   ['vo', '原声'], ['vfq', '加拿大'],
-  ['compatibility track', '兼容'], ['compatibility', '兼容'], ['track', ''],
+  ['compatibility track', '兼容'], ['compatibility', '兼容'], ['track', ''], ['positional', ''],
   // Under a 中文 heading these two are not restating it — they are the script, which is the fact two
   // audio tracks of one Chinese film are told apart by, so they translate instead of dropping.
   ['simplified', '简体'], ['traditional', '繁体'],
+  // A release group's own shorthand for the same two scripts, glued to whatever follows it: 「R3简中」 and
+  // 「SUP简中字幕」 are 简体 tracks, and without these rows two of them on one file print as one 「中文×2」.
+  ['简中', '简体'], ['繁中', '繁体'], ['簡中', '简体'],
+  // The same two scripts in their traditional spelling, which is what a Cantonese or HK release writes:
+  // 「粵語（繁體）」 came out as 「粤语 繁體」, one half translated and the other left in the script the
+  // reader is not reading in.
+  ['繁體', '繁体'], ['簡體', '简体'],
+  // The same two scripts in the order a Chinese uploader writes them, language word first. Read as one
+  // token, the head-drop below saw 中文 as its prefix and blanked the whole thing, so 科洛弗档案's two
+  // subtitle rows — 「中文简体」 and 「中文繁体」 — printed as one 「中文×2」 and the choice the file
+  // exists to offer disappeared. Measured 2026-10-27 over 131,741 subtitle tracks: 44 rows are that shape,
+  // and this entry separates 19 pairs that had been printing one chip.
+  ['中文简体', '简体'], ['中文繁体', '繁体'],
+  ['简中字幕', '简体'], ['繁中字幕', '繁体'], ['字幕', ''],
   // Two dubs of one Japanese file, told apart by who is talking over it. They are the only words on those
   // tracks, so a card that could not read them would print two identical rows.
   ['キャストコメンタリー', '演员评论'], ['スタッフコメンタリー', '制作人员评论'],
@@ -228,13 +247,21 @@ const FORMAT: Record<string, string> = {
   srt: 'SRT', subrip: 'SRT', ass: 'ASS', ssa: 'SSA', pgssub: 'PGS', sup: 'PGS', pgs: 'PGS',
   vtt: 'VTT', webvtt: 'VTT',
 };
+/** One container's name on a card, from the codec the gateway reports. It is the same table `zhTrackWords`
+ *  reads when a title carries the word itself, so the two routes agree on the spelling — and `subrip` and
+ *  `srt` being one format with two names is what stops a title that already says 「SRT」 from being joined
+ *  by a 「SUBRIP」 beside it. */
+export const formatWord = (codec?: string): string => {
+  const c = (codec || '').toLowerCase();
+  return FORMAT[c] || (codec || '').toUpperCase();
+};
 /** Codec and channel vocabulary: words a track title borrows from the fields the row already prints
  *  (「English DTS-HD Master Audio 5.1 @ 3310 kbps」 over 「英语 · DTS · 5.1 · 3.3 Mbps」). A token matches
  *  with its trailing digits off, so DDP5.1 is DDP. */
 const CODEC_WORDS = new Set([
   'dolby', 'digital', 'plus', 'ddp', 'dd', 'dts', 'hd', 'master', 'atmos', 'truehd', 'ac', 'ac3',
   'eac3', 'aac', 'pcm', 'lpcm', 'flac', 'express', 'surround', 's16le', 'with', 'audio', 'ch',
-  'channels', 'kbps', 'mbps', 'hz', 'khz', 'stereo', 'mono', 'x', 'dtsx', 'adts',
+  'channels', 'kbps', 'mbps', 'hz', 'khz', 'stereo', 'mono', 'x', 'dtsx', 'adts', 'stripped',
 ]);
 /** ISO 3166-1 alpha-2 plus the UN blocks a release group writes as a number (`Spanish 419`) or as the
  *  whole world (`العربية العالم` = Arabic, world). `Intl.supportedValuesOf('region')` is not in this
@@ -325,20 +352,56 @@ const translateRoles = (s: string): string =>
         .trim()
     : s;
 
-export const zhTrackWords = (title: string, code: string, keepFormats: boolean): string => {
+/** A track title with its brackets opened, for the pass below to read. Brackets become spaces rather than
+ *  disappearing with their contents: 「Español (Latinoamérica) [SDH]」 and 「Español (España) [SDH]」 are two
+ *  tracks whose only difference sits inside brackets, and 「Chinese(德加拉国配)」 is one whose difference is
+ *  glued to a word the pass can read. The words themselves — SDH, simplified, a region — are the pass's job,
+ *  not this function's: cutting them here is what once folded a Latino and a Castilian SDH track into one
+ *  「听障」.
+ *  The 播放资源 card and the player's subtitle menu both name their rows through this, so one track cannot
+ *  read 巴西 葡萄牙语 on one surface and Brazilian Portuguese on the other. */
+export const openBrackets = (t: string): string =>
+  t.replace(/[（(\[]/g, ' ').replace(/[）)\]]/g, ' ').replace(/\s+/g, ' ').trim();
+
+export const zhTrackWords = (title: string, code: string, keepFormats: boolean, keepRegions = false): string => {
   const head = langName(code);
   const spellings = langSpellings();
   const regions = regionIndex(LOCALE[code] || code || 'en');
+  // A place the heading already names is the heading twice: 「Dansk (Danmark)」 under 丹麦语 says nothing a
+  // reader lacks, while 「Latinoamérica」 under 西班牙语 is the one word telling two SDH tracks apart — so
+  // only an overlap with the heading drops, and a region beside it stays. The overlap test cannot see the
+  // row beside this one, so the caller that clusters tracks says when the region is the difference:
+  // `keepRegions` reads it back out of the title it came from.
+  const regionWord = (r: string): string => {
+    const rz = regionZh(r);
+    return !keepRegions && head && rz && (head.startsWith(rz) || rz.startsWith(head)) ? '' : rz;
+  };
+  // 「CHS&ENG」 is not two languages, it is one subtitle carrying two. 非常嫌疑犯 keeps six Chinese tracks
+  // whose only differences are the script and this join — CHS(英语) beside CHS&ENG(英语) — and with the
+  // join read as the separator it is, the pair printed as one 「简体 英语×2」. It is resolved here, on the
+  // raw title, because the split below cannot see it; and only where both halves are languages, so a credit
+  // (「Smith & Jones」) and a French MULTI's 「VO/VFQ」 keep every word they came with.
+  const bilingual = (t: string): string =>
+    t.replace(/([A-Za-z]{2,6})\s*[&+]\s*([A-Za-z]{2,6})/g, (m, a: string, b: string) => {
+      const ka = fold(a);
+      const kb = fold(b);
+      return ka && kb && ka !== kb && spellings.has(ka) && spellings.has(kb) ? `${a} 双语` : m;
+    });
   // The separators are not words: 「Eng/SUP」, 「guoyu_cmfa4hd4_51」 and 「English-DD_5.1」 carry their
   // parts glued together, and every part has an entry of its own below. A bracket is a separator too, and
   // a load-bearing one — 阿甘正传's five audio tracks are 「Chinese(德加拉国配)-DD_5.1」 and its sibling
   // 「Chinese(央视国配)-DD_5.1」, where the only word telling them apart sits inside brackets glued to a
   // word `fold` can read. Left glued, the Latin half matches the heading and takes the Chinese name down
   // with it, and the two rows print identically.
-  const tokens = translateRoles(title || '')
+  const tokens = translateRoles(bilingual(title || ''))
+    // A script word glued to a format code is two words wearing one coat: 「简体ASS」 and 「R3简中」 came in
+    // as single tokens, so the script half never reached a table and the whole token was dropped as noise —
+    // which is how 简体ASS and 繁体ASS, the only difference between two tracks, became one 「中文×2」.
+    .replace(/([㐀-鿿　-〿぀-ヿ])([A-Za-z0-9])/g, '$1 $2')
+    .replace(/([A-Za-z0-9])([㐀-鿿　-〿぀-ヿ])/g, '$1 $2')
     .replace(/[（(\[]/g, ' $& ')
     .replace(/[）)\]]/g, ' $& ')
-    .split(/[\s\-_/]+/)
+    .split(/[\s\-_/&|]+/)
     .filter(Boolean);
   // A token the fold cannot see — 「德加拉国配」, 「ไทย」 — is one no Latin key can stand for, so a
   // multi-token match that spans it would be claiming words it never read: `fold` turns
@@ -348,9 +411,10 @@ export const zhTrackWords = (title: string, code: string, keepFormats: boolean):
   const out: string[] = [];
   for (let i = 0; i < tokens.length; ) {
     const tok = tokens[i];
-    // Punctuation the split left standing — the 「@」 of a bitrate, the colon of 「VFQ : Full」. Tested as
-    // ASCII because a Chinese or Japanese token folds to nothing too and is a word, not a separator.
-    if (/^[\x20-\x7e]+$/.test(tok) && !fold(tok)) {
+    // Punctuation the split left standing — the 「@」 of a bitrate, the colon of 「VFQ : Full」, and the
+    // brackets of 「粵語（繁體）」 in either script. Tested as punctuation rather than as ASCII because a
+    // Chinese or Japanese token folds to nothing too and is a word, not a separator.
+    if (/^[\p{P}\p{S}]+$/u.test(tok) && !fold(tok)) {
       i++;
       continue;
     }
@@ -384,22 +448,46 @@ export const zhTrackWords = (title: string, code: string, keepFormats: boolean):
       const adj = REGION_ADJ[k] || LANG_TAG_REGION[k] || REGION_ADJ[kr] || LANG_TAG_REGION[kr];
       if (adj) {
         took = n;
-        said = regionZh(adj);
+        said = regionWord(adj);
         continue;
       }
       const region = (k && regions.get(k)) || regions.get(kr);
       if (region) {
         took = n;
-        said = regionZh(region);
+        said = regionWord(region);
         continue;
       }
-      const word = WORDS_ZH.find(([w]) => w === k || w === kr)?.[1];
-      if (word) {
+      // An entry can translate to nothing — 「字幕」 on a row that is already a subtitle, 「Positional」 on
+      // an audio track — and that empty string is an answer, not a miss. Truthiness here dropped the word
+      // back into `out` untranslated, so 「SDH / Positional / PGS」 kept its English half beside the
+      // Chinese one it did resolve.
+      const hit = WORDS_ZH.find(([w]) => w === k || w === kr);
+      if (hit) {
         took = n;
-        said = word;
+        said = hit[1];
         continue;
       }
       if (n === 1) {
+        // The gateway writes its own Chinese for the heading's language inside the title — 「Czech (捷克文)」
+        // under 捷克语, 「English [英文]」 under 英语 — and it ends that word in 文 where CLDR ends it in 语, so
+        // no table here recognises the token and the heading came back said twice in two spellings.
+        // Measured 2026-10-27 over 3,176 subtitle tracks: 33 labels ended that way, 14 of them 「英文」.
+        // Normalising the last character makes the echo visible — and what sits in front of it is the news,
+        // which is the whole difference between two tracks: 巴西葡萄牙文 beside 葡萄牙文 is 巴西, and
+        // 原碟英文 under an 英语 heading is 原碟.
+        if (head && blind[i]) {
+          const norm = tok.replace(/文$/, '语');
+          if (norm === head || head.startsWith(norm) || norm.startsWith(head)) {
+            took = 1;
+            said = '';
+            continue;
+          }
+          if (norm.endsWith(head)) {
+            took = 1;
+            said = norm.slice(0, norm.length - head.length);
+            continue;
+          }
+        }
         const fmt = FORMAT[k];
         if (fmt) {
           took = 1;
@@ -410,7 +498,7 @@ export const zhTrackWords = (title: string, code: string, keepFormats: boolean):
         // code. Uppercase only, so 「in」 or 「no」 inside a commentary credit is not India or Norway.
         if (/^[A-Z0-9]{2,3}$/.test(tok) && REGION_CODES.includes(tok)) {
           took = 1;
-          said = regionZh(tok);
+          said = regionWord(tok);
           continue;
         }
         // The numbers and codec words the row's own fields already print, with whatever punctuation the
@@ -566,6 +654,26 @@ export const fmtRuntime = (ticks?: number): string => {
   if (!ms) return '';
   return fmtMinutes(Math.round(ms / 60000));
 };
+
+/** How big a file is, in the unit its own number asks for. The 播放资源 card and the player's 播放源
+ *  popover each carried a spelling of this and they disagreed — the popover divided by 1024³ and always
+ *  said GB, so a 3 MB 特别篇 read 「0.00 GB」 — and one file's size is not two facts. */
+export const fmtSize = (n?: number): string => {
+  if (!n) return '';
+  if (n >= 1e9) return `${(n / 1e9).toFixed(2)} GB`;
+  const mb = n / 1e6;
+  return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.round(n / 1e3)} KB`;
+};
+/** A rate rounded to 「0.2 Mbps」 is one significant figure standing in for 192 or 208 kbps, so under a
+ *  megabit the number is stated in kilobits — which is where audio bitrates actually live. */
+export const fmtRate = (n?: number): string => (!n ? '' : n >= 1e6 ? `${(n / 1e6).toFixed(1)} Mbps` : `${Math.round(n / 1e3)} kbps`);
+
+/** The gateway's own word for a file's dynamic range, as a card says it. Measured 2026-10-27 over 480
+ *  sources: 359 `SDR`, 64 `HDR 10` — with the space, which is how this gateway spells HDR10 — 56
+ *  `DolbyVision`, and one that answers nothing at all. That one is not SDR: the strip defaulted to it, and
+ *  a value painted on in the absence of an answer is the same lie the ✓ and the green dot were. */
+const RANGE_CN: Record<string, string> = { SDR: 'SDR', 'HDR 10': 'HDR10', HDR10: 'HDR10', DolbyVision: '杜比视界' };
+export const rangeWord = (range?: string): string => (!range ? '' : RANGE_CN[range] || range);
 
 export const fmtDate = (iso?: string): string => {
   if (!iso) return '';

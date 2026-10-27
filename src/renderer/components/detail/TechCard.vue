@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { enName, fmtDateTime, langName, zhTrackWords } from '../../lib/format';
+import { enName, fmtDateTime, fmtRate, fmtRuntime, fmtSize, formatWord, langName, openBrackets, rangeWord, zhTrackWords } from '../../lib/format';
 import type { LibraryItem, MediaStreamInfo } from '../../../shared/types';
 
 /** One file's technical sheet: the version strip, the video card, every audio track, the subtitle list,
@@ -17,6 +17,9 @@ import type { LibraryItem, MediaStreamInfo } from '../../../shared/types';
  *  track and in 52 of those the hidden ones are a different language. A reader picking a dub cannot do
  *  that from 「共 5 条」. */
 const props = defineProps<{ item: LibraryItem | null }>();
+/** The pick is not only this card's business: 播放 on this page has to load the version the reader was
+ *  reading, so the page keeps the id and hands it to the player when playback starts. */
+const emit = defineEmits<{ pick: [itemId: string, sourceId: string] }>();
 
 const sources = computed(() => props.item?.sources || []);
 /** Which of the file's versions the video card, the audio list and the subtitle list below are answering
@@ -32,28 +35,19 @@ const described = computed(() => sources.value[at.value]);
 /* A new item is a new question: the second version of one file must not stay selected while the reader
    opens another, whose strips may not even be two. */
 watch(() => props.item?.id, () => { picked.value = 0; });
+const pick = (i: number): void => {
+  picked.value = i;
+  const s = sources.value[i];
+  if (s && props.item) emit('pick', props.item.id, s.id);
+};
 const vstream = computed(() => described.value?.video);
 
-/** What the server used to tell two tracks of one language apart, in the reader's own language. The titles
- *  on these files are English even when everything else on the page is Chinese — 「中文（Chinese
- *  Simplified） / 中文（Chinese Traditional）」 said 简体 and 繁体 in two scripts to make one point — and a
- *  title that carries brackets of its own would print a second pair inside the ones added below. So they
- *  come off, and with them the words: `Dansk (Danmark)` is 丹麦语（Dansk）, and 322 of the 1,980 stream
- *  titles sampled here are that shape — the bracket restating the language in its own country.
- *  `keep` puts the words back for the one case that earns it: a track the plain version would name exactly
- *  like its sibling. 阿甘正传 is that file — 「简体中文-SRT_(导演评论)字幕」 and 「…_(监制评论)字幕」 both
- *  stripped to 「简体中文-SRT_ 字幕」, so two of its nine subtitle tracks became one label and a dangling
- *  underscore was all the difference left behind. What is left of nothing is the codec, when the caller
- *  says the tracks beside this one differ by format. */
-const discName = (s: MediaStreamInfo, keep: boolean, codecFallback = true): string => {
-  const t = s.title || '';
-  if (/simplified|chs\b/i.test(t)) return '简体';
-  if (/traditional|cht\b/i.test(t)) return '繁体';
-  if (/sdh|hearing/i.test(t)) return 'SDH';
-  if (/forced/i.test(t)) return '强制';
-  return t.replace(/[(（]([^)）]*)[)）]/g, keep ? '$1' : ' ').replace(/\s+/g, ' ').trim()
-    || (codecFallback ? s.codec?.toUpperCase() || '' : '');
-};
+/** What the server used to tell two tracks of one language apart, opened up for the pass that translates
+ *  it — see `openBrackets`, which the player's subtitle menu reads through the same pass so the two
+ *  surfaces cannot name one track with two sets of words. What is left of nothing here is the codec, when
+ *  the caller says the tracks beside this one differ by format. */
+const discName = (s: MediaStreamInfo, keepFormats: boolean): string =>
+  openBrackets(s.title || '') || (keepFormats ? s.codec?.toUpperCase() || '' : '');
 /** Codec and profile on one token. The two fields overlap by design — `Profile` qualifies a codec rather
  *  than naming a second thing — so joining them printed 「DTS DTS」 on every dts track whose profile the
  *  server spells out as `DTS`, and 「AAC HE-AAC」 where HE-AAC *is* the codec. When the profile already
@@ -70,9 +64,18 @@ const codecLabel = (a: MediaStreamInfo): string => {
  *  as a block of text.
  *  `title` rides at the end because it is the only field that separates 德加拉国配 from 央视国配 — those
  *  two tracks of 阿甘正传 agree on language, codec, layout, bitrate and sample rate, so anything else
- *  printed twice over would read as one track listed twice. */
-const audioRows = computed(() =>
-  (described.value?.audio || []).map(a => {
+ *  printed twice over would read as one track listed twice.
+ *  默认 is printed only where the file marks one track that way: measured 2026-10-27 over 23,027 sources,
+ *  21,178 mark exactly one and 819 mark two or more — up to 29 of them — so on those cards the badge was
+ *  not naming the track the player picks, it was naming a third of the list. */
+const onlyDefault = <T extends { isDefault?: boolean }>(list: T[]): number => {
+  const hits = list.filter(x => x.isDefault);
+  return hits.length === 1 ? list.indexOf(hits[0]) : -1;
+};
+const audioRows = computed(() => {
+  const list = described.value?.audio || [];
+  const def = onlyDefault(list);
+  return list.map((a, i) => {
     const nums = [
       langName(a.lang) || '无语言',
       codecLabel(a),
@@ -80,9 +83,9 @@ const audioRows = computed(() =>
       fmtRate(a.bitRate),
       fmtHz(a.sampleRate),
     ].filter(Boolean).join(' · ');
-    return { nums, name: audioName(a, nums), isDefault: !!a.isDefault };
-  }),
-);
+    return { nums, name: audioName(a, nums), isDefault: i === def };
+  });
+});
 /** The server's own words for a track, in the reader's language: `zhTrackWords` drops every part that
  *  restates the language the row already heads (in English, in the language's own spelling, or in
  *  Chinese) and turns what qualifies it (a region, SDH, a commentary credit) into Chinese. What comes
@@ -125,6 +128,7 @@ const audioName = (a: MediaStreamInfo, nums: string): string => {
 const ZH_SPLIT = /^(中文)（(简|繁)）$/;
 const subGroups = computed(() => {
   const subs = described.value?.subtitle || [];
+  const defSub = onlyDefault(subs);
   const full = subs.map(s => langName(s.lang) || '无语言');
   // A code that names a script of Chinese is one language with a qualifier, not a second language: 挽救计划's
   // `chi` tracks head 中文 and its `zh-cn` sidecar headed 中文（简）, so one subtitle family appeared under
@@ -142,14 +146,13 @@ const subGroups = computed(() => {
     cs.add((s.codec || '').toUpperCase());
   });
   const shared = subs.map((_, i) => (codecs.get(heads[i])?.size || 0) > 1);
-  const bare = subs.map((s, i) => discName(s, false, shared[i]));
-  const byLang = new Map<string, string[]>();
-  for (const [i, s] of subs.entries()) {
-    const lang = heads[i];
+  const bare = subs.map((s, i) => discName(s, shared[i]));
+  /** One row's chip: the server's own words through the translation pass, then the facts the cluster
+   *  settled. `keepRegions` is the one question a row cannot answer alone — see the lift below. */
+  const keyOf = (i: number, keepRegions: boolean): { lang: string; key: string } => {
+    const s = subs[i];
     const split = ZH_SPLIT.exec(full[i]);
-    const twin = subs.some((o, j) => j !== i && (o.lang || '') === (s.lang || '') && bare[j] === bare[i]);
-    const label0 = twin ? discName(s, true, shared[i]) : bare[i];
-    let label = zhTrackWords(label0, s.lang || '', shared[i]);
+    let label = zhTrackWords(bare[i], s.lang || '', shared[i], keepRegions);
     if (split) {
       const script = split[2] === '简' ? '简体' : '繁体';
       // The head already says 中文, so a title that says it again loses that half — 「简体中文」 under a
@@ -158,14 +161,64 @@ const subGroups = computed(() => {
       if (!label) label = script;
       else if (!label.startsWith(script) && !/simplified|traditional/i.test(label)) label = `${script} ${label}`;
     }
-    // The two states a reader acts on: a subtitle that is not inside the file, and one mpv will switch on
-    // by itself. `isForced` is the server's word for the second, so the title regex above is only the
-    // fallback for files that spell it out instead.
-    const extra = [s.isExternal ? '外挂' : '', s.isForced && !/强制|forced/i.test(label) ? '强制' : ''].filter(Boolean).join(' ');
-    const key = [label, extra].filter(Boolean).join(' ');
-    const list = byLang.get(lang) || [];
-    byLang.set(lang, list);
-    list.push(key);
+    // `keepFormats` only preserves a format word the title already carries, and 乐园之夜's two 简体 tracks
+    // are 「Simplified Chinese (简体中文)」 in ASS and the same words again in SUBRIP — titles that name no
+    // format at all — so the cluster mixed containers, there was nothing to keep, and the pair printed as
+    // one 「简体×2」. Where the cluster disagrees on the container and the label does not already say it, the
+    // container is the whole difference between the two tracks and rides along: measured 2026-10-27 over
+    // 131,741 subtitle tracks in 23,027 sources, that put the chip count at 53,708 → 55,803, and a pair
+    // still sharing a label after it is the case the lift below is there to catch.
+    const fmt = formatWord(s.codec);
+    if (shared[i] && fmt && !label.toUpperCase().includes(fmt)) label = [label, fmt].filter(Boolean).join(' ');
+    // The states a reader acts on: a subtitle that is not inside the file, one mpv will switch on by
+    // itself, the one the server points at when nothing has been picked, and one written for viewers who
+    // cannot hear the track — `isForced` is the server's word for the second, so the title regex above is
+    // only the fallback for files that spell it out instead. The third was the field the card never read:
+    // measured 2026-10-27, 10,433 of 23,027 sources mark exactly one subtitle row that way, and it joins
+    // the merge key rather than only the printed chip, because two rows whose labels the translation pass
+    // folds together are still two different tracks. The fourth is the only route to 听障 for 440 of the
+    // 1,817 rows the server flags: their own `Title` says nothing of it and the word sits in
+    // `DisplayTitle`, which no card reads — so 左撇子女孩 printed one 「听障」 over a row the server does
+    // not flag and hid the row it does under 「普通×2」.
+    const extra = [
+      s.isExternal ? '外挂' : '',
+      s.isForced && !/强制|forced/i.test(label) ? '强制' : '',
+      s.isHearingImpaired && !/听障|sdh/i.test(label) ? '听障' : '',
+      i === defSub ? '默认' : '',
+    ].filter(Boolean).join(' ');
+    return { lang: heads[i], key: [label, extra].filter(Boolean).join(' ') };
+  };
+  const cut = subs.map((_, i) => keyOf(i, false));
+  // A region whose name is the head's own prefix — 西班牙语 starts with 西班牙, 葡萄牙语 with 葡萄牙 — is
+  // what the pass drops, on the reading that the heading already said it. Usually true, and the reason a
+  // lone 「Dansk (Danmark)」 row is not printed as 丹麦语 丹麦. But it is the only word some rows have: of
+  // the 1,049 clusters measured 2026-10-27 over 23,027 sources whose rows differ in the title yet print as
+  // one chip, this lift separates 191 — 162 by exactly this region word, 28 by the 默认 flag that joins the
+  // key above — and 858 still fold. Read pair by pair against what a reader picks between, those 858 are
+  // 792 that spell one script two ways around a chip already printing it (「Simplified Chinese (简体中文)」
+  // against 「Simplified」), 315 whose chip already says 听障 — 301 of them merged by the flag itself, two
+  // rows the gateway states the same fact about in two places — 50 where the words differ and nothing else
+  // does, and 2 that still cost the choice: 「mp4.繁英」 against 「mp4.简英」 on a 无语言 row, where no
+  // language word exists for the dictionary to hang a script on, and a 「英语听障字幕」 that the pass blanks
+  // whole, so the pair prints 普通×2 over a track that named itself SDH. The gateway reports no field apart
+  // between the rows of all but one of them, so what a fold costs is words — and the 19 that hid a real
+  // 简体/繁体 choice in the bare order 中文简体 are no longer among them, because the dictionary has that
+  // entry now.
+  const lift = new Set<string>();
+  const saidOnce = new Map<string, string>();
+  cut.forEach((c, i) => {
+    const id = `${c.lang} ${c.key}`;
+    const raw = (subs[i].title || '').trim();
+    const prev = saidOnce.get(id);
+    if (prev === undefined) saidOnce.set(id, raw);
+    else if (prev !== raw) lift.add(c.lang);
+  });
+  const chips = lift.size ? subs.map((_, i) => keyOf(i, lift.has(heads[i]))) : cut;
+  const byLang = new Map<string, string[]>();
+  for (const c of chips) {
+    const list = byLang.get(c.lang) || [];
+    byLang.set(c.lang, list);
+    list.push(c.key);
   }
   return [...byLang.entries()].map(([lang, list]) => {
     const merged = new Map<string, number>();
@@ -190,16 +243,8 @@ const subTotal = computed(() => described.value?.subtitle?.length || 0);
 const added = computed(() => (props.item?.dateCreated ? fmtDateTime(props.item.dateCreated) : ''));
 
 /** A 3 MB 特别篇 file printed 「0.00 GB」 under a two-decimal GB rule, and 11 of the 14 files in one such
- *  season were under 10 MB. The unit follows the number instead. */
-const fmtSize = (n?: number): string => {
-  if (!n) return '';
-  if (n >= 1e9) return `${(n / 1e9).toFixed(2)} GB`;
-  const mb = n / 1e6;
-  return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.round(n / 1e3)} KB`;
-};
-/** An audio stream rounded to 「0.2 Mbps」 is one significant figure standing in for 192 or 208 kbps, so
- *  under a megabit the number is stated in kilobits — which is where audio bitrates actually live. */
-const fmtRate = (n?: number): string => (!n ? '' : n >= 1e6 ? `${(n / 1e6).toFixed(1)} Mbps` : `${Math.round(n / 1e3)} kbps`);
+ *  season were under 10 MB — and the player's 播放源 popover spelled the same file differently again, so
+ *  both surfaces read `fmtSize` and `fmtRate` out of lib/format now. */
 const fmtRes = (v?: MediaStreamInfo): string => (v?.width && v?.height ? `${v.width}×${v.height}` : '');
 /** 44100 and 48000 are the two readings worth comparing, but a bare number was the only value on this sheet
  *  carrying no unit. */
@@ -223,6 +268,40 @@ const versionName = (name?: string): string => {
   const t = props.item?.name || '';
   return name && name.length <= 12 && !t.includes(name) ? name : '';
 };
+/** What every version strip prints, worked out together because two of the values are facts about the set
+ *  of versions rather than about one file.
+ *
+ *  The length is printed only where the versions disagree on it: one file's runtime is already on the page
+ *  above this card, so a lone version saying it again is the same number twice, and two versions that agree
+ *  say it twice each. Measured 2026-10-27, 8 of 479 items carry a second version and only 七武士's two cuts
+ *  differ once the length is rounded to the minute the card prints — 3小时27分 against 3小时21分 — which is
+ *  the whole reason to pick one of them over the other.
+ *
+ *  The ordinal is what is left when nothing on the strip differs. 僵尸世界大战's two versions are reported as
+ *  one file to the byte — one name, one size, one bitrate, one length, one range — and the only thing the
+ *  gateway knows apart is a subtitle the second lacks, so the two buttons read identically and picking
+ *  between them was a guess. 1 of those 8 items needs it.
+ *
+ *  A source with no video stream has no range to print and no picture the 视频 card can describe, so the
+ *  strip says that instead of falling through to 'SDR' — the one value the server never reported. */
+const strips = computed(() => {
+  const list = sources.value;
+  const runs = new Set(list.map(s => fmtRuntime(s.runTimeTicks)));
+  const showRun = list.length > 1 && runs.size > 1;
+  const rows = list.map(s => {
+    const head = versionName(s.name) || rangeWord(s.video?.range) || (s.video ? '' : '无视频轨');
+    const meta = [
+      showRun ? fmtRuntime(s.runTimeTicks) : '',
+      fmtSize(s.sizeBytes),
+      fmtRate(s.bitRate),
+      s.container || '',
+      where(s.protocol),
+    ].filter(Boolean);
+    return { head, meta, sig: [head, ...meta].join('|') };
+  });
+  const dup = new Set(rows.map(r => r.sig).filter((g, i, a) => a.indexOf(g) !== i));
+  return rows.map((r, i) => ({ head: r.head, meta: r.meta, ord: dup.has(r.sig) ? `版本 ${i + 1}` : '' }));
+});
 </script>
 
 <template>
@@ -239,16 +318,11 @@ const versionName = (name?: string): string => {
         :class="{ solo: !multi, on: multi && i === at }"
         :type="multi ? 'button' : undefined"
         :aria-pressed="multi ? i === at : undefined"
-        @click="picked = i"
+        @click="pick(i)"
       >
         <div class="sc-main">
-          <p class="sc-top">{{ versionName(s.name) || s.video?.range || 'SDR' }}</p>
-          <p class="sc-meta">
-            <span>{{ fmtSize(s.sizeBytes) }}</span>
-            <span>{{ fmtRate(s.bitRate) }}</span>
-            <span>{{ s.container }}</span>
-            <span>{{ where(s.protocol) }}</span>
-          </p>
+          <p class="sc-top">{{ strips[i].head }}<span v-if="strips[i].ord" class="sc-ord">{{ strips[i].ord }}</span></p>
+          <p class="sc-meta"><span v-for="(m, j) in strips[i].meta" :key="j">{{ m }}</span></p>
         </div>
       </component>
     </div>
@@ -257,9 +331,14 @@ const versionName = (name?: string): string => {
       <div v-if="vstream" class="tcard vid">
         <h3>视频</h3>
         <dl>
+          <!-- 「标题」 printed the server's own sentence — 1080p H264, 4K HDR 10 HEVC — on 22,858 of the
+               23,027 sources measured 2026-10-27, and every word of it is a row below: the height, the
+               range the strip above names, the codec. What none of them said was the 58 files whose height
+               is fields of interlaced lines rather than frames, so that is the one word kept, from the
+               server's own flag. -->
           <template v-for="row in [
-            ['标题', vstream.displayTitle || vstream.title],
             ['分辨率', fmtRes(vstream)],
+            ['扫描', vstream.isInterlaced ? '隔行' : ''],
             ['帧率', fmtFps(vstream.fps)],
             ['编码', vstream.codec?.toUpperCase()],
             ['配置', vstream.profile],
@@ -318,13 +397,23 @@ button.srccard {
   cursor: pointer; transition: background-color 140ms ease, border-color 140ms ease;
 }
 .src.multi .srccard:hover { background: color-mix(in srgb, var(--text) 5%, var(--bg-elev)); }
-.src.multi .srccard:focus-visible { outline: 2px solid color-mix(in srgb, var(--text) 55%, transparent); outline-offset: 2px; }
+/* One weight of 「focused」 on this sheet. The ring was 55% alpha: sampled off the screen it painted
+   rgb(119,119,124) on the rgb(244,244,247) page, 4.06:1, while the dialog's × painted solid --text at
+   18.63:1 — two stops of one Tab walk answering the same question in two voices. Solid, it measures
+   rgb(18,18,26) at 16.57:1 on the page and 15.49:1 over the .on tint, so the ring reads on the strip the
+   reader is already on and not only on its neighbours. The player's sheet does it this way already: one
+   rule, one token, every control inside it. */
+.src.multi .srccard:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .srccard.on { background: color-mix(in srgb, var(--text) 9%, var(--bg-elev)); border-color: color-mix(in srgb, var(--text) 40%, var(--line)); }
 /* The un-picked tabs keep the same boxes and lose only the brightness of their headline: with the card the
    reader is on named by a lit border, its neighbours recede without anything moving out from under them. */
 .src.multi .srccard:not(.on) .sc-top { color: var(--text-dim); }
 .sc-main { min-width: 0; }
 .sc-top { margin: 0; font-size: 15px; font-weight: 700; color: var(--text); }
+/* The ordinal qualifies the headline rather than repeating it, so it sits at the meta's weight: on a strip
+   where nothing else differs it is the only word telling two buttons apart, and it still must not outrank
+   the range beside it. */
+.sc-ord { margin-left: 8px; font-size: 13px; font-weight: 500; color: var(--text-dim); }
 .sc-meta { margin: 2px 0 0; display: flex; gap: 14px; font-size: 13px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 
 /* Two codec cards side by side, then the subtitle list across the whole band. `flex-start` is what keeps the
