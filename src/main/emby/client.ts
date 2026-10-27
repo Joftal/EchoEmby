@@ -1,4 +1,5 @@
 import { net } from 'electron';
+import { hasContent } from '../../shared/types';
 import type { Account, FacetOption, LibraryItem, LibraryRow, MediaStreamInfo, Person, PlayMethod, PlaybackSource, Providers, StudioRef } from '../../shared/types';
 import { buildDeviceProfile } from './deviceProfile';
 import { cleanTrackTitle } from '../track-title';
@@ -724,10 +725,15 @@ export class EmbyClient {
       { UserId: this.account.userId, StartTimeTicks: 0, EnableTranscoding: opts.tier > 0 },
     );
     const sources = mapSources(j.MediaSources);
-    if (!sources.length) throw new EmbyError('这个条目没有可用的播放源', 502);
-    const wanted = opts.sourceId ? sources.find(s => s.id === opts.sourceId) : undefined;
-    const ms = (j.MediaSources || []).find((x: any) => x?.Id === (wanted || sources[0]).id) || {};
-    const raw = wanted || sources[0];
+    // A row the gateway cannot probe — no stream at all, 133 of the 23,027 sources measured 2026-10-27, 132
+    // of them reporting `Size` 0 — is a path with nothing behind it rather than a version of the file, and
+    // asking the server for its stream answers HTTP 500 (挽救计划's `- mobile.mp4` does exactly that). So the
+    // pick is made among the rows that hold a stream, and an item whose every row is empty has no source to
+    // offer, which is said here rather than by a stream that dies a second later.
+    const usable = sources.filter(s => hasContent(s));
+    if (!usable.length) throw new EmbyError('这个条目没有可用的播放源', 502);
+    const raw = (opts.sourceId ? usable.find(s => s.id === opts.sourceId) : undefined) || usable[0];
+    const ms = (j.MediaSources || []).find((x: any) => x?.Id === raw.id) || {};
     // This fork omits MediaSources[].PlayMethod, so the method is derived from the flags the server does answer.
     const method: PlayMethod =
       ms.PlayMethod === 'Transcode' || ms.PlayMethod === 'DirectPlay' || ms.PlayMethod === 'DirectStream'

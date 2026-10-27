@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import type { LibraryItem, TmdbCreditRow, TmdbCredits, TmdbEpisodeRow, TmdbSeasonRow, TmdbStills } from '../../shared/types';
+import { hasContent, type LibraryItem, type TmdbCreditRow, type TmdbCredits, type TmdbEpisodeRow, type TmdbSeasonRow, type TmdbStills } from '../../shared/types';
 import HScroller from '../components/detail/HScroller.vue';
 import FilterSelect from '../components/browse/FilterSelect.vue';
 import BlockPh from '../components/detail/BlockPh.vue';
@@ -751,9 +751,13 @@ async function openTech(r: BandRow, ev?: MouseEvent): Promise<void> {
   // reading, and writing it here would paint episode 7's numbers under episode 12's name.
   if (!pop || pop.id !== r.id) return;
   const row = res.ok ? res.data : null;
-  pop.item = row?.sources?.length ? row : null;
+  // A row the server lists but cannot probe — no stream behind it — is not a resource, so the card calls
+  // the same answer here that 播放 would get from the negotiation, and the strip it measures is the one the
+  // card draws: usable versions first, the empty rows sunk to the end.
+  const usable = (row?.sources || []).filter(hasContent);
+  pop.item = row && usable.length ? row : null;
   pop.dead = !pop.item;
-  const src = pop.item?.sources?.[0];
+  const src = usable[0];
   if (src) {
     await nextTick();
     const h = (sel: string): number => {

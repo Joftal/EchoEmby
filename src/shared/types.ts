@@ -486,6 +486,15 @@ export interface PlaybackSource {
   method?: PlayMethod;
 }
 
+/** Whether a version holds anything at all. Measured 2026-10-27 over both gateways' 23,027 sources: 133 of
+ *  them carry no `MediaStreams` row whatsoever — no video, no audio, no subtitle, and 132 report `Size` 0 —
+ *  because the gateway lists a `.strm`/`.iso` row it cannot probe (119 strm, 8 iso, 6 mkv). Those are not
+ *  versions of a file; they are a path the server can see and nothing behind it. So one rule says who they
+ *  are everywhere: the 播放资源 card sinks them and refuses the press, the player's 播放源 card does not
+ *  list them, and a negotiation never aims a stream at one. */
+export const hasContent = (s: Pick<PlaybackSource, 'video' | 'audio' | 'subtitle'>): boolean =>
+  !!s.video || s.audio.length > 0 || s.subtitle.length > 0;
+
 /** Common Sense Media content advisories, one entry per category. `level` is CSM's 0–5 dot scale. */
 export interface CsmCategory {
   key: string;

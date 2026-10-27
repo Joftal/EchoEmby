@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { enName, fmtDateTime, fmtRate, fmtRuntime, fmtSize, formatWord, langName, openBrackets, rangeWord, zhTrackWords } from '../../lib/format';
-import type { LibraryItem, MediaStreamInfo } from '../../../shared/types';
+import { hasContent, type LibraryItem, type MediaStreamInfo } from '../../../shared/types';
 
 /** One file's technical sheet: the version strip, the video card, every audio track, the subtitle list,
  *  and the date the server took the file in. It takes the row rather than an id because the row is what
@@ -24,7 +24,16 @@ const props = defineProps<{ item: LibraryItem | null; wanted?: string }>();
  *  reading, so the page keeps the id and hands it to the player when playback starts. */
 const emit = defineEmits<{ pick: [itemId: string, sourceId: string] }>();
 
-const sources = computed(() => props.item?.sources || []);
+/** The file's versions, in the order the card shows them: the ones that hold a stream first, in the order
+ *  the server listed them, and the rows that hold none sunk to the end. 133 of the 23,027 sources measured
+ *  2026-10-27 carry no `MediaStreams` at all — a `.strm` or `.iso` path the gateway can see and cannot
+ *  probe, 132 of them reporting `Size` 0 — and asking the server to stream one answers HTTP 500. They are
+ *  listed because the server says the file has them and hiding a row would make the count a lie; they are
+ *  last and unpressable because there is nothing in them to read or to play. */
+const sources = computed(() => {
+  const list = props.item?.sources || [];
+  return [...list.filter(s => hasContent(s)), ...list.filter(s => !hasContent(s))];
+});
 /** Which of the file's versions the video card, the audio list and the subtitle list below are answering
  *  for. `0` is where it starts because that is the file the player loads when nothing else is asked for;
  *  the strips are buttons from there, because measured 2026-10-26 on 444 files, 6 of them carry a second
@@ -43,9 +52,12 @@ const described = computed(() => sources.value[at.value]);
    opens another, whose strips may not even be two. */
 watch(() => props.item?.id, () => { picked.value = wantedIndex(); });
 const pick = (i: number): void => {
-  picked.value = i;
   const s = sources.value[i];
-  if (s && props.item) emit('pick', props.item.id, s.id);
+  // A row with nothing in it describes nothing and plays nothing, so it is not a pick. The page keeps
+  // whatever was pressed last, which is the version 播放 will load.
+  if (!s || !hasContent(s)) return;
+  picked.value = i;
+  if (props.item) emit('pick', props.item.id, s.id);
 };
 const vstream = computed(() => described.value?.video);
 
@@ -324,7 +336,7 @@ const strips = computed(() => {
   const showRun = list.length > 1 && runs.size > 1;
   const rows = list.map(s => {
     const range = rangeWord(s.video?.range);
-    const head = versionName(s.name) || range || (s.video ? '' : '无视频轨');
+    const head = hasContent(s) ? versionName(s.name) || range || (s.video ? '' : '无视频轨') : '无内容';
     const meta = [
       showRun ? fmtRuntime(s.runTimeTicks) : '',
       fmtSize(s.sizeBytes),
@@ -333,10 +345,16 @@ const strips = computed(() => {
       where(s.protocol),
       head === range ? '' : range,
     ].filter(Boolean);
-    return { head, meta, sig: [head, ...meta].join('|') };
+    return { src: s, head, meta };
   });
-  const dup = new Set(rows.map(r => r.sig).filter((g, i, a) => a.indexOf(g) !== i));
-  return rows.map((r, i) => ({ head: r.head, meta: r.meta, ord: dup.has(r.sig) ? `版本 ${i + 1}` : '' }));
+  const sigs = rows.map(r => [r.head, ...r.meta].join('|'));
+  const dup = new Set(sigs.filter((g, i, all) => all.indexOf(g) !== i));
+  return rows.map((r, i) => ({
+    head: r.head,
+    meta: r.meta,
+    pressable: hasContent(r.src),
+    ord: dup.has(sigs[i]) ? `版本 ${i + 1}` : '',
+  }));
 });
 </script>
 
@@ -347,13 +365,13 @@ const strips = computed(() => {
          behind the first one's. A lone strip has nothing to switch to and stays a plain box. -->
     <div class="src" :class="{ multi }">
       <component
-        :is="multi ? 'button' : 'div'"
+        :is="multi && strips[i].pressable ? 'button' : 'div'"
         v-for="(s, i) in sources"
         :key="s.id"
         class="srccard"
-        :class="{ solo: !multi, on: multi && i === at }"
-        :type="multi ? 'button' : undefined"
-        :aria-pressed="multi ? i === at : undefined"
+        :class="{ solo: !multi, on: multi && i === at, inert: !strips[i].pressable }"
+        :type="multi && strips[i].pressable ? 'button' : undefined"
+        :aria-pressed="multi && strips[i].pressable ? i === at : undefined"
         @click="pick(i)"
       >
         <div class="sc-main">
@@ -438,6 +456,12 @@ button.srccard {
   cursor: pointer; transition: background-color 140ms ease, border-color 140ms ease;
 }
 .src.multi .srccard:hover { background: color-mix(in srgb, var(--text) 5%, var(--bg-elev)); }
+/* The sunk row is a fact about the file rather than a choice: no pointer, no tint, and no press that would
+   leave the three cards below describing something the server cannot serve. Its words keep their colour —
+   「无内容」 has to be readable to be believed — the row simply stops behaving like a control. */
+.src.multi .srccard.inert,
+.srccard.inert { cursor: default; }
+.src.multi .srccard.inert:hover { background: var(--bg-elev); }
 /* One weight of 「focused」 on this sheet. The ring was 55% alpha: sampled off the screen it painted
    rgb(119,119,124) on the rgb(244,244,247) page, 4.06:1, while the dialog's × painted solid --text at
    18.63:1 — two stops of one Tab walk answering the same question in two voices. Solid, it measures

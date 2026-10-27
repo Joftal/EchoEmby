@@ -6,7 +6,7 @@ import SubRow from './SubRow.vue';
 import { usePlayerStore } from '../../stores/player';
 import { useAppStore } from '../../stores/app';
 import { fmtRate, fmtSize, rangeWord } from '../../lib/format';
-import type { PlayMethod, PlaybackSource, PlayerPrefs } from '../../../shared/types';
+import { hasContent, type PlayMethod, type PlaybackSource, type PlayerPrefs } from '../../../shared/types';
 
 const player = usePlayerStore();
 const app = useAppStore();
@@ -52,6 +52,13 @@ function pickSource(index: number): void {
   void player.cmd({ action: 'source', value: index });
 }
 
+/** The versions this panel offers, with the seat each one holds in the session's own list — `source` is a
+ *  command argument, so a filtered view has to carry the index it was cut from. The rows the server lists
+ *  but cannot probe (no stream at all: 133 of 23,027 sources measured 2026-10-27) are left out: pressing one
+ *  here reloads the player onto a path that answers HTTP 500, and the 播放资源 card already keeps that row
+ *  visible-and-untouchable for the reader who wants to know the file has it. */
+const versions = computed(() => (session.value?.sources || []).map((src, i) => ({ src, i })).filter(r => hasContent(r.src)));
+
 /** The version actually playing, whose range is what the 动态范围 row answers for. `session.hdr` is a
  *  yes/no, so that row called Dolby Vision and HDR10 both 「HDR」 while the cards it opens named them — two
  *  spellings of one fact on one panel. mpv's own flag is the fallback for the source that reports no video
@@ -71,23 +78,24 @@ const playingRange = computed(() => {
   </button>
 
   <div class="pl-sep"></div>
-  <SubRow name="sources" label="播放源" :value="`${session?.sources.length || 0} 个版本`" />
+  <SubRow name="sources" label="播放源" :value="`${versions.length} 个版本`" />
   <SubRow name="decode" label="解码与渲染" :value="media.hwdec || '软解'" />
   <SubRow name="range" label="动态范围" :value="playingRange" />
 
   <SubPopover name="sources" title="播放源">
     <div class="pl-grid">
-      <button v-for="(src, i) in session?.sources || []" :key="src.id" class="pl-card" :class="{ on: session?.sourceIndex === i }" @click="pickSource(i)">
-        <span class="kind">{{ kind(src) }}</span>
-        <span>{{ size(src.sizeBytes) }}</span>
-        <span>{{ rate(src.bitRate) }}</span>
+      <button v-for="v in versions" :key="v.src.id" class="pl-card" :class="{ on: session?.sourceIndex === v.i }" @click="pickSource(v.i)">
+        <span class="kind">{{ kind(v.src) }}</span>
+        <span>{{ size(v.src.sizeBytes) }}</span>
+        <span>{{ rate(v.src.bitRate) }}</span>
         <span class="who">
-          <Shield :size="17" :fill="session?.sourceIndex === i ? '#6ddc8f' : 'rgba(255,255,255,.4)'" stroke-width="1.6" />
-          {{ src.name || `版本 ${i + 1}` }}
+          <Shield :size="17" :fill="session?.sourceIndex === v.i ? '#6ddc8f' : 'rgba(255,255,255,.4)'" stroke-width="1.6" />
+          {{ v.src.name || `版本 ${v.i + 1}` }}
         </span>
       </button>
     </div>
-    <p v-if="(session?.sources.length || 0) < 2" class="pl-empty">这个条目只有一个版本</p>
+    <p v-if="!versions.length" class="pl-empty">这个条目没有可播放的版本</p>
+    <p v-else-if="versions.length < 2" class="pl-empty">这个条目只有一个版本</p>
   </SubPopover>
 
   <SubPopover name="decode" title="解码与渲染">
