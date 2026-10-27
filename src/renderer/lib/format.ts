@@ -84,14 +84,84 @@ const LANGS: Record<string, string> = {
   // The subtitle scene's two-letter script codes, measured 2026-10-26 on 鬼灭之刃 S01E05 (`tc` was the
   // one stream language left printing as itself): on a CJK release `sc`/`tc` are 简/繁 and nothing else.
   sc: '中文（简）', tc: '中文（繁）',
+  // The 42 codes that still printed themselves as a track heading, 324 rows over the 131,741 subtitle and
+  // 32,770 audio streams of both gateways' 23,027 files, measured 2026-10-27 (.probe/rc/gap-enumerate.txt).
+  // Each is a real ISO-639-2 spelling of a language the standard names — the
+  // servers spell them out in their own DisplayTitle (`nld`→Dutch ×16, `ell`→Greek ×15, `twi`→Twi ×15,
+  // `ron`→Romanian ×14, `mon`→Mongolian ×12) — and the 639-2/T forms ride beside the 639-2/B ones
+  // already above because one file carries both spellings as two rows.
+  nld: '荷兰语', ell: '希腊语', ces: '捷克语', ron: '罗马尼亚语', slk: '斯洛伐克语', isl: '冰岛语',
+  mkd: '马其顿语', ben: '孟加拉语', mar: '马拉地语', pan: '旁遮普语', zul: '祖鲁语', mon: '蒙古语',
+  xho: '科萨语', yor: '约鲁巴语', per: '波斯语', nav: '纳瓦霍语', dzo: '宗卡语', epo: '世界语',
+  sun: '巽他语', cha: '查莫罗语', guj: '古吉拉特语', bod: '藏语', wel: '威尔士语', bur: '缅甸语',
+  twi: '阿肯语', dv: '迪维希语', nno: '挪威尼诺斯克语', zxx: '无语言内容',
+  // Four the table answers for out of the row's own words rather than out of the code: `khk` is titled
+  // 「Монгол」, `arc` is 耶稣受难记's only audio (the film is spoken in Aramaic), `phi` is titled
+  // 「Filipino」 in a 25-subtitle roster whose Filipino seat is this row, and `tai` ×26 sits in the same
+  // kind of platform roster (eng ind vie kor msa por ara spa jpn beside it) in files that carry no `tha`
+  // row anywhere — the Thai seat, filled with the Tai-family collective code.
+  khk: '蒙古语', arc: '阿拉米语', phi: '菲律宾语', tai: '泰语',
+  // `zhs` is the scene's own spelling of 简: all 14 rows are MOV_TEXT tracks that share their file with a
+  // `zht` one (狙击精英：孤魂野鬼 = Audio:eng + Subtitle:zhs + zht + eng), and the script is the only
+  // thing telling the pair apart.
+  zhs: '中文（简）',
+  // Placeholders, not languages: `def` ×34 is the one audio track of a Chinese film with an empty title
+  // (大蛇4：迷失世界, 小镇车神之五菱漂移, 大项目), `aud` ×3 and `dol` ×9 are named for what they are (audio)
+  // and sit in files whose video is `und` with no other language either. Calling any of them a language
+  // would invent one, so they say what `und` says.
+  def: '无语言', aud: '无语言', dol: '无语言',
+  // Two placeholders the row's own words do resolve: `dum` is titled 「Dutch Dolby Digital Audio 2.0
+  // @ 448 kbps」 on a Dutch film's only audio (安东尼娅家族, beside Subtitle:eng + chi), and `guo` is 国语
+  // — 墨攻's only audio, and 一条狗的回家路's Chinese dub beside its `eng` one.
+  dum: '荷兰语', guo: '中文',
+  // The language half of a locale written out as the whole title, which is how these files name a
+  // variant: 「fr-FR」 ×101, 「it-IT」 ×97, 「ar-SA」 ×97, 「ru-RU」 ×95, 「pt-BR」 ×134, 「ms-MY」 ×23,
+  // 「hi-Latn」 ×38 each left the code standing on the card beside a region the pass could already read.
+  // Deliberately absent, because the same letters are doing a different job wherever else they appear as
+  // a bare token: `ch` is 「Chinese 6 ch」 ×254 (a channel count), `us`/`my`/`uk` are regions (en-US
+  // ×233, ms-MY ×23, English (UK) ×6), `hr` is DTS-HD HR, `he` is HE-AAC, `no` is the first word of
+  // 「No linguistic content」, `la` is 「La Trobe University」 — so those read as a codec, a country or a
+  // name, and never as a nationality.
+  it: '意大利语', fr: '法语', ru: '俄语', ar: '阿拉伯语', ms: '马来语', hi: '印地语', pt: '葡萄牙语',
 };
 
+/** A language tag with a subtag glued to it — `es-419`, `zh-HK`, `pt-BR`, `hi-Latn` — which is how Matroska
+ *  stores a variant and how mpv hands the field straight back to the player's menu. The half a reader
+ *  compares tracks by is the language; the subtag is the qualifier that belongs beside it, not inside the
+ *  heading, because a cluster headed 「西班牙语」 and a cluster headed 「西班牙语（拉丁美洲）」 two words
+ *  apart is one family shown twice. So `langName` answers the language half and the script or region word
+ *  comes from the title through `zhTrackWords`. Measured 2026-10-27 over the 545 streams whose `Language`
+ *  field carries a subtag at all: 507 are `zh-CN`/`zh-TW`/`zh-Hans`/`zh-Hant` — whose variant is the
+ *  script, and both spellings of it are in the table — and the remaining 38 are `hi-Latn`, where the
+ *  title says 「印地语 (forced)」 and the tag's other half reaches the card as 拉丁 anyway. */
 export const langName = (code?: string): string => {
   if (!code) return '';
   const key = code.toLowerCase();
   if (key.startsWith('zh-hant')) return '中文（繁）';
   if (key.startsWith('zh-hans')) return '中文（简）';
-  return LANGS[key] || code;
+  const named = LANGS[key];
+  if (named) return named;
+  // Two languages written into one field — 「chs&eng」, 「EN&CHT」 — is one subtitle carrying both, which is
+  // what the card's own 双语 word is for. Both halves have to be known for the join to be read; a field
+  // naming one language and one nothing stays the field.
+  const joined = /^([a-z]{2,4})[&+]([a-z]{2,4})$/.exec(key);
+  if (joined) {
+    const a = LANGS[joined[1]];
+    const b = LANGS[joined[2]];
+    if (a && b) return `${a}/${b}`;
+  }
+  const half = /^([a-z]{2,3})[-_][a-z0-9]{2,4}$/.exec(key)?.[1];
+  return (half && LANGS[half]) || code;
+};
+/** Whether a row's own words already say this language, so the surface printing beside it can stay quiet.
+ *  Two spellings of one fact count: a sidecar titled 「简体」 under a `zh-cn` language has said 中文（简）,
+ *  and the plain `includes` the player menu used to test missed exactly that and printed 「简体 中文（简）」. */
+export const saidLang = (row: string, code?: string): boolean => {
+  const lang = langName(code);
+  if (!lang || !row) return false;
+  if (row.includes(lang)) return true;
+  const script = /^中文（(简|繁)）$/.exec(lang);
+  return !!script && row.includes(`${script[1]}体`);
 };
 
 /** The one place a track's own words are turned into the reader's language. A release group names its
@@ -152,6 +222,14 @@ const LOCALE: Record<string, string> = {
   hrv: 'hr', srp: 'sr', cat: 'ca', glg: 'gl', baq: 'eu', mac: 'mk', div: 'dv', tgl: 'tl', tam: 'ta',
   tel: 'te', kan: 'kn', mal: 'ml', aze: 'az', arm: 'hy', hye: 'hy', geo: 'ka', kat: 'ka', kaz: 'kk',
   khm: 'km', kir: 'ky', alb: 'sq', sqi: 'sq', srd: 'sc', cmn: 'zh', gsw: 'gsw',
+  // The codes the 2026-10-27 head census added to `LANGS`, each in the locale its own speakers read it
+  // in — which is what makes 「Монгол」 a spelling of `khk` instead of a word no table knows.
+  ell: 'el', ces: 'cs', ron: 'ro', slk: 'sk', isl: 'is',
+  mkd: 'mk', ben: 'bn', mar: 'mr', pan: 'pa', zul: 'zu', mon: 'mn', khk: 'mn', xho: 'xh',
+  yor: 'yo', per: 'fa', fas: 'fa', nav: 'nv', dzo: 'dz', epo: 'eo', sun: 'su', cha: 'ch', guj: 'gu',
+  bod: 'bo', tib: 'bo', wel: 'cy', cym: 'cy', bur: 'my', mya: 'my', twi: 'ak', nno: 'nn', dv: 'dv',
+  phi: 'fil', tai: 'th', zhs: 'zh', guo: 'zh', dum: 'nl', it: 'it', fr: 'fr', ru: 'ru', ar: 'ar',
+  ms: 'ms', hi: 'hi', pt: 'pt',
 };
 const endonymCache = new Map<string, string>();
 const endonym = (code: string): string => {
@@ -180,6 +258,23 @@ const EXTRA_SPELLINGS: Record<string, string> = {
   // for, and it rode onto the card untranslated under a 中文 heading that was already saying 中文. Cantonese
   // in its traditional spelling is the same gap: `Intl` answers 粤语 for `yue`, and the file said 粵語.
   '简体中文': 'zh-cn', '簡體中文': 'zh-cn', '繁体中文': 'zh-tw', '繁體中文': 'zh-tw', '粵語': 'yue',
+  // Two the computed spellings miss because `Intl` answers in the wrong alphabet or the wrong reading:
+  // the Serbian endonym comes back as 「српски」 while 招魂's subtitle is titled 「Srpski (Latinica)」,
+  // and 蓝精灵's Korean PGS is titled 「Korenan-sup」 where every other table calls it 「한국어」.
+  'srpski': 'srp', 'korenan': 'kor',
+  // The two the server's own DisplayTitle still spells the old way — Emby answers 「Bengali」 (10 rows) and
+  // 「Panjabi」 (6) where this runtime's CLDR says Bangla and Punjabi, so no computed spelling reaches the
+  // card's word for them and the English name rode along beside 孟加拉语.
+  'bengali': 'ben', 'panjabi': 'pan',
+  // Four the after-pass of 2026-10-27 still found printing themselves — each is the language's own name in
+  // a spelling no computed form produces. `nob`'s endonym comes back as 「norsk bokmål」 and its English
+  // name as 「Norwegian Bokmål」, so the single word 「Bokmål」 that opens 309 DisplayTitles
+  // (「Bokmål, Norwegian (SUBRIP)」) matched neither; `tha`'s comes back short (「ไทย」) while 23 titles
+  // spell it out as 「ภาษาไทย」; `tgl` answers 「Filipino」 in both locales while 7 rows are titled
+  // 「Tagalog」, the name this code had before ISO merged the two; and 「Modern Greek (1453-)」 is CLDR's
+  // own long form of `gre`, 190 rows, where 「Greek」 alone already drops as the heading's echo and only
+  // the adjective was left standing.
+  'bokmål': 'nob', 'ภาษาไทย': 'tha', 'tagalog': 'tgl', 'modern greek': 'ell',
 };
 let LANG_SPELLINGS: Map<string, string> | null = null;
 function langSpellings(): Map<string, string> {
@@ -204,6 +299,21 @@ function langSpellings(): Map<string, string> {
 const REGION_ADJ: Record<string, string> = {
   european: '150', 'latin american': '419', british: 'GB', castilian: 'ES', parisian: 'FR',
   metropolitan: 'FR', swiss: 'CH', brazilian: 'BR', canadian: 'CA',
+  // The rest of the ones the 2026-10-27 census found still spelled in Latin on the card. `Turkey` ×45 is
+  // the country CLDR puts beside `tr`, and beside a 土耳其语 heading it drops for saying nothing new;
+  // `Hong Kong` ×351 and `HK` ×150 are the release's own region on a Chinese subtitle; `Latinoamericano`
+  // ×24 is the Spanish spelling of the seat 「Latin American」 already holds; `American` ×20 and
+  // `Egyptian` ×16 name the two variants of a language whose heading is the broad one.
+  turkey: 'TR', 'hong kong': 'HK', hk: 'HK', latinoamericano: '419', american: 'US', egyptian: 'EG',
+  // The four the same pass found on the other side of a language name: 嫁入黑帮's Arabic subtitle is
+  // titled 「Egyptian」, 父债子偿's Spanish one 「Mexican Spanish」, 男孩、鼹鼠、狐狸和马's Dutch one
+  // 「Flemish」, and 接近终点 puts its Castilian audio beside 「Castellano」. 「Taiwanese Mandarin」 is the
+  // name 49 Chinese dubs (乐高蝙蝠侠大电影：DC英雄集结, 熊的传说, A计划…) give themselves, and only the
+  // region word was missing for it to come out as 中国台湾 普通话 rather than 「Taiwanese 普通话」.
+  mexican: 'MX', flemish: 'BE', castellano: 'ES', taiwanese: 'TW', taiwan: 'TW',
+  // The same two-letter region tags a title writes instead of spelling the place out: 「English (UK)」 ×3
+  // under a 英语 heading, where 英国 is news the heading does not carry, and 「USA」 ×1.
+  uk: 'GB', usa: 'US',
 };
 /** A language tag written out as the whole title — 「Zh-hk [AAC 2.0]」 — where the language half is the
  *  heading and the region half is the only news. `zh-cn` and `zh-tw` are in `LANGS` already; these are
@@ -217,6 +327,17 @@ const WORDS_ZH: [string, string][] = [
   ['full', '完整'], ['original', '原声'], ['dubbed', '配音'], ['dub', '配音'], ['forced', '强制'],
   // A script, not a place: 搏击俱乐部's Serbian track is titled 「Latin」 for the alphabet it is set in.
   ['latin', '拉丁'],
+  // The same fact in the shapes the corpus writes it, measured 2026-10-27: `Latn` is the subtag of all 38
+  // 「hi-Latn」 rows; 改名换姓's Serbian subtitle is titled 「Cyrillic」 and 招魂's 「Srpski (Latinica)」,
+  // which is the whole difference between the two files' one Serbian row; and a script word is the only
+  // thing 35 rows have to say (22 of them under a 无语言 head). So it translates rather than drops.
+  ['latn', '拉丁'], ['cyrillic', '西里尔'], ['cyrl', '西里尔'], ['latinica', '拉丁'],
+  // `Hans`/`Hant` arrive as the subtag of a BCP-47 title 「zh-Hans」 where the language half is already the
+  // heading, which left the script half untranslated beside it.
+  ['hans', '简体'], ['hant', '繁体'],
+  // What CLDR itself answers for a macrolanguage code (55 rows headed 马来语 carry the word 「macrolanguage」
+  // and nothing else) and what a Portuguese release calls the European variety.
+  ['macrolanguage', '语族'], ['iberian', '伊比利亚'],
   // What a French MULTI release calls its two dubs: VO the original, VFQ the Quebec one.
   ['vo', '原声'], ['vfq', '加拿大'],
   ['compatibility track', '兼容'], ['compatibility', '兼容'], ['track', ''], ['positional', ''],
@@ -237,6 +358,13 @@ const WORDS_ZH: [string, string][] = [
   // and this entry separates 19 pairs that had been printing one chip.
   ['中文简体', '简体'], ['中文繁体', '繁体'],
   ['简中字幕', '简体'], ['繁中字幕', '繁体'], ['字幕', ''],
+  // The two words a LaserDisc-era rip puts where a subtitle's own name would be: 「Subtitle (PGS),
+  // Japanese, 1474 captions」 ×21. 字幕 is what the card's own heading already says, so the first half
+  // goes and the second carries the one fact left — that these are dialogue captions.
+  ['subtitle', ''], ['captions', '字幕'],
+  // 「Greek (Modern)」/「Modern Greek (1453-)」 ×190: the adjective is what separates these from the
+  // ancient-Greek rows a handful of discs carry, so it survives as 现代 rather than as Latin.
+  ['modern', '现代'],
   // Two dubs of one Japanese file, told apart by who is talking over it. They are the only words on those
   // tracks, so a card that could not read them would print two identical rows.
   ['キャストコメンタリー', '演员评论'], ['スタッフコメンタリー', '制作人员评论'],
@@ -409,6 +537,31 @@ export const zhTrackWords = (title: string, code: string, keepFormats: boolean, 
   // track itself goes with it. Those tokens are matched one at a time, on their own spelling.
   const blind = tokens.map(t => !fold(t) && !!rawKey(t));
   const out: string[] = [];
+  // One word said twice is not a second fact — and the guard this pass used to have against it sat on the
+  // translating branch only, so the branch that hands back the file's own words never met it. Measured
+  // 2026-10-27 over 131,741 subtitle tracks in 23,027 sources: 1,282 chips printed one script word twice,
+  // because `chs` came back as 简体 and the title went on to say 简体 in Chinese — 「Chs/SUP  简体」 read
+  // 「简体 简体」, 「Cht/SUP  原盘繁体(HK)」 read 「繁体 原盘繁体 中国香港」, 「Chs/SUP Netflix官译简体中文」
+  // read 「简体 Netflix 官译简体中文」. Two Chinese words one inside the other are the same fact at two
+  // lengths: the longer takes the floor and the shorter leaves. Latin is barred from both tests — a residue
+  // no table knows prints word for word exactly as the file wrote it.
+  const say = (w: string): void => {
+    // A word that carries Latin is a credit's own phrasing, and prose repeats words for a reason — so it
+    // only loses a repeat of the word immediately behind it, which is what this pass did before.
+    if (fold(w)) {
+      if (out[out.length - 1] !== w) out.push(w);
+      return;
+    }
+    if (out.includes(w)) return;
+    if (w.length > 1 && out.some((p) => p.length > 1 && !fold(p) && p.includes(w))) return;
+    if (w.length > 1) {
+      for (let j = out.length - 1; j >= 0; j--) {
+        const p = out[j];
+        if (p.length > 1 && !fold(p) && w.includes(p)) out.splice(j, 1);
+      }
+    }
+    out.push(w);
+  };
   for (let i = 0; i < tokens.length; ) {
     const tok = tokens[i];
     // Punctuation the split left standing — the 「@」 of a bitrate, the colon of 「VFQ : Full」, and the
@@ -429,7 +582,18 @@ export const zhTrackWords = (title: string, code: string, keepFormats: boolean, 
       const k = joined(n);
       const kr = joinedRaw(n);
       if (!k && !kr) continue;
-      const lang = (k && spellings.get(k)) || spellings.get(kr);
+      // Two letters that are both a language code and a region code — `IT`, `RU`, `PT` — are the place when
+      // they come in all caps and the language when they come in lower case, which is exactly how a title
+      // writes the two halves of 「it-IT」 and 「ru-RU」. The uppercase-only test is the same one that keeps
+      // 「Chinese 6 ch」 from reading as Chamorro and a commentary's 「is」 from reading as Icelandic.
+      const regionFirst = n === 1 && /^[A-Z]{2}$/.test(tok) && REGION_CODES.includes(tok);
+      const langRaw = regionFirst ? '' : (k && spellings.get(k)) || spellings.get(kr);
+      // `sc` and `tc` are the subtitle scene's 简/繁 — but `sc` is also ISO's Sardinian, and a row of
+      // that language titled 「sc-IT」 is a region, not a claim about Chinese script. The two-letter
+      // script codes are read as a language only where a CJK heading (or no heading at all) makes that
+      // the plain reading.
+      const lang =
+        (langRaw === 'sc' || langRaw === 'tc') && head && !/中文|粤语|日语|韩语/.test(head) ? '' : langRaw;
       if (lang) {
         const zh = langName(lang);
         took = n;
@@ -519,10 +683,11 @@ export const zhTrackWords = (title: string, code: string, keepFormats: boolean, 
       }
     }
     if (took) {
-      if (said && out[out.length - 1] !== said) out.push(said);
+      if (said) say(said);
       i += took;
     } else {
-      out.push(tokens[i]);
+      // A token no table knows goes out as the file wrote it.
+      say(tok);
       i++;
     }
   }
