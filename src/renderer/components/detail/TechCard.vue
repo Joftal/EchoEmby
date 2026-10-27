@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { enName, fmtDateTime, fmtRate, fmtRuntime, fmtSize, formatWord, langName, openBrackets, rangeWord, zhTrackWords } from '../../lib/format';
+import { enName, fmtDateTime, fmtRate, fmtRuntime, fmtSize, formatWord, langName, NO_LANG, openBrackets, rangeWord, zhTrackWords } from '../../lib/format';
 import { versionLabel } from '../../../shared/version-label';
 import { hasContent, type LibraryItem, type MediaStreamInfo } from '../../../shared/types';
 
@@ -97,7 +97,7 @@ const audioRows = computed(() => {
   const def = onlyDefault(list);
   const rows = list.map((a, i) => {
     const nums = [
-      langName(a.lang) || '无语言',
+      langName(a.lang) || NO_LANG,
       codecLabel(a),
       fmtLayout(a.channelLayout) || (a.channels ? `${a.channels} 声道` : ''),
       fmtRate(a.bitRate),
@@ -160,7 +160,7 @@ const ZH_SPLIT = /^(中文)（(简|繁)）$/;
 const subGroups = computed(() => {
   const subs = described.value?.subtitle || [];
   const defSub = onlyDefault(subs);
-  const full = subs.map(s => langName(s.lang) || '无语言');
+  const full = subs.map(s => langName(s.lang) || NO_LANG);
   // A code that names a script of Chinese is one language with a qualifier, not a second language: 挽救计划's
   // `chi` tracks head 中文 and its `zh-cn` sidecar headed 中文（简）, so one subtitle family appeared under
   // two headings two words apart. The script moves down into the variant, where the server's own 「简体」

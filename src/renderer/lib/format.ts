@@ -125,6 +125,14 @@ const LANGS: Record<string, string> = {
   it: '意大利语', fr: '法语', ru: '俄语', ar: '阿拉伯语', ms: '马来语', hi: '印地语', pt: '葡萄牙语',
 };
 
+/** The one word for a track that carries no language, which every surface that names a track reaches for
+ *  from here. Measured 2026-10-28 over both corpora: 3,551 of 32,770 audio rows and 243 of 130,957 embedded
+ *  subtitle rows have neither a `Language` nor a `Title` that says anything — the card has always called
+ *  those 无语言 (and `und`/`def`/`aud`/`dol` in the table below spell it that way), while the player's menu
+ *  met them with a made-up 「轨道 1」, in 162 versions right beside a sibling that does name one, and its
+ *  外挂 section used a third word (未标语言, 215 rows). One fact, three words, two surfaces of the same module. */
+export const NO_LANG = '无语言';
+
 /** A language tag with a subtag glued to it — `es-419`, `zh-HK`, `pt-BR`, `hi-Latn` — which is how Matroska
  *  stores a variant and how mpv hands the field straight back to the player's menu. The half a reader
  *  compares tracks by is the language; the subtag is the qualifier that belongs beside it, not inside the

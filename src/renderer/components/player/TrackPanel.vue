@@ -4,7 +4,7 @@ import SubPopover from './SubPopover.vue';
 import SubRow from './SubRow.vue';
 import StepRow from './StepRow.vue';
 import { usePlayerStore } from '../../stores/player';
-import { langName, openBrackets, saidLang, zhTrackWords } from '../../lib/format';
+import { langName, NO_LANG, openBrackets, saidLang, zhTrackWords } from '../../lib/format';
 import type { MediaStreamInfo, PlayerTrack, TrackSelection } from '../../../shared/types';
 
 /** Body only: the card that holds this belongs to SheetLayer, and so does its title. */
@@ -38,11 +38,13 @@ const inUse = (s: SidecarRow): boolean =>
 /** mpv numbers each kind from 1, so the row the user picks has to say which one it is. The title is the
  *  container's own, in whatever language the release group worked in — the same string the 播放资源 card
  *  translates — so this menu says 巴西 and 听障 where the file said 「Brazilian Portuguese」 and 「SDH」.
- *  A title that only re-says the language leaves the row to the language itself. */
+ *  A title that only re-says the language leaves the row to the language itself, and a row with neither
+ *  says 无语言 — the card's word for the same fact, not the 「轨道 1」 this line used to invent next to a
+ *  sibling named 英语. The number the row was reaching for is already the one in front of it. */
 const rowLabel = (t: PlayerTrack): string => {
   const said = zhTrackWords((t.title || '').trim(), t.lang || '', false);
   const lang = langName(t.lang);
-  const head = said || lang || `轨道 ${t.id}`;
+  const head = said || lang || NO_LANG;
   return `${t.id}. ${head}${t.forced ? '（强制）' : ''}`;
 };
 /** The language rides beside the row only when the row does not already say it — 「12. 巴西 葡萄牙语」
@@ -63,11 +65,12 @@ const meta = (t: PlayerTrack): string => [t.selected ? '正在用' : '', t.codec
  *  which is why the pass runs on the title it fell back to and can still come home empty. */
 const sidecarName = (s: MediaStreamInfo): string => {
   const said = zhTrackWords(openBrackets(s.title || s.displayTitle || ''), s.lang || '', false);
-  // 未标语言 rather than 外挂字幕: the row already sits under a 外挂字幕 header, so repeating it there would be
-  // the section's name standing in for the track's. Measured 2026-10-27: 210 of the sidecar rows that reach
-  // this menu say neither a title nor a language — and no version keeps two of them at once (0 of 554
-  // sources with a sidecar), so the word needs no ordinal beside it.
-  return `${said || langName(s.lang) || '未标语言'}${s.isForced ? '（强制）' : ''}`;
+  // Not 外挂字幕, which is the name of the section the row sits under and says nothing about the track.
+  // Measured 2026-10-28, 215 of the 784 sidecar rows that reach this menu say neither a title nor a
+  // language. The card's 无语言 is the word for that, and it is the same one the 内封 rows above print, so
+  // the two sections of one menu cannot say one fact two ways. No version keeps two sidecars at once (0 of
+  // 554 sources with a sidecar), so the word needs no ordinal beside it.
+  return `${said || langName(s.lang) || NO_LANG}${s.isForced ? '（强制）' : ''}`;
 };
 /** The same rule the 内封 rows follow: the language rides beside the row only when the row does not already
  *  say it, because 「简体中文 中文（简）」 is one fact printed twice. */
