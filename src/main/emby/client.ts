@@ -148,7 +148,6 @@ const mapStreams = (raw: any): MediaStreamInfo[] =>
     bitDepth: v.BitDepth,
     range: v.VideoRange || v.VideoRangeType,
     isInterlaced: v.IsInterlaced,
-    chroma: v.ChromaSubsampling,
     fps: v.NominalFrameRate || v.AverageFrameRate,
     bitRate: v.BitRate,
     channels: v.Channels,

@@ -438,7 +438,6 @@ export interface MediaStreamInfo {
    *  lines. Measured 2026-10-27 on 58 of 23,027 sources, and it agrees with the 「1080i」 the server spells
    *  into `DisplayTitle` on all 58 — the one fact in that string no other field carries. */
   isInterlaced?: boolean;
-  chroma?: string;
   fps?: number;
   bitRate?: number;
   channels?: number;
