@@ -102,6 +102,11 @@ const audioRows = computed(() => {
       fmtLayout(a.channelLayout) || (a.channels ? `${a.channels} 声道` : ''),
       fmtRate(a.bitRate),
       fmtHz(a.sampleRate),
+      // 位深, spelled the one way the 视频 card spells it. Measured 2026-10-27 over 32,770 audio rows:
+      // the server names it on 3,623 (2,713 of them 24), and on 20 of those the release wrote the number
+      // into the title as 「24-bit」 — which the card had no slot for, so the digits dropped, the unit
+      // stayed and the row read 「bit」 in Latin letters beside a Chinese line.
+      a.bitDepth ? `${a.bitDepth} 位` : '',
     ].filter(Boolean).join(' · ');
     return { nums, name: audioName(a, nums), isDefault: i === def };
   });

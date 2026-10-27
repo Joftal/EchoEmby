@@ -331,6 +331,10 @@ const LANG_TAG_REGION: Record<string, string> = { 'zh hk': 'HK', 'zh mo': 'MO', 
  *  are the same fact — subtitles for viewers who cannot hear the track — and 74 tracks carried one of them. */
 const WORDS_ZH: [string, string][] = [
   ['audio descripition', '口述影像'], ['audio description', '口述影像'], ['closed captions', '听障'],
+  // 「Visual Description」 ×53 is what the UK discs of 291771/12875/335 call the same narration track the
+  // US discs call Audio Description — one service, two spellings on the label, so one word here. Leaving it
+  // untranslated put 「Visual Description」 on a card that was otherwise all Chinese.
+  ['visual description', '口述影像'],
   ['hearing impaired', '听障'], ['sdh', '听障'], ['cc', '听障'], ['commentary', '评论'],
   ['full', '完整'], ['original', '原声'], ['dubbed', '配音'], ['dub', '配音'], ['forced', '强制'],
   // A script, not a place: 搏击俱乐部's Serbian track is titled 「Latin」 for the alphabet it is set in.
@@ -367,9 +371,16 @@ const WORDS_ZH: [string, string][] = [
   ['中文简体', '简体'], ['中文繁体', '繁体'],
   ['简中字幕', '简体'], ['繁中字幕', '繁体'], ['字幕', ''],
   // The two words a LaserDisc-era rip puts where a subtitle's own name would be: 「Subtitle (PGS),
-  // Japanese, 1474 captions」 ×21. 字幕 is what the card's own heading already says, so the first half
-  // goes and the second carries the one fact left — that these are dialogue captions.
-  ['subtitle', ''], ['captions', '字幕'],
+  // Japanese, 1474 captions」 ×21. Both are the heading the card already carries — the section is called
+  // 字幕 — so both go, and what is left of that title is the number in front of `captions`, which the
+  // count rule in `zhTrackWords` keeps: it is the only thing separating 196182's six clusters, where a
+  // 1,474-line subtitle and a 10-line forced-only sidecar printed as one 「字幕」 chip.
+  ['subtitle', ''], ['captions', ''], ['caption', ''],
+  // Bit depth, spelled two ways inside a release's own spec string — 「… / 48 kHz / 1411 kbps / 24-bit」 —
+  // measured 2026-10-27 on 20 audio rows, all 20 of which also carry the server's `BitDepth` field. The
+  // 播放资源 card now prints that field as 24 位 beside the sample rate, so the word here is the same fact
+  // a second time, in a script the reader is not reading.
+  ['bit', ''], ['bits', ''],
   // 「Greek (Modern)」/「Modern Greek (1453-)」 ×190: the adjective is what separates these from the
   // ancient-Greek rows a handful of discs carry, so it survives as 现代 rather than as Latin.
   ['modern', '现代'],
@@ -671,6 +682,17 @@ export const zhTrackWords = (title: string, code: string, keepFormats: boolean, 
         if (/^[A-Z0-9]{2,3}$/.test(tok) && REGION_CODES.includes(tok)) {
           took = 1;
           said = regionWord(tok);
+          continue;
+        }
+        // The one number these rips write that no field of the reply carries: the cue-line count in
+        // 「Subtitle (PGS), Japanese, 1474 captions」. Dropped with every other bare number it left the
+        // title saying nothing, and 196182's 21 PGS rows printed 13 「字幕」 chips — six of them over two
+        // tracks whose counts differed (日 1474↔10, 法 1457↔9, 意 1637↔21, 德 1637↔21, 俄 1639↔8,
+        // 西 1638/1628/41/6, where a 6-line track is forced captions and nothing else). Paired with the
+        // word that makes it a count it stays, in the reader's own unit.
+        if (/^\d[\d,]*$/.test(tok) && /^(caption|captions|caps)$/.test(fold(tokens[i + 1] || ''))) {
+          took = 2;
+          said = `${tok.replace(/,/g, '')} 行`;
           continue;
         }
         // The numbers and codec words the row's own fields already print, with whatever punctuation the
