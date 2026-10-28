@@ -55,7 +55,9 @@ const api: EchoEmbyApi = {
     schedule: input => invoke('calendar:schedule', input),
   },
   player: {
-    play: (itemId, fromStart, sourceId) => invoke('player:play', itemId, fromStart, sourceId),
+    play: (itemId, fromStart) => invoke('player:play', itemId, fromStart),
+    lastSource: itemId => invoke('player:lastSource', itemId),
+    chooseSource: (itemId, sourceId) => invoke('player:chooseSource', itemId, sourceId),
     command: cmd => invoke('player:command', cmd),
     close: () => invoke('player:close'),
     state: () => invoke('player:state'),

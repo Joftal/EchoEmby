@@ -55,10 +55,14 @@ export interface EchoEmbyApi {
   };
   player: {
     /** `fromStart` is the button's promise, not a preference: a hero that says 「播放」 rather than
-     *  「继续播放」 must land at 0 even if the server still holds an offset for this item. `sourceId` is
-     *  the version the 播放资源 card was reading when 播放 was pressed; absent, the negotiation takes
-     *  the file's first version. */
-    play(itemId: string, fromStart?: boolean, sourceId?: string): Promise<IpcResult<boolean>>;
+     *  「继续播放」 must land at 0 even if the server still holds an offset for this item. Which version
+     *  plays is not a parameter here — the controller holds the one answer, set by `chooseSource`. */
+    play(itemId: string, fromStart?: boolean): Promise<IpcResult<boolean>>;
+    /** The version the next 播放 of this item takes, or '' when nobody has chosen. */
+    lastSource(itemId: string): Promise<string>;
+    /** A pick made on the page's 播放资源 card. It writes the controller's memory so a switch made later
+     *  inside the player is not lost to this older click. */
+    chooseSource(itemId: string, sourceId: string): Promise<IpcResult<boolean>>;
     command(cmd: PlayerCommand): Promise<IpcResult<boolean>>;
     close(): Promise<IpcResult<boolean>>;
     state(): Promise<PlayerState>;

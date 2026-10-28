@@ -182,8 +182,14 @@ export class AppServices {
 
     // The player is one object with the whole lifecycle; every channel below is a thin pass-through, so
     // nothing the overlay can ask for needs a second copy of the logic here.
-    ipcMain.handle('player:play', (_e, itemId: string, fromStart?: boolean, sourceId?: string) =>
-      wrap('player:play', async () => (await this.player.play(itemId, fromStart, sourceId), true)),
+    ipcMain.handle('player:play', (_e, itemId: string, fromStart?: boolean) =>
+      wrap('player:play', async () => (await this.player.play(itemId, fromStart), true)),
+    );
+    // The version a card has chosen lives in the controller, not in the window that asked: the player is a
+    // second renderer, and a switch pressed on its own 播放源 card moves the same map the page reads.
+    ipcMain.handle('player:lastSource', (_e, itemId: string) => this.player.lastSource(itemId));
+    ipcMain.handle('player:chooseSource', (_e, itemId: string, sourceId: string) =>
+      wrap('player:chooseSource', () => (this.player.chooseSource(itemId, sourceId), true)),
     );
     ipcMain.handle('player:command', (_e, cmd: PlayerCommand) => wrap('player:command', async () => (await this.player.command(cmd), true)));
     ipcMain.handle('player:close', () => wrap('player:close', async () => (await this.player.close(), true)));

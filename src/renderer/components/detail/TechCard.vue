@@ -50,8 +50,11 @@ const at = computed(() => Math.min(picked.value, sources.value.length - 1));
 const multi = computed(() => sources.value.length > 1);
 const described = computed(() => sources.value[at.value]);
 /* A new item is a new question: the second version of one file must not stay selected while the reader
-   opens another, whose strips may not even be two. */
-watch(() => props.item?.id, () => { picked.value = wantedIndex(); });
+   opens another, whose strips may not even be two. And the page's answer can arrive after this card has
+   already painted — the version the controller holds comes back over IPC, so `wanted` moves from nothing to
+   an id under the same item. Both re-seat the strip; a click here writes that same id back out, so the
+   watcher can never fight the reader. */
+watch(() => [props.item?.id, props.wanted], () => { picked.value = wantedIndex(); });
 const pick = (i: number): void => {
   const s = sources.value[i];
   // A row with nothing in it describes nothing and plays nothing, so it is not a pick. The page keeps

@@ -108,10 +108,12 @@ export class PlayerController {
    *  `MediaSourceId` belongs to one file, so it cannot travel to the next episode; the shape word can.
    *  See `play`, which answers a sibling's negotiation from it. */
   private seriesVersion = new Map<string, string>();
-  /** The version of *this* file the player last ended up on, per item. The 播放源 card inside the player
-   *  writes it, and so does every negotiation, because a switch made there is the user's most recent word
-   *  on a file that has more than one — and until it existed, the next 播放 of the same file went back to
-   *  whichever row the negotiation happened to take first. */
+  /** The version of *this* file this machine has decided to play, per item — and the only place that answer
+   *  is kept. Both cards write it: the 播放源 card inside the player and, through `chooseSource`, the
+   *  播放资源 card on the page, which used to hold a second copy of the same choice and hand it to `play`
+   *  on top of this one. Two memories ranked against each other is how a switch made in the player lost to
+   *  an older click on the page. Every negotiation writes it too, so the version that actually played is
+   *  the one the next 播放 takes. */
   private itemVersion = new Map<string, string>();
 
   constructor(
@@ -190,7 +192,7 @@ export class PlayerController {
    *  下一集, the 选集 panel — comes through here, so a switch is a reload and never a restart.
    *  `fromStart` drops the server's offset: the heroes pass it whenever their own button reads 「播放」,
    *  so a label can never promise a first view the player then starts halfway through. */
-  async play(itemId: string, fromStart = false, sourceId?: string): Promise<void> {
+  async play(itemId: string, fromStart = false): Promise<void> {
     this.tearing = false;
     // Leaving an item for another one is an exit just as surely as closing the window is, so the episode
     // the user walked away from gets its stop written before anything new is asked for.
@@ -207,29 +209,27 @@ export class PlayerController {
     const prefs = config.get().settings.player;
     const item = await c.item(itemId);
     const [resume, nav] = await Promise.all([c.resumePoint(itemId), this.navFor(c, item)]);
-    // The card the reader picked a version on is the one surface that knows which of the file's versions
-    // was being read; without its answer the negotiation takes sources[0], which on a two-version file is
-    // the 4K one this machine decodes at 0.15× real time.
-    // Two memories stand behind that answer. `itemVersion` holds the version this machine last actually
-    // played for this exact file — including one switched inside the player's 播放源 card, which the page
-    // can never see — and `seriesVersion` holds the version's shape word for the whole show, because a walk
-    // through a season does not come back through any card: 下一集, the 选集 panel and the manual
-    // next/prev all ask for a sibling by id alone. It is keyed on `versionLabel` rather than on the
-    // server's `Name` because a name cannot travel — measured 2026-10-27 over the item endpoint's 800
-    // sampled rows, 5 of 400 episode rows carry two or three versions and 14,992 of 15,000 episode version
-    // names embed their own 「S01E04」, so 「… - S01E01 - 第 1 集 - tv」 is never the next episode's name and
-    // the raw comparison hit nothing at all in a live three-episode walk. The shape word is the one that
-    // repeats: asked of the live item endpoint over eight episodes per show, 哺乳动物星球 S01 carries
-    // 「tv」 on 6 of 6 of them, so a pick made on 第 1 集 answers 第 2–6 集. The other four two-version
-    // shows name their versions with no shape word at all — 黑袍纠察队 gives both rows the same
-    // 「… - S03E08 - 第 8 集」 — and those write nothing, so their siblings take their own first source,
-    // which is where they would have landed anyway.
-    // An explicit pick from the card outranks both, because the card is showing it pressed.
+    // Which of a file's versions plays is one question with one answer, kept in `itemVersion`: what the
+    // reader last pressed — on the page's 播放资源 card or on the player's own 播放源 card — or, where
+    // nobody has pressed, the version the last negotiation of this item took. Without it the negotiation
+    // answers `sources[0]`, which on a two-version file is the 4K one this machine decodes at 0.15× real
+    // time.
+    // `seriesVersion` stands behind that for a show, because a walk through a season does not come back
+    // through any card: 下一集, the 选集 panel and the manual next/prev all ask for a sibling by id alone.
+    // It is keyed on `versionLabel` rather than on the server's `Name` because a name cannot travel —
+    // measured 2026-10-27 over the item endpoint's 800 sampled rows, 5 of 400 episode rows carry two or
+    // three versions and 14,992 of 15,000 episode version names embed their own 「S01E04」, so
+    // 「… - S01E01 - 第 1 集 - tv」 is never the next episode's name and the raw comparison hit nothing at
+    // all in a live three-episode walk. The shape word is the one that repeats: asked of the live item
+    // endpoint over eight episodes per show, 哺乳动物星球 S01 carries 「tv」 on 6 of 6 of them, so a pick
+    // made on 第 1 集 answers 第 2–6 集. The other four two-version shows name their versions with no shape
+    // word at all — 黑袍纠察队 gives both rows the same 「… - S03E08 - 第 8 集」 — and those write nothing,
+    // so their siblings take their own first source, which is where they would have landed anyway.
     const sameShape = item.seriesId ? this.seriesVersion.get(item.seriesId) : undefined;
     const fromSeries = sameShape && (item.sources || []).length > 1
       ? item.sources?.find(s => versionLabel(s.name).toLowerCase() === sameShape)?.id
       : undefined;
-    const wanted = sourceId || this.itemVersion.get(itemId) || fromSeries;
+    const wanted = this.itemVersion.get(itemId) || fromSeries;
     const neg = await c.negotiate(itemId, { sourceId: wanted });
     this.rememberVersion(itemId, item.seriesId, neg.sources[neg.sourceIndex]);
 
@@ -671,10 +671,10 @@ export class PlayerController {
   }
 
   /** File the player is now on, into both memories. Called from `play` and from `replay`, which is what a
-   *  播放源 or 画质 card inside the player drives — a switch made there is as much the user's answer as one
-   *  made on the page, and the page has no way to see it: the player is a second window whose session object
-   *  never reaches the library renderer. */
-  private rememberVersion(itemId: string, seriesId: string | undefined, src: PlaybackSource | undefined): void {
+   *  播放源 card inside the player drives — a switch made there is as much the user's answer as one made on
+   *  the page, and the page has no way to see it: the player is a second window whose session object never
+   *  reaches the library renderer. */
+  private rememberVersion(itemId: string, seriesId: string | undefined, src: Pick<PlaybackSource, 'id' | 'name'> | undefined): void {
     if (!src) return;
     this.itemVersion.set(itemId, src.id);
     const shape = versionLabel(src.name).toLowerCase();

@@ -703,15 +703,38 @@ const techPop = ref<{ id: string; title: string; item: LibraryItem | null; dead:
 /** The element focus returns to when the sheet closes. A plain binding rather than a ref: it is a node, it
  *  is never rendered, and making it reactive would only ask Vue to walk a subtree it does not own. */
 let techTrigger: HTMLElement | null = null;
-/* The version the reader was reading on a 播放资源 card, per item: picking a strip is a reading act until
-   播放 is pressed, and then it is the version the negotiation has to take. Keyed by item id because the
-   popup's card and the 选集 row it was opened from name the same episode. */
+/* The version a 播放 of this item takes is held once, in the player controller, and this map is only this
+   window's copy of it for drawing. The copy is needed because the controller answers synchronously on the
+   main side while the card paints on this side: the strip has to be pressed before the ask returns.
+   Keyed by item id because the popup's card and the 选集 row it was opened from name the same episode. */
 const wantedSource = ref<Record<string, string>>({});
-const onTechPick = (itemId: string, sourceId: string): void => { wantedSource.value[itemId] = sourceId; };
+const onTechPick = (itemId: string, sourceId: string): void => {
+  wantedSource.value[itemId] = sourceId;
+  // Write through, rather than handing the pick to `play` as an argument: a switch pressed inside the
+  // player writes the same map in the controller, and two memories ranked against each other is how a
+  // newer pick on the 播放源 card used to lose to an older click here.
+  void window.echoemby.player.chooseSource(itemId, sourceId);
+};
+/** Pull the controller's answer for one item down before a card paints it. An empty means nobody has
+ *  chosen, which leaves this window's copy alone — the card then falls on the first playable row, which is
+ *  where the negotiation lands too. */
+async function syncWanted(id: string): Promise<void> {
+  if (!id) return;
+  const s = await window.echoemby.player.lastSource(id);
+  if (s) wantedSource.value[id] = s;
+}
 /** The card has to open on the version the page would play, not on the first strip: the popup is `v-if`, so
  *  it remounts every time it opens, and a locally-held `picked = 0` there showed 第一格 pressed while 播放
  *  still loaded the second. */
 const wantedFor = (it: LibraryItem | null): string | undefined => (it ? wantedSource.value[it.id] : undefined);
+watch(techInline, it => void syncWanted(it?.id || ''), { immediate: true });
+/* A version switched on the player's own 播放源 card must move this page's mark too. The session event is
+   already sent to every window, so this is the library window reading the same publish the player reads;
+   without it a DetailView that stayed mounted behind the player kept pressing the older row. */
+const offPlayerSession = window.echoemby.player.onSession(s => {
+  if (s) wantedSource.value[s.itemId] = s.sourceId;
+});
+onBeforeUnmount(() => offPlayerSession());
 /* Three plates are a guess, because the ask has not answered yet: whether the 字幕 band appears at all, and how
    tall the version strip, the 音频 card and that band came in. Measured 2026-10-26: 罚罪's web rips answer with
    no band at all (10 of the 31 episodes sampled), while 小林家的龙女仆 answers 10 consecutive episodes with one
@@ -745,7 +768,7 @@ async function openTech(r: BandRow, ev?: MouseEvent): Promise<void> {
   // inert, and until this moved it was a claim with nothing enforcing it.
   await nextTick();
   popCard()?.focus();
-  const res = await embyCached('item', r.id, () => window.echoemby.emby.item(r.id));
+  const [res] = await Promise.all([embyCached('item', r.id, () => window.echoemby.emby.item(r.id)), syncWanted(r.id)]);
   const pop = techPop.value;
   // Closed, or replaced by another card while this was out: that answer belongs to a dialog nobody is
   // reading, and writing it here would paint episode 7's numbers under episode 12's name.
@@ -1440,7 +1463,7 @@ async function play(id = playableId.value, fromStart = !resume.value?.resumed) {
     return;
   }
   playErr.value = '';
-  const ok = await player.play(id, fromStart, wantedSource.value[id]);
+  const ok = await player.play(id, fromStart);
   if (!ok) playErr.value = player.error;
 }
 
