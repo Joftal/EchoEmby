@@ -699,7 +699,7 @@ const techInline = computed<LibraryItem | null>(() =>
    gateways: the season listing answers none on every episode row, while the item endpoint answers one per
    episode (6.0KB/0.77s on OkEmby, 23.0KB/0.79s on nyamedia) — so the ask goes out when the reader asks
    for it, and the 10-minute cache every other ask uses makes a second look at that episode instant. */
-const techPop = ref<{ id: string; title: string; item: LibraryItem | null; dead: boolean } | null>(null);
+const techPop = ref<{ id: string; title: string; item: LibraryItem | null; dead: 'empty' | 'failed' | null; note: string } | null>(null);
 /** The element focus returns to when the sheet closes. A plain binding rather than a ref: it is a node, it
  *  is never rendered, and making it reactive would only ask Vue to walk a subtree it does not own. */
 let techTrigger: HTMLElement | null = null;
@@ -738,7 +738,7 @@ async function openTech(r: BandRow, ev?: MouseEvent): Promise<void> {
   // The dot that opened the sheet, kept because focus has to go back to it: `currentTarget` is null by the
   // time the await below returns, so it is read here and not in `closeTech`.
   techTrigger = (ev?.currentTarget as HTMLElement | null) || (document.activeElement as HTMLElement | null);
-  techPop.value = { id: r.id, title: r.title, item: null, dead: false };
+  techPop.value = { id: r.id, title: r.title, item: null, dead: null, note: '' };
   // Focus moves as soon as the dialog exists rather than when the item answers. The ask takes 0.77s on
   // OkEmby and 0.79s on nyamedia (measured 2026-10-22), which is long enough for a reader who tabs straight
   // after opening to have walked into the rail behind the backdrop — `aria-modal` says the page behind is
@@ -751,12 +751,15 @@ async function openTech(r: BandRow, ev?: MouseEvent): Promise<void> {
   // reading, and writing it here would paint episode 7's numbers under episode 12's name.
   if (!pop || pop.id !== r.id) return;
   const row = res.ok ? res.data : null;
-  // A row the server lists but cannot probe — no stream behind it — is not a resource, so the card calls
-  // the same answer here that 播放 would get from the negotiation, and the strip it measures is the one the
-  // card draws: usable versions first, the empty rows sunk to the end.
+  // Two empties, and they are not one sentence. A row the server lists but cannot probe — the `.strm` and
+  // `.iso` versions with no stream behind them, 133 of 23,027 measured — is a fact about the file, and 播放
+  // would refuse it the same way, so the card draws the same answer here that the negotiation gives.
+  // A request that did not answer is a fact about this moment: the sheet says what the ask said, and
+  // opening it again is the fix.
   const usable = (row?.sources || []).filter(hasContent);
   pop.item = row && usable.length ? row : null;
-  pop.dead = !pop.item;
+  pop.dead = pop.item ? null : res.ok ? 'empty' : 'failed';
+  pop.note = res.ok ? '' : res.error || '没有问到这一集的资源';
   const src = usable[0];
   if (src) {
     await nextTick();
@@ -1601,7 +1604,7 @@ const LEVEL_WORD = ['无', '极少', '轻微', '中等', '较多', '严重'];
                 <p v-if="r.ov" class="eov">{{ r.ov }}</p>
               </div>
             </button>
-            <button v-if="r.id" type="button" class="res" aria-label="播放资源" @click="openTech(r, $event)"><i></i><i></i><i></i></button>
+            <button v-if="r.id" type="button" class="res" :aria-label="`播放资源：${r.title}`" @click="openTech(r, $event)"><i></i><i></i><i></i></button>
           </div>
           <!-- Two empties, and only one of them gets a sentence here: a season this server holds nothing
                for is answered by the hero's own 「当前服务器无资源」, which is where the reader was about to
@@ -1700,7 +1703,8 @@ const LEVEL_WORD = ['无', '极少', '轻微', '中等', '较多', '严重'];
               </button>
             </header>
             <TechCard v-if="techPop.item" :item="techPop.item" :wanted="wantedFor(techPop.item)" @pick="onTechPick" />
-            <p v-else-if="techPop.dead" class="tp-msg">这台服务器读不出这一集的文件参数。</p>
+            <p v-else-if="techPop.dead === 'empty'" class="tp-msg">这台服务器在这一集没有可播的文件。</p>
+            <p v-else-if="techPop.dead === 'failed'" class="tp-msg">{{ techPop.note }}</p>
             <div v-else class="tp-load" aria-hidden="true">
               <i class="strip" :style="plate.strip"></i>
               <div class="cols"><i class="video"></i><i class="audio" :style="plate.aud"></i></div>
