@@ -32,6 +32,22 @@ const ALIAS: Record<string, string> = {
   War: '战争',
   'War & Politics': '战争与政治',
   アニメーション: '动画',
+  // The five labels the gateway stores in Chinese only — 电视电影, 肥皂剧, 脱口秀, 音乐, 西部 — ride through
+  // untouched on this library because no English row exists to fold into them. A library scraped from an
+  // English source is the other way round, and would then show 「TV Movie」 beside 「电视电影」 as two
+  // categories, so the English half of each is named here too. 儿童 already has two spellings above and gets
+  // its third, and the rest are the genre names TMDB and TMDB-shaped scrapers write that these gateways have
+  // simply never held. Nothing here is invented: every value is a label this filter can already query.
+  'TV Movie': '电视电影',
+  Western: '西部',
+  Music: '音乐',
+  Musical: '音乐剧',
+  Soap: '肥皂剧',
+  'Talk Show': '脱口秀',
+  News: '新闻',
+  'Film-Noir': '黑色电影',
+  'Game Show': '游戏节目',
+  Kids: '儿童',
 };
 
 /** The Chinese label a server spelling folds into. */

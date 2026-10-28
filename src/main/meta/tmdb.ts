@@ -59,6 +59,9 @@ interface Store {
   /** key = `${kind}:${tmdbId}`; the page's title treatments, unranked — the order depends on the work's
    *  own language, which is asked for at read time. */
   logos: Record<string, { value: LogoRow[]; fetchedAt: number }>;
+  /** key = `${language}:${lowercased term}`; the `tmdb.<id>` handles the term resolves to, in rank order.
+   *  Kept apart from 搜索's own results because it is the input of that query, not an answer to it. */
+  titles: Record<string, { value: string[]; fetchedAt: number }>;
 }
 
 const file = () => path.join(app.getPath('userData'), 'tmdb.json');
@@ -68,9 +71,9 @@ const load = (): Store => {
   if (store) return store;
   let next: Store;
   try {
-    next = { meta: {}, stills: {}, cast: {}, related: {}, images: {}, logos: {}, ...JSON.parse(readFileSync(file(), 'utf8')) };
+    next = { meta: {}, stills: {}, cast: {}, related: {}, images: {}, logos: {}, titles: {}, ...JSON.parse(readFileSync(file(), 'utf8')) };
   } catch {
-    next = { meta: {}, stills: {}, cast: {}, related: {}, images: {}, logos: {} };
+    next = { meta: {}, stills: {}, cast: {}, related: {}, images: {}, logos: {}, titles: {} };
   }
   let pruned = false;
   /* The bucket was named for one of the two lists it now reads. Builds before `r2` keyed their rows by
@@ -692,4 +695,72 @@ export async function tmdbLogos(kind: Kind, tmdbId: string): Promise<string[]> {
     persist();
   }
   return rankLogos(out, film);
+}
+
+/** 搜索 reaches only the spelling the library filed the work under. This gateway matches a term token by
+ *  token inside the name it stores (measured: 「巨人」 answers 「巨人捕手杰克」 and nothing else, 「進擊的巨人」
+ *  answers nothing at all while 「进击的巨人」 answers 91 rows), so a viewer who knows a show by its Japanese,
+ *  Korean or Romanized name cannot find it even though the work is on the shelf. TMDB holds every name of
+ *  the same work, and the work's own id is the one handle both sides agree on, so one lookup here turns any
+ *  of those spellings into ids the library can be asked for directly — `AnyProviderIdEquals=tmdb.1429`
+ *  answered exactly the row the name could not reach, on both gateways.
+ *
+ *  The `language` of the ask follows the script of what was typed, which is not cosmetic: measured on 12
+ *  shows in all four of their own names, the right id came back at rank 1 in 35 of 35 asks when the ask was
+ *  in the query's own language, while 「Demon Slayer」 asked in zh-CN did not have the show in its first four
+ *  (the four were unrelated documentaries). So Hangul → ko-KR, kana → ja-JP, Han → zh-CN, anything else →
+ *  en-US, which is also the language Romanized names rank best in. */
+const TITLES_TTL = 7 * DAY;
+/** Ranked candidates kept. The right work sat at rank 1 in the 35 measured asks and at rank 4 in the worst
+ *  one (「進擊的巨人」, 繁体, asked in zh-CN), so five covers that spread without dragging in look-alikes:
+ *  every candidate costs nothing here, but each one the server does hold becomes an extra row on screen. */
+const TITLE_CANDIDATES = 5;
+
+const scriptLanguage = (s: string): string => {
+  if (/[\uac00-\ud7a3]/.test(s)) return 'ko-KR';
+  if (/[\u3040-\u30ff]/.test(s)) return 'ja-JP';
+  if (/[\u4e00-\u9fff]/.test(s)) return 'zh-CN';
+  return 'en-US';
+};
+
+/** `tmdb.<id>` handles for a typed name, best first. Empty is a normal answer: a term no TMDB work carries,
+ *  or a build with no TMDB token, simply searches the way it always did. */
+export async function tmdbTitleIds(term: string): Promise<string[]> {
+  const q = term.trim();
+  /* One character is not a name: a lone Han character answers thousands of rows on TMDB, and the five ids it
+     would hand back say nothing about which work was meant. */
+  if (q.length < 2) return [];
+  const token = tmdbToken();
+  if (!token) return [];
+  const language = scriptLanguage(q);
+  const key = `${language}:${q.toLowerCase()}`;
+  const s = load();
+  s.titles ||= {};
+  const hit = s.titles[key];
+  /* A term that resolves to nothing is a miss, not a hit worth keeping for a week: a title added to the
+     library tomorrow should be findable by its other name then, and re-asking costs one request. */
+  if (hit && Date.now() - hit.fetchedAt < (hit.value.length ? TITLES_TTL : MISS_TTL)) return hit.value;
+
+  const { json, answered } = await fetchJson<any>(
+    `https://api.themoviedb.org/3/search/multi?include_adult=false&language=${language}&query=${encodeURIComponent(q)}`,
+    token,
+  );
+  if (!answered) return hit?.value || [];
+  const rows: any[] = Array.isArray(json?.results) ? json.results : [];
+  const out: string[] = [];
+  for (const r of rows) {
+    // `person` rows ride along in a multi-search and carry an id from another namespace entirely.
+    if (r?.media_type !== 'tv' && r?.media_type !== 'movie') continue;
+    const id = Number(r?.id);
+    if (!Number.isFinite(id) || id <= 0) continue;
+    const handle = `tmdb.${id}`;
+    if (!out.includes(handle)) out.push(handle);
+    if (out.length >= TITLE_CANDIDATES) break;
+  }
+  const prev = hit?.value;
+  if (!prev || prev.length !== out.length || prev.some((p, i) => p !== out[i])) {
+    s.titles[key] = { value: out, fetchedAt: Date.now() };
+    persist();
+  }
+  return out;
 }

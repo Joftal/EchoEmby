@@ -42,7 +42,9 @@ function setStudio(v: string | string[]): void {
 
 <template>
   <div class="bar">
-    <FilterSelect label="类型" :options="types" :model-value="filters.type" :cell="56" :cols="2" @update:model-value="setType" />
+    <!-- One row, not two: the three types are the shortest list in the bar and a wrapped panel read as a
+         matrix of four slots with one dangling — the panel is as wide as its cells say it is. -->
+    <FilterSelect label="类型" :options="types" :model-value="filters.type" :cell="56" :cols="3" @update:model-value="setType" />
     <FilterSelect
       label="分类"
       :options="genres"

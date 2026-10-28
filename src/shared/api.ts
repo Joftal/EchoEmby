@@ -45,6 +45,10 @@ export interface EchoEmbyApi {
     tmdbImages(input: { kind: 'movie' | 'tv'; tmdbId: string }): Promise<IpcResult<string[]>>;
     /** The title treatments on TMDB's page, ranked 简体中文 → 繁体中文 → 英文 → 影视语言 → 其他. */
     tmdbLogos(input: { kind: 'movie' | 'tv'; tmdbId: string }): Promise<IpcResult<string[]>>;
+    /** The `tmdb.<id>` handles a typed name resolves to, best first — the bridge that lets a Japanese,
+     *  Korean or Romanized name reach a work the library filed under its Chinese one. Empty is a normal
+     *  answer: the term then searches exactly as it did before. */
+    tmdbTitles(query: string): Promise<IpcResult<string[]>>;
     csm(input: { kind: 'movie' | 'tv'; title: string }): Promise<IpcResult<CsmGuide | null>>;
     setKeys(patch: Partial<MetaKeys>): Promise<IpcResult<MetaKeys | undefined>>;
   };

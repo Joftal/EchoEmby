@@ -103,8 +103,12 @@ function params(startIndex: number): Record<string, string | number | boolean> {
   // Without this the search answers with Folder, Studio and Person rows: 「"骗骗"喜欢你」 showed up
   // twice because the library's container folder and the movie inside it are two different items.
   // The list has to be comma-joined here too — asked as `A|B` this server ignores it outright.
+  // 作品名 only: an Episode row means the server matched a *分集* title (「巨人」 on this server is eight
+  // episodes — 名侦探柯南/圣斗士星矢/哆啦A梦… — and zero works named that), and folding those into their
+  // shows turned one two-character search into eight unrelated cards. 合集 stays: its own title is a
+  // title, and 类型=合集 then narrows to it. 在看/收藏 keep their own lists below — only search narrows.
   if (kind.value === 'search')
-    return { Recursive: true, SearchTerm: effectiveQuery(), IncludeItemTypes: 'Movie,Series,Episode,Video,BoxSet,Playlist', ...f, ...page };
+    return { Recursive: true, SearchTerm: effectiveQuery(), IncludeItemTypes: 'Movie,Series,BoxSet', ...f, ...page };
   return { ParentId: viewId.value, IncludeItemTypes: 'Movie,Series,BoxSet,Playlist,Video', Recursive: true, ...f, ...s, ...page };
 }
 
@@ -287,8 +291,37 @@ function rememberStudios(batch: LibraryItem[], reset: boolean): void {
   studioOptions.value = [...map.values()];
 }
 
+/** 搜索 reaches only the spelling the library filed the work under, and this is the renderer's half of the
+ *  fix: TMDB knows every name of a work (through `meta.tmdbTitles`), this library does not, and
+ *  `AnyProviderIdEquals` lets the library be asked by the work's own id — measured to answer on both
+ *  gateways the exact row that 「進擊的巨人」 and 「진격의 거인」 cannot reach from a name alone. */
+async function aliasIds(): Promise<string[]> {
+  const r = await window.echoemby.meta.tmdbTitles(effectiveQuery());
+  return r.ok && r.data ? r.data : [];
+}
+
+/** The rows behind those ids that the typed term did not already find. They are appended rather than sorted
+ *  in: the term's own hits are what the viewer typed, and a work the library spells natively must not be
+ *  pushed down by one it spells in another language. */
+async function aliasRows(ids: string[], batch: LibraryItem[]): Promise<LibraryItem[]> {
+  if (!ids.length) return [];
+  const p = params(0);
+  /* The two parameters cannot ride together — measured, `AnyProviderIdEquals` beside a `SearchTerm` answers
+     with nothing at all — so the id ask is its own query. The page's filters do apply to it, which is what
+     keeps a name lookup from smuggling a 电影 into a list typed at 剧集. */
+  delete p.SearchTerm;
+  const r = await window.echoemby.emby.items({ ...p, AnyProviderIdEquals: ids.join(','), Limit: ids.length * 2 });
+  if (!r.ok) return [];
+  const known = new Set(batch.map(x => x.id));
+  return (r.data || []).filter(x => !known.has(x.id));
+}
+
 /** The query this load was for; a route change that lands on the same query is only a re-order. */
 let lastKey = '';
+/** Rows the server has actually answered, which is what pages its window. Kept apart from `items` because
+ *  a first page also carries the rows the name lookup added below: those were never part of the 200 the
+ *  server just sent, and counting them would push every later page's StartIndex past a row. */
+let paged = 0;
 /** A reset asked for while a request is still in flight. Dropping it leaves the URL saying one term
  *  over the previous term's grid, which is what a fast 加载更多-then-retype did on the live app. */
 let queued = false;
@@ -318,8 +351,13 @@ async function load(reset: boolean): Promise<void> {
       items.value = [];
       error.value = '';
       lastKey = JSON.stringify(params(0));
+      paged = 0;
     }
-    const from = reset ? 0 : items.value.length;
+    const from = reset ? 0 : paged;
+    /* Sent beside the library ask rather than after it: the TMDB hop and the library request are
+       independent, and a Japanese or Romanized term should not cost two waits in a row. Only a first page
+       asks — 加载更多 continues a list whose work the first page already named. */
+    const aliasAsk = isSearch.value && from === 0 ? aliasIds() : null;
     let r = await askRows(from);
     let batch = r.ok ? r.data || [] : [];
     // One retry pass, and only on an empty first page, so a term that already answers costs one request.
@@ -340,6 +378,14 @@ async function load(reset: boolean): Promise<void> {
       error.value = r.error || '加载失败';
       return;
     }
+    paged += batch.length;
+    /* Only a thin first page asks: 40 cards already name the work the viewer meant, and the extra query is
+       what a term with a handful of hits (or none at all) needs most. */
+    const direct = batch.length;
+    if (aliasAsk && direct < 40) {
+      const extra = await aliasRows(await aliasAsk, batch);
+      if (extra.length) batch = [...batch, ...extra];
+    }
     // Before the rows go on screen: the fold has to be settled or the episode card would swap into a
     // show card under the user's cursor a beat after the grid paints.
     if (isSearch.value) await rememberSeries(episodeShows(batch));
@@ -350,7 +396,8 @@ async function load(reset: boolean): Promise<void> {
       await rememberSeries(episodeShows(batch).filter(id => !onScreen.has(id)));
     }
     items.value = reset ? batch : [...items.value, ...batch];
-    hasMore.value = batch.length === pageSize.value;
+    // Off the direct rows, not the merged ones: an alias row has no place in the server's 200-row window.
+    hasMore.value = direct === pageSize.value;
     if (kind.value === 'resume') void askSeasons(items.value);
     if (!isFiltered(filters.value)) rememberStudios(batch, reset);
     // The facet is allowed to fail with the server: once rows are in, the library is answering.

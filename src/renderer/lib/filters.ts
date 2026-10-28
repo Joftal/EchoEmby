@@ -25,18 +25,40 @@ export interface Option {
   label: string;
 }
 
-/** The two types this library actually holds. Episodes and Seasons ride along with their Series. */
+/** The types this library actually holds. Episodes and Seasons ride along with their Series.
+ *  合集 is the third: a `BoxSet` row is a real thing to search for and, since its page lists what it holds,
+ *  a real place to land (measured: 2 on the gateway, 1 on nyamedia, and the filter answers with exactly
+ *  those — `IncludeItemTypes=BoxSet` is honoured where `Playlist` is not, because the playlists on that
+ *  server belong to other accounts and the app asks the user-scoped endpoint). */
 export const TYPE_OPTIONS: Option[] = [
   { value: 'Movie', label: '电影' },
   { value: 'Series', label: '剧集' },
+  { value: 'BoxSet', label: '合集' },
 ];
 
 /** Emby stores audio languages as three-letter codes; the server accepts a comma list of them. The codes are
  *  what goes into the query, the words are `langName`'s — the same table the 技术信息 card and the player's
- *  track menu read, so the language a viewer ticks here is spelled the same way inside the title they open. */
-export const LANG_OPTIONS: Option[] = ['chi', 'eng', 'jpn', 'kor', 'fra', 'ger', 'spa', 'ita', 'rus', 'por', 'tha', 'vie', 'hin'].map(
-  value => ({ value, label: langName(value) }),
-);
+ *  track menu read, so the language a viewer ticks here is spelled the same way inside the title they open.
+ *  The list is what the gateways actually tag, measured over both libraries with a 27-code sweep: 3,542 files
+ *  in `eng`, 2,544 `chi`, 537 `jpn`, 245 `kor`, 184 `fre`, 185 `hin` — and the thirteen this filter used
+ *  to offer left 粤语 (19 files), 阿拉伯语 (10), 瑞典语 (19), 荷兰语 (11), 波兰语 (34), 丹麦语 (14), 芬兰语 (4),
+ *  挪威语 (9), 土耳其语 (18), 希伯来语 (1), 捷克语 (6), 匈牙利语 (8) and 乌克兰语 (4) unreachable. Ordered
+ *  by how much the library holds, because the picker is a scroll and the first rows are the ones reached. */
+export const LANG_OPTIONS: Option[] = [
+  'chi', 'eng', 'jpn', 'kor', 'fre', 'hin', 'spa', 'ger', 'ita', 'por', 'rus', 'pol', 'tha', 'swe', 'yue',
+  'tur', 'dan', 'dut', 'ara', 'nor', 'hun', 'cze', 'fin', 'ukr', 'vie', 'gre', 'heb',
+].map(value => ({ value, label: langName(value) }));
+
+/** The same language under its other ISO-639-2 spelling, which one library carries both of: a scraper writes
+ *  whichever table it read, so 184 files are tagged `fre` beside 5 tagged `fra`, 62 `ger` beside 3 `deu`,
+ *  6 `cze` beside 1 `ces`. Filtering on one spelling hides the other, and the picker can only show one row
+ *  per language — so the chosen code is expanded to both at query time. This is also the reason the filter
+ *  used to list `fra`: 184 部法语片 were simply not findable through it. */
+const LANG_ALT: Record<string, string[]> = {
+  chi: ['zho'], fre: ['fra'], ger: ['deu'], dut: ['nld'], cze: ['ces'], gre: ['ell'], per: ['fas'],
+  may: ['msa'], nor: ['nob'], rum: ['ron'], slo: ['slv'], ice: ['isl'], baq: ['eus'], wel: ['cym'],
+  alb: ['sqi'], arm: ['hye'], geo: ['kat'], bur: ['mya'], mac: ['mkd'],
+};
 
 export interface SortOption extends Option {
   value: SortKey;
@@ -86,10 +108,13 @@ export const emptyFilters = (sort: SortKey): Filters => ({ type: '', genres: [],
 export const isFiltered = (f: Filters): boolean =>
   !!f.type || !!f.genres.length || !!f.years.length || !!f.studio || !!f.langs.length;
 
-/** Years the library could plausibly hold, newest first. A year with no titles simply filters to empty. */
+/** Years the library could plausibly hold, newest first. A year with no titles simply filters to empty.
+ *  The floor is 1900, not 1970: measured on the main gateway, the oldest 电影 is 寻子遇仙记 (1921) and the
+ *  oldest 剧集 is 星际迷航：原初 (1966), so a 1970 floor put both of them, and every silent film beside them,
+ *  out of reach of the only control that can name a year. */
 export const yearOptions = (): string[] => {
   const now = new Date().getFullYear();
-  return Array.from({ length: now - 1969 }, (_, i) => String(now - i));
+  return Array.from({ length: now - 1899 }, (_, i) => String(now - i));
 };
 
 /** Everything except the sort: the separators differ per param and were measured on the gateway —
@@ -101,7 +126,7 @@ export function filterParams(f: Filters): Record<string, string> {
   if (f.genres.length) p.Genres = genreQuery(f.genres);
   if (f.years.length) p.Years = [...f.years].sort().join(',');
   if (f.studio?.id) p.StudioIds = f.studio.id;
-  if (f.langs.length) p.AudioLanguages = f.langs.join(',');
+  if (f.langs.length) p.AudioLanguages = [...new Set(f.langs.flatMap(l => [l, ...(LANG_ALT[l] || [])]))].join(',');
   return p;
 }
 

@@ -48,6 +48,7 @@ const api: EchoEmbyApi = {
     tmdbRelated: input => invoke('meta:tmdbRelated', input),
     tmdbImages: input => invoke('meta:tmdbImages', input),
     tmdbLogos: input => invoke('meta:tmdbLogos', input),
+    tmdbTitles: query => invoke('meta:tmdbTitles', query),
     csm: input => invoke('meta:csm', input),
     setKeys: patch => invoke('meta:setKeys', patch),
   },

@@ -6,7 +6,7 @@ import { rtScores } from './meta/rt';
 import { imdbRating } from './meta/imdb';
 import { traktScores } from './meta/trakt';
 import { bangumiScore } from './meta/bangumi';
-import { tmdbMeta, tmdbSeasonCast, tmdbSeasonStills, tmdbRelated, tmdbImages, tmdbLogos } from './meta/tmdb';
+import { tmdbMeta, tmdbSeasonCast, tmdbSeasonStills, tmdbRelated, tmdbImages, tmdbLogos, tmdbTitleIds } from './meta/tmdb';
 import { calendarSchedule } from './meta/calendar';
 import { csmGuide } from './meta/csm';
 import { PlayerWindows } from './player/windows';
@@ -173,6 +173,7 @@ export class AppServices {
     ipcMain.handle('meta:tmdbRelated', (_e, { kind, tmdbId }: { kind: 'movie' | 'tv'; tmdbId: string }) => wrap('meta:tmdbRelated', () => tmdbRelated(kind, tmdbId)));
     ipcMain.handle('meta:tmdbImages', (_e, { kind, tmdbId }: { kind: 'movie' | 'tv'; tmdbId: string }) => wrap('meta:tmdbImages', () => tmdbImages(kind, tmdbId)));
     ipcMain.handle('meta:tmdbLogos', (_e, { kind, tmdbId }: { kind: 'movie' | 'tv'; tmdbId: string }) => wrap('meta:tmdbLogos', () => tmdbLogos(kind, tmdbId)));
+    ipcMain.handle('meta:tmdbTitles', (_e, term: string) => wrap('meta:tmdbTitles', () => tmdbTitleIds(term)));
     ipcMain.handle('meta:csm', (_e, { kind, title }: { kind: 'movie' | 'tv'; title: string }) => wrap('meta:csm', () => csmGuide(kind, title)));
     ipcMain.handle('meta:setKeys', (_e, patch: { tmdbV4Token?: string; traktClientId?: string }) => wrap('meta:setKeys', () => config.setMetaKeys(patch)));
 
