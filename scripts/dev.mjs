@@ -6,8 +6,13 @@ import net from 'node:net';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const PORT = 5173;
 
+// The same variable `start.mjs` drops, for the same reason: with ELECTRON_RUN_AS_NODE set, electron.exe
+// runs as plain node and the app dies on `app.getAppPath()`. A dev shell is exactly where it is set.
+const baseEnv = { ...process.env };
+delete baseEnv.ELECTRON_RUN_AS_NODE;
+
 const run = (cmd, args, env = {}) =>
-  spawn(cmd, args, { cwd: root, env: { ...process.env, ...env }, stdio: 'inherit', shell: process.platform === 'win32' });
+  spawn(cmd, args, { cwd: root, env: { ...baseEnv, ...env }, stdio: 'inherit', shell: process.platform === 'win32' });
 
 const waitForPort = (port, ms = 30000) =>
   new Promise((resolve, reject) => {

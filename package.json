@@ -9,7 +9,7 @@
     "mpv": "node scripts/get-mpv.mjs",
     "dev": "node scripts/dev.mjs",
     "build": "node scripts/build.mjs && vite build",
-    "start": "electron .",
+    "start": "node scripts/start.mjs",
     "typecheck": "vue-tsc -p tsconfig.json"
   },
   "dependencies": {
