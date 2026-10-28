@@ -700,6 +700,35 @@ const techInline = computed<LibraryItem | null>(() =>
    episode (6.0KB/0.77s on OkEmby, 23.0KB/0.79s on nyamedia) — so the ask goes out when the reader asks
    for it, and the 10-minute cache every other ask uses makes a second look at that episode instant. */
 const techPop = ref<{ id: string; title: string; item: LibraryItem | null; dead: 'empty' | 'failed' | null; note: string } | null>(null);
+/* The ask for one episode's file, started while the reader's pointer is still travelling to the dots
+   rather than when it lands on them. Measured 2026-10-22 on both gateways: the item endpoint answers in
+   0.77-0.79s, which is longer than the time between hovering that corner and clicking it, so the sheet
+   used to open on a placeholder every time and then swap. Started on a dwell instead of on contact: a
+   pointer crossing a rail of twenty cards on the way to something else asks for nothing.
+   The cache makes this free to repeat — the same 10 minutes that hold a 播放资源 sheet hold this ask. */
+let hoverTimer = 0;
+let hoverRow = '';
+function prefetchTech(r: BandRow): void {
+  if (!r.id || r.id === hoverRow) return;
+  hoverRow = r.id;
+  window.clearTimeout(hoverTimer);
+  hoverTimer = window.setTimeout(() => void embyCached('item', r.id, () => window.echoemby.emby.item(r.id)), 120);
+}
+/* The band's cards are cloned by `looprail` to make the row endless, and a clone carries no Vue listener, so
+   the ask cannot hang off the card itself: it hangs off the row and reads the id the card was born with.
+   `pointerover` rather than `pointerenter` for the same reason — the latter does not travel from a clone,
+   while this one climbs from whatever the pointer is actually over. */
+function prefetchFromBand(ev: PointerEvent): void {
+  const el = (ev.target as HTMLElement | null)?.closest?.('.epi-wrap') as HTMLElement | null;
+  const id = el?.dataset.epi || '';
+  const row = id ? band.value.find(x => x.id === id) : null;
+  if (row) prefetchTech(row);
+  else dropPrefetch();
+}
+function dropPrefetch(): void {
+  window.clearTimeout(hoverTimer);
+  hoverRow = '';
+}
 /** The element focus returns to when the sheet closes. A plain binding rather than a ref: it is a node, it
  *  is never rendered, and making it reactive would only ask Vue to walk a subtree it does not own. */
 let techTrigger: HTMLElement | null = null;
@@ -743,16 +772,19 @@ const offPlayerSession = window.echoemby.player.onSession(s => {
 });
 onBeforeUnmount(() => offPlayerSession());
 /* Three plates are a guess, because the ask has not answered yet: whether the 字幕 band appears at all, and how
-   tall the version strip, the 音频 card and that band came in. Measured 2026-10-26: 罚罪's web rips answer with
-   no band at all (10 of the 31 episodes sampled), while 小林家的龙女仆 answers 10 consecutive episodes with one
-   and the same sheet — 44 strip, 138.1 audio, 88.4 band — because one season is one release. So the page keeps
-   the shape the last answer came in and paints the next placeholder like it. The season's own id is the key,
-   because a page walks its seasons and the previous season's shape must not silence the next one's band: a
-   guess left over from 罚罪 must not silence it on an anime, and an unknown season keeps drawing it — which is
-   the answer two seasons in three.
-   With nothing seen yet the plates fall back to the smallest true answer (361 of 468 files carry one audio
-   track; every extra track adds 27.1), and only that floor is allowed to move the card: the dialog is centred,
-   so a placeholder drawn *taller* than the file would shrink it under the reader's eyes.
+   tall the version strip, the 音频 card and that band came in. One season is one release — 小林家的龙女仆
+   answers 10 consecutive episodes with the same sheet, 44 strip and 138.1 audio and an 88.4 band — so the page
+   keeps the shape the last answer came in and paints the next placeholder like it. The season's own id is the
+   key, because a page walks its seasons and the previous season's shape must not answer for the next one's.
+   With nothing seen yet the guess is 「no band」: measured 2026-10-28 over the 3,000 most recent episodes of each
+   gateway, a single-version file with no subtitle stream — the shape that draws no 字幕 card at all — is 1,426
+   of 3,000 on OkEmby and 1,291 of 3,000 on nyamedia. It is also the smaller answer, and the placeholder has to
+   be the floor rather than the ceiling: a band guessed and never delivered hides 104px of the sheet in a single
+   frame — the 字幕 card and 入库时间 sliding up under the file's own 视频 card — while a band that does arrive
+   only adds a card below everything already drawn. Guessing small makes the common case exact and leaves the
+   other one growing.
+   The plates then fall back to the smallest true answer (361 of 468 files carry one audio track; every extra
+   track adds 27.1).
    Since 2026-10-26 the 音频 card joins the guess: it used to fold into the band whenever a file had a second
    track, and now it lists every track in its own card, which a file without audio streams is the only way to
    empty. */
@@ -761,13 +793,16 @@ const plate = computed(() => {
   const seen = sheetSeen.value;
   const same = seen && seen.key === (seasonAt.value?.season?.id || '') ? seen : null;
   const px = (n?: number) => (n ? { height: `${n}px` } : undefined);
-  return { band: same ? same.wide > 0 : true, strip: px(same?.strip), aud: px(same?.aud), wide: px(same?.wide) };
+  return { band: same ? same.wide > 0 : false, strip: px(same?.strip), aud: px(same?.aud), wide: px(same?.wide) };
 });
 
 async function openTech(r: BandRow, ev?: MouseEvent): Promise<void> {
   // The dot that opened the sheet, kept because focus has to go back to it: `currentTarget` is null by the
   // time the await below returns, so it is read here and not in `closeTech`.
   techTrigger = (ev?.currentTarget as HTMLElement | null) || (document.activeElement as HTMLElement | null);
+  // Already in hand when the reader hovered first: the dialog then paints its answer on its first frame
+  // and there is no placeholder to swap out from under the pointer.
+  window.clearTimeout(hoverTimer);
   techPop.value = { id: r.id, title: r.title, item: null, dead: null, note: '' };
   // Focus moves as soon as the dialog exists rather than when the item answers. The ask takes 0.77s on
   // OkEmby and 0.79s on nyamedia (measured 2026-10-22), which is long enough for a reader who tabs straight
@@ -775,7 +810,11 @@ async function openTech(r: BandRow, ev?: MouseEvent): Promise<void> {
   // inert, and until this moved it was a claim with nothing enforcing it.
   await nextTick();
   popCard()?.focus();
-  const [res] = await Promise.all([embyCached('item', r.id, () => window.echoemby.emby.item(r.id)), syncWanted(r.id)]);
+  // The version mark is a second ask, and it only decides which strip is pressed. The sheet waits for the
+  // file and never for both: racing them meant a sheet whose answer was already in the cache still painted
+  // its placeholder for the three frames the hop to the controller costs, then replaced it.
+  void syncWanted(r.id);
+  const res = await embyCached('item', r.id, () => window.echoemby.emby.item(r.id));
   const pop = techPop.value;
   // Closed, or replaced by another card while this was out: that answer belongs to a dialog nobody is
   // reading, and writing it here would paint episode 7's numbers under episode 12's name.
@@ -1590,7 +1629,14 @@ const LEVEL_WORD = ['无', '极少', '轻微', '中等', '较多', '严重'];
 
     <template v-else-if="item">
       <div class="flow">
-        <HScroller v-if="band.length || noBand" ref="epiBand" class="block epi-row" :class="{ solo: noBand }">
+        <HScroller
+      v-if="band.length || noBand"
+      ref="epiBand"
+      class="block epi-row"
+      :class="{ solo: noBand }"
+      @pointerover="prefetchFromBand"
+      @pointerleave="dropPrefetch"
+    >
           <template #header>
             <div class="ep-head">
               <FilterSelect
@@ -1616,7 +1662,7 @@ const LEVEL_WORD = ['无', '极少', '轻微', '中等', '较多', '严重'];
               </span>
             </div>
           </template>
-          <div v-for="r in band" :key="r.key" class="epi-wrap">
+          <div v-for="r in band" :key="r.key" class="epi-wrap" :data-epi="r.id">
             <button class="epi" :class="{ off: !r.id }" :disabled="!r.id" @click="play(r.id, false)">
               <div class="ethumb">
                 <img v-reveal v-if="r.art" :src="r.art" alt="" loading="lazy" decoding="async" @error="onArtFail(r)" />
@@ -1634,7 +1680,14 @@ const LEVEL_WORD = ['无', '极少', '轻微', '中等', '较多', '严重'];
                 <p v-if="r.ov" class="eov">{{ r.ov }}</p>
               </div>
             </button>
-            <button v-if="r.id" type="button" class="res" :aria-label="`播放资源：${r.title}`" @click="openTech(r, $event)"><i></i><i></i><i></i></button>
+            <button
+              v-if="r.id"
+              type="button"
+              class="res"
+              :aria-label="`播放资源：${r.title}`"
+              @focus="prefetchTech(r)"
+              @click="openTech(r, $event)"
+            ><i></i><i></i><i></i></button>
           </div>
           <!-- Two empties, and only one of them gets a sentence here: a season this server holds nothing
                for is answered by the hero's own 「当前服务器无资源」, which is where the reader was about to
@@ -1721,7 +1774,14 @@ const LEVEL_WORD = ['无', '极少', '轻微', '中等', '较多', '严重'];
 
     <Teleport to="body">
       <Transition name="techpop">
-        <div v-if="techPop" class="tech-pop" role="dialog" aria-modal="true" aria-label="播放资源" @click.self="closeTech">
+        <div
+          v-if="techPop"
+          class="tech-pop"
+          role="dialog"
+          aria-modal="true"
+          aria-label="播放资源"
+          @click.self="closeTech"
+        >
           <section class="tp-card" tabindex="-1">
             <header class="tp-head">
               <div>
@@ -2177,15 +2237,18 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
    cache), so the dialog opens on the shape of the answer rather than on a spinner: every block below is one the
    sheet really has. Measured against that sheet at 1360: the strip is 834.7×44 wherever the episode has a
    source — one line, because a lone version has nothing to compare itself against — the two columns come in at
-   216 wide over 213.9 beside 602.7 over 83.2 for one audio track and 138.1 for three, the 字幕 card is 88.4 at
-   its one label line, and the foot is a date pinned to the right edge at 187.5×20.1.
+   216 wide over 188.4 beside 602.7 over 83.8 for one audio track and 138.1 for three, the 字幕 card is 88.4 at
+   its one label line, and the foot is a date pinned to the right edge at 187.5×20.1. The video card's 188.4 is
+   its five rows (分辨率/帧率/编码/配置/位深); measured over 22 sheets on 2026-10-28, all 22 were that. A taller
+   placeholder — 213.9, the six-row sheet the card becomes when 扫描 is also there — pushed the 字幕 card and the
+   foot up 25.5px the moment the answer arrived: the very jump this placeholder exists to hide.
    Which of those heights the placeholder paints, and what stays a guess, is written at `sheetSeen` above. */
 .tp-load { display: flex; flex-direction: column; gap: 16px; }
 .tp-load i { display: block; border-radius: var(--radius); background: var(--shimmer); background-size: var(--sk-tile) 100%; animation: sh 1.3s linear infinite; }
 .tp-load .strip { height: 44px; }
 .tp-load .cols { display: flex; gap: 16px; align-items: flex-start; }
-.tp-load .cols .video { flex: 0 0 216px; height: 213.9px; }
-.tp-load .cols .audio { flex: 1 1 380px; height: 83.2px; }
+.tp-load .cols .video { flex: 0 0 216px; height: 188.4px; }
+.tp-load .cols .audio { flex: 1 1 380px; height: 83.8px; }
 .tp-load .band { height: 88.4px; }
 .tp-load .foot { display: flex; justify-content: flex-end; gap: 18px; }
 .tp-load .foot i { height: 20.1px; border-radius: 6px; }
