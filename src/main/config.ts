@@ -25,10 +25,12 @@ const CLOSE_ACTIONS = ['quit', 'tray'] as const;
  *  the app has no tray and no menu, so an unusual default would leave a user with no obvious way out. */
 const DEFAULT_WINDOW: WindowPrefs = { closeAction: 'quit', hideOnPlay: false };
 
-/** Twenty gigabytes is the default because it is the size of one season of 1080p: enough for 追剧 to feel
- *  instant, small enough to be invisible on a normal disk. On by default - the point of the feature is the
- *  second viewing, and a cache nobody switched on can never deliver one. */
-const DEFAULT_MEDIA_CACHE: MediaCachePrefs = { enabled: true, limitGB: 20, clearOnExit: false, prefetchNext: true };
+/** Ten gigabytes is the default because it is the largest of the four fixed ceilings the sheet offers and
+ *  about seven 1080p episodes (measured 2026-10-28: 1.34 GB each) - enough for 追剧 to feel instant, small
+ *  enough to be invisible on a normal disk. 不限制 (`0`) is a choice, not a default: a cache that fills the
+ *  disk by itself is a surprise nobody asked for. On by default - the point of the feature is the second
+ *  viewing, and a cache nobody switched on can never deliver one. */
+const DEFAULT_MEDIA_CACHE: MediaCachePrefs = { enabled: true, limitGB: 10, clearOnExit: false, prefetchNext: true };
 
 const DEFAULT_DANMAKU: DanmakuSettings = {
   enabled: false,
@@ -81,10 +83,11 @@ const pickWindow = (raw: Partial<WindowPrefs> | undefined): WindowPrefs => {
 
 /* A missing key is read as the default rather than as false: every config written before this row existed
    has no mediaCache block at all. The limit is clamped rather than trusted, because the eviction loop
-   compares it against real bytes and a typo of 2000 would simply never evict anything. */
+   compares it against real bytes and a typo of 2000 would simply never evict anything. Zero is legal and
+   means 不限制, so the floor moves to zero; a negative or absurd number still falls back to the default. */
 const pickMediaCache = (raw: Partial<MediaCachePrefs> | undefined): MediaCachePrefs => ({
   enabled: raw?.enabled !== false,
-  limitGB: Math.round(num(raw?.limitGB, 1, 500, DEFAULT_MEDIA_CACHE.limitGB)),
+  limitGB: Math.round(num(raw?.limitGB, 0, 500, DEFAULT_MEDIA_CACHE.limitGB)),
   clearOnExit: raw?.clearOnExit === true,
   prefetchNext: raw?.prefetchNext !== false,
 });

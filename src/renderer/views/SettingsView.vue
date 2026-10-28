@@ -14,10 +14,24 @@ const win = computed<WindowPrefs | undefined>(() => settings.value?.window);
 const dm = computed<DanmakuSettings | undefined>(() => settings.value?.danmaku);
 const mc = computed<MediaCachePrefs | undefined>(() => settings.value?.mediaCache);
 
-/* The ceilings the sheet offers. Five is a few episodes, two hundred is a season of 4K: the numbers are
-   round because the eviction is coarse (whole videos), so a limit expressed to the gigabyte would only
-   suggest a precision the folder does not have. */
-const LIMITS = [5, 10, 20, 50, 100, 200];
+/* The ceilings the sheet offers: one episode (1.34 GB measured for a 1080p episode 2026-10-28), a couple,
+   half a season, most of a season - and 不限制 last, which is `0` through the whole chain and reads as a
+   word everywhere it is printed. The numbers are round because the eviction is coarse (whole videos). */
+const LIMITS = [1, 2, 5, 10, 0];
+
+/** 不限制 is 0 in the config; the ladder must never print 「0 GB」. */
+const limitLabel = (g: number): string => (g > 0 ? g + ' GB' : '不限制');
+
+/* A config written before this ladder existed can hold a ceiling the ladder no longer offers (the old
+   default was 20). It gets a plate of its own, in place, instead of landing on no plate at all - the row
+   would otherwise say 20 GB 上限 while nothing in the ladder looked picked. */
+const limitChoices = computed<number[]>(() => {
+  const cur = mc.value?.limitGB;
+  if (cur === undefined || LIMITS.includes(cur)) return LIMITS;
+  const below = LIMITS.filter(g => g > 0 && g < cur);
+  const above = LIMITS.filter(g => g > 0 && g > cur);
+  return [...below, cur, ...above, 0];
+});
 
 /** What is on disk right now. Read from the main process's own index, because a `dir` walk here would
  *  see a folder the renderer cannot address anyway (it lives under userData, outside the app bundle). */
@@ -240,7 +254,12 @@ function retireRoute(): void {
 async function set(patch: Parameters<typeof store.saveSettings>[0]): Promise<boolean> {
   if (!settings.value) return false;
   if (patch.proxyMode !== undefined || patch.proxyUrl !== undefined) retireRoute();
-  return store.saveSettings(patch);
+  const ok = await store.saveSettings(patch);
+  // 上限 is applied by the cache when it is read, not when it is written, so this page has to ask again or it
+  // keeps showing the number from before the change (measured: picking 5 GB left 已用 at the value read when
+  // the page opened, 179 MB, and only a fresh stats() brought it to 199 MB).
+  if (ok && patch.mediaCache) void readCache();
+  return ok;
 }
 
 async function commitAddr(): Promise<void> {
@@ -438,8 +457,8 @@ async function runProbe(): Promise<void> {
                     <i>超出后按最久没看的整条删掉，不会把一部片切成碎片</i>
                   </div>
                   <div class="seg">
-                    <button v-for="g in LIMITS" :key="g" type="button" :class="{ on: mc?.limitGB === g }" @click="set({ mediaCache: { limitGB: g } })">
-                      {{ g }} GB
+                    <button v-for="g in limitChoices" :key="g" type="button" :class="{ on: mc?.limitGB === g }" @click="set({ mediaCache: { limitGB: g } })">
+                      {{ limitLabel(g) }}
                     </button>
                   </div>
                 </div>
@@ -467,7 +486,7 @@ async function runProbe(): Promise<void> {
                 <div class="row">
                   <div class="k">
                     <b>已用 {{ usedRead }}</b>
-                    <i>{{ mc?.limitGB }} GB 上限 · 改小后多出来的部分会立刻清掉</i>
+                    <i>{{ mc?.limitGB ? mc.limitGB + ' GB 上限 · 改小后多出来的部分会立刻清掉' : '不限制 · 缓存会一直长到磁盘写满为止' }}</i>
                   </div>
                   <button class="go" type="button" :disabled="cacheBusy || !stats || stats.bytes === 0" @click="clearCache">
                     {{ cacheBusy ? '清理中…' : '清理全部缓存' }}

@@ -21,12 +21,20 @@ import * as config from './config';
  *
  * The key is server origin + item id + MediaSourceId, because MediaSourceId names one file on one server
  * and item ids collide across servers (173216 is a Bleach episode on the gateway and something else on
- * bangumi). The gateway's ETag is stored beside it and compared on every open: a replaced file keeps its id
- * but not its ETag, and serving the old bytes would look like a corrupt film rather than a stale cache.
+ * bangumi). The gateway's ETag is stored beside it and compared on every open (at most a minute apart, so a
+ * seek does not pay a round trip each time): a replaced file keeps its id but not its ETag, and serving the
+ * old bytes would look like a corrupt film rather than a stale cache.
+ *
+ * Nothing in here is allowed to fail a viewing. The cache is the optional half of playback: a full disk, a
+ * locked folder, a chunk that was truncated by an older build - each of those costs bytes on disk, and the
+ * film keeps playing.
  */
 
 const CHUNK = 4 * 1024 * 1024;
 const GB = 1024 * 1024 * 1024;
+/** How long a stored ETag counts as current. Short enough that a replaced file is noticed inside a viewing,
+ *  long enough that 拖动进度条 does not add a round trip to every Range the demuxer opens. */
+const ETAG_TTL = 60_000;
 /** How much of the next episode 预取 pulls: ten minutes of it. Enough to make 下一集 feel instant, not so
  *  much that a file the viewer never reaches fills the disk. */
 const PREFETCH_SECONDS = 600;
@@ -47,6 +55,8 @@ interface Entry {
   chunks: Set<number>;
   bytes: number;
   used: number;
+  /** When the ETag was last checked against the server; 0 means never (a fresh scan). */
+  checkedAt: number;
 }
 
 export interface CacheStats {
@@ -63,12 +73,23 @@ class MediaCache {
   private entries = new Map<string, Entry>();
   private total = 0;
   private initPromise: Promise<void> | null = null;
-  private serving = new Set<string>();
+  /** How many requests are being served per key. A plain Set was wrong: mpv opens a second Range for a seek
+   *  before the first one closes, and the first to finish cleared the guard that keeps the entry out of LRU. */
+  private serving = new Map<string, number>();
   private prefetchAbort: AbortController | null = null;
   private prefetchKey = '';
 
+  /** `0` is 不限制 and answers `0` here rather than `Infinity`: zero is what the sheet reads back as the word,
+   *  and the two places that compare against it both guard for it before dividing. */
   private get limitBytes(): number {
-    return Math.max(1, config.load().settings.mediaCache.limitGB) * GB;
+    const gb = config.load().settings.mediaCache.limitGB;
+    return gb > 0 ? gb * GB : 0;
+  }
+
+  /** Half of the ceiling, or no ceiling at all - the prefetch budget and the guard that stops it mid-file. */
+  private get prefetchCap(): number {
+    const limit = this.limitBytes;
+    return limit > 0 ? Math.floor(limit / 2) : Infinity;
   }
 
   private enabled(): boolean {
@@ -96,14 +117,27 @@ class MediaCache {
         const chunks = new Set<number>();
         let bytes = 0;
         for (const f of files) {
+          // A .part is a chunk the process died while writing. The index cannot count it (the number would be
+          // wrong) and nothing else ever deletes it, so a killed app used to leak that space silently.
+          if (/\.part$/.test(f)) {
+            await fsp.rm(path.join(dir, f), { force: true }).catch(() => undefined);
+            continue;
+          }
           const m = /^(\d{7})\.chunk$/.exec(f);
           if (!m) continue;
+          const index = Number(m[1]);
           const st = await fsp.stat(path.join(dir, f)).catch(() => null);
           if (!st) continue;
-          chunks.add(Number(m[1]));
+          // Only a chunk at its full length can be served: a short file would be answered as if it were whole
+          // and every byte after it would sit at the wrong offset for the rest of the film, forever.
+          if (st.size !== Math.min(CHUNK, meta.size - index * CHUNK)) {
+            await fsp.rm(path.join(dir, f), { force: true }).catch(() => undefined);
+            continue;
+          }
+          chunks.add(index);
           bytes += st.size;
         }
-        this.entries.set(meta.key, { meta, chunks, bytes, used: meta.updated || 0 });
+        this.entries.set(meta.key, { meta, chunks, bytes, used: meta.updated || 0, checkedAt: 0 });
         this.total += bytes;
       } catch {
         // A folder without a readable meta.json is a half-written entry: worth nothing, and it would make
@@ -189,7 +223,7 @@ class MediaCache {
     }
 
     const ac = new AbortController();
-    this.serving.add(id.key);
+    this.serving.set(id.key, (this.serving.get(id.key) || 0) + 1);
     entry.used = Date.now();
     const onClose = (): void => ac.abort();
     req.on('close', onClose);
@@ -202,8 +236,23 @@ class MediaCache {
         const ce = Math.min(cs + CHUNK, size) - 1;
         const from = Math.max(range.start, cs);
         const to = Math.min(range.end, ce);
-        if (entry.chunks.has(i)) await this.pipeChunk(id.key, i, from - cs, to - cs, res);
-        else await this.fillAndServe(url, entry, i, cs, ce, from, to, res, ac.signal);
+        const want = ce - cs + 1;
+        const st = entry.chunks.has(i) ? await fsp.stat(this.chunkPath(id.key, i)).catch(() => null) : null;
+        if (st && st.size === want) {
+          await this.pipeChunk(id.key, i, from - cs, to - cs, res);
+        } else if (entry.chunks.has(i)) {
+          // A short chunk cannot be repaired by reading past it: the bytes after it would be one chunk-length
+          // out of step for the rest of the film (measured: a 1024-byte third chunk froze playback at 11.3s,
+          // jumped to 17.6s, and never healed because the file looked complete to the index).
+          await fsp.rm(this.chunkPath(id.key, i), { force: true }).catch(() => undefined);
+          entry.chunks.delete(i);
+          const lost = st ? st.size : 0;
+          entry.bytes = Math.max(0, entry.bytes - lost);
+          this.total = Math.max(0, this.total - lost);
+          await this.fillAndServe(url, entry, i, cs, ce, from, to, res, ac.signal);
+        } else {
+          await this.fillAndServe(url, entry, i, cs, ce, from, to, res, ac.signal);
+        }
       }
       if (!res.destroyed) res.end();
       return true;
@@ -214,7 +263,9 @@ class MediaCache {
       return true;
     } finally {
       req.off('close', onClose);
-      this.serving.delete(id.key);
+      const left = (this.serving.get(id.key) || 1) - 1;
+      if (left > 0) this.serving.set(id.key, left);
+      else this.serving.delete(id.key);
       this.persistMeta(entry);
       this.enforce(this.limitBytes);
     }
@@ -224,18 +275,25 @@ class MediaCache {
    *  bytes of the new file, they are bytes of a different file at the same offsets. */
   private async resolve(url: string, id: { key: string; itemId: string; sourceId: string }): Promise<EntryMeta | null> {
     const known = this.entries.get(id.key);
-    if (known && known.meta.size > 0) return known.meta;
+    // The stored ETag is trusted for a minute at a time. Checking it on every open (as this file promises)
+    // means one round trip per Range, and mpv opens a new Range for every seek.
+    if (known && Date.now() - known.checkedAt < ETAG_TTL) return known.meta;
     const probed = await this.probe(url, id);
-    if (!probed) return null;
+    // The server not answering is not a reason to stop reading bytes that are already on disk: offline a
+    // cached film should still play.
+    if (!probed) return known && known.meta.size > 0 ? known.meta : null;
     if (known) {
-      if (known.meta.etag && probed.etag && known.meta.etag !== probed.etag) {
+      const replaced =
+        (known.meta.etag && probed.etag && known.meta.etag !== probed.etag) || known.meta.size !== probed.size;
+      if (replaced) {
         await this.drop(known);
       } else {
         known.meta = { ...known.meta, ...probed, updated: Date.now() };
+        known.checkedAt = Date.now();
         return known.meta;
       }
     }
-    const entry: Entry = { meta: probed, chunks: new Set(), bytes: 0, used: Date.now() };
+    const entry: Entry = { meta: probed, chunks: new Set(), bytes: 0, used: Date.now(), checkedAt: Date.now() };
     this.entries.set(id.key, entry);
     await fsp.mkdir(this.dirOf(id.key), { recursive: true });
     this.persistMeta(entry);
@@ -309,11 +367,23 @@ class MediaCache {
       body.destroy();
     }
     // A short body is not cached: writing it would leave a chunk that reads as complete and is not.
-    if (got === want && !res.destroyed) await this.store(entry, index, Buffer.concat(parts));
+    if (got === want && !res.destroyed) {
+      // A failed write is a failed cache, not a failed film. Letting it escape used to close the socket from
+      // handle()'s catch, and measured with an unwritable chunk the player stopped at 27.8s and reopened the
+      // file from zero. A full disk, a folder the user locked, an antivirus holding the file - all the same.
+      try {
+        await this.store(entry, index, Buffer.concat(parts));
+      } catch {
+        // The next chunk tries again; nothing is said because there is nothing the viewer could do.
+      }
+    }
   }
 
   private async store(entry: Entry, index: number, buf: Buffer): Promise<void> {
     if (entry.chunks.has(index)) return;
+    // Switched off while a film is playing: the request already streaming keeps calling store() for the rest
+    // of the file, and honouring the switch here is the difference between a setting and a decoration.
+    if (!this.enabled()) return;
     // 清理全部缓存 can land in the middle of a viewing: the entry the request holds is no longer the one the
     // index owns, and writing into its folder would put bytes on disk that nothing can ever account for.
     if (this.entries.get(entry.meta.key) !== entry) return;
@@ -331,6 +401,9 @@ class MediaCache {
   /** Whole-item LRU. Evicting chunks out of the middle of films would leave a cache that is neither small
    *  nor useful, and a season is the unit a viewer thinks in. */
   private enforce(limit: number): void {
+    // 不限制: nothing is ever evicted. The check lives here rather than at each call site so that a limit
+    // dropped from 不限制 to 1 GB starts evicting on the very next read.
+    if (limit <= 0) return;
     if (this.total <= limit) return;
     const victims = [...this.entries.values()]
       .filter(e => !this.serving.has(e.meta.key) && e.meta.key !== this.prefetchKey)
@@ -370,10 +443,15 @@ class MediaCache {
       const entry = this.entries.get(id.key);
       if (!entry) return;
       const share = Math.min(meta.size, Math.ceil((meta.size * PREFETCH_SECONDS * 1000) / Math.max(runTimeMs, 60_000)));
-      const budget = Math.min(share, Math.floor(this.limitBytes / 2));
+      const budget = Math.min(share, this.prefetchCap);
       const want = Math.min(Math.ceil(meta.size / CHUNK), Math.ceil(budget / CHUNK));
       for (let i = 0; i < want; i++) {
         if (ac.signal.aborted) return;
+        // Both knobs can move while a prefetch runs: the switch turned off, or 上限 dragged down to 1 GB. Stop
+        // then, instead of pulling an episode into a cache that was just told to shrink.
+        const now = config.load().settings.mediaCache;
+        if (!now.enabled || !now.prefetchNext) return;
+        if (entry.bytes >= this.prefetchCap) return;
         if (entry.chunks.has(i)) continue;
         const cs = i * CHUNK;
         const ce = Math.min(cs + CHUNK, meta.size) - 1;
@@ -412,18 +490,32 @@ class MediaCache {
     // Reading is also the moment 缓存上限 is applied: a limit lowered in 设置 must empty the difference now,
     // not at the end of whatever the viewer happens to play next (which could be tomorrow).
     this.enforce(this.limitBytes);
-    return { bytes: this.total, items: this.entries.size, limitBytes: this.limitBytes, enabled: this.enabled() };
+    // An entry a live request is holding can sit at zero bytes right after a clear; it is not a cached video
+    // until it has some.
+    let items = 0;
+    for (const e of this.entries.values()) if (e.bytes > 0) items++;
+    return { bytes: this.total, items, limitBytes: this.limitBytes, enabled: this.enabled() };
   }
 
-  /** 清理全部缓存: the folder is dropped and re-created empty, and the index goes with it. */
+  /** 清理全部缓存: the folder is dropped and re-created empty, and the index goes with it - except for the
+   *  entries a playing request is holding. Those are emptied instead of forgotten, because store() only writes
+   *  into the entry object the index owns: dropping it made the rest of that episode unwritable (measured: 已用
+   *  stayed at 0 B for the whole film after a clear made mid-viewing), and keeping it means the space comes
+   *  back as the viewer watches rather than after a restart. */
   async clear(): Promise<void> {
     this.cancelPrefetch();
     await this.init();
     const root = this.root;
+    const live = [...this.entries.values()].filter(e => this.serving.has(e.meta.key));
     this.entries.clear();
     this.total = 0;
     await fsp.rm(root, { recursive: true, force: true }).catch(() => undefined);
     await fsp.mkdir(root, { recursive: true }).catch(() => undefined);
+    for (const e of live) {
+      e.chunks = new Set();
+      e.bytes = 0;
+      this.entries.set(e.meta.key, e);
+    }
   }
 
   /** 退出程序时清理缓存, bounded by the caller's exit budget. */

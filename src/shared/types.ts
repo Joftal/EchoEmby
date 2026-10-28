@@ -28,7 +28,9 @@ export interface WindowPrefs {
 export interface MediaCachePrefs {
   /** Off means the bridge never reads or writes the cache — the player still works, it just re-fetches. */
   enabled: boolean;
-  /** The ceiling, in GB, for everything under the cache folder. LRU whole items leave to make room. */
+  /** The ceiling, in GB, for everything under the cache folder. LRU whole items leave to make room.
+   *  `0` is 不限制: no ceiling is applied and nothing is ever evicted, so the folder grows until the disk
+   *  says no. The sheet offers 1/2/5/10/不限制; anything else in the file is still honoured as a number. */
   limitGB: number;
   /** Delete the folder on the way out; a machine that is only used to binge wants the space back. */
   clearOnExit: boolean;
@@ -41,6 +43,8 @@ export interface MediaCachePrefs {
 export interface MediaCacheStats {
   bytes: number;
   items: number;
+  /** The ceiling in bytes, or `0` when 缓存上限 reads 不限制 — a number the sheet prints as a word instead
+   *  of as a size, never as 「0 B」. */
   limitBytes: number;
   enabled: boolean;
 }
