@@ -2,7 +2,6 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as config from '../config';
-import { QUALITY_TIERS } from '../config';
 import { EmbyClient, type Identity, type ProgressInput } from '../emby/client';
 import { explain } from '../emby/errors';
 import { appBytesPerSec } from '../netmeter';
@@ -19,7 +18,6 @@ import {
   type PlayerPrefs,
   type PlaybackSource,
   type PlayMethod,
-  type QualityTier,
   type WatchedRecord,
 } from '../../shared/types';
 import { episodeSlot } from '../../shared/episode-slot';
@@ -42,7 +40,7 @@ export interface PlayerOut {
 }
 
 /** What is playing right now. Replaced whole on every load, so no half-switched session can be reported
- *  while a quality change is in flight. */
+ *  while a version change is in flight. */
 interface Current {
   itemId: string;
   /** The server this viewing was opened on, kept for its whole life: `client()` reads it, because the
@@ -62,13 +60,6 @@ interface Current {
   playSessionId: string;
   method: PlayMethod | '';
   hdr: boolean;
-  /** The upstream address the bridge is mounted on: kept so a new mpv process can be handed the same
-   *  stream without asking the server what it decided again. */
-  url: string;
-  tiers: QualityTier[];
-  /** The rung this stream was actually negotiated at, which is not necessarily the one the settings row
-   *  shows while a change is still in flight. */
-  tier: number;
   next: PlayerNav | null;
   prev: PlayerNav | null;
   danmaku: DanmakuQuery | null;
@@ -88,13 +79,6 @@ interface Current {
   flushedMs: number;
 }
 
-const tierLabel = (bitrate: number): string => (bitrate === 0 ? '原片' : `${Math.round(bitrate / 1_000_000)} Mbps`);
-
-/** The ladder is a fixed list; the verdict on each rung is the server's, and only becomes known once that
- *  rung has been negotiated in this item's session. */
-const tiersFor = (tier: number, method: PlayMethod, seen: Record<number, PlayMethod>): QualityTier[] =>
-  QUALITY_TIERS.map(b => ({ bitrate: b, label: tierLabel(b), method: b === tier ? method : seen[b] }));
-
 const navLabel = (it: LibraryItem): string => (it.indexNumber != null ? `第 ${it.indexNumber} 集` : it.name);
 
 /**
@@ -110,7 +94,6 @@ export class PlayerController {
   private current: Current | null = null;
   private state: PlayerState = emptyPlayerState();
   private media: PlayerMedia = emptyPlayerMedia();
-  private seenMethods = new Map<string, Record<number, PlayMethod>>();
   /** A deliberate close must not be reported as a crash by the process's exit handler. */
   private tearing = false;
   /** The sidecar subtitle this viewing has handed to mpv: the server row it came from, the file its bytes
@@ -165,8 +148,6 @@ export class PlayerController {
       sourceId: c.sources[c.sourceIndex]?.id || '',
       sources: c.sources,
       sourceIndex: c.sourceIndex,
-      tiers: c.tiers,
-      tier: c.tier,
       method: c.method,
       hdr: c.hdr,
       next: c.next,
@@ -249,7 +230,7 @@ export class PlayerController {
       ? item.sources?.find(s => versionLabel(s.name).toLowerCase() === sameShape)?.id
       : undefined;
     const wanted = sourceId || this.itemVersion.get(itemId) || fromSeries;
-    const neg = await c.negotiate(itemId, { tier: prefs.tier, sourceId: wanted });
+    const neg = await c.negotiate(itemId, { sourceId: wanted });
     this.rememberVersion(itemId, item.seriesId, neg.sources[neg.sourceIndex]);
 
     // The windows only open once the server has agreed to serve something: a refused negotiation should
@@ -258,9 +239,6 @@ export class PlayerController {
     await this.ensureKernel(prefs);
 
     const url = await this.bridge.mount(neg.url);
-    const seen = this.seenMethods.get(itemId) || {};
-    seen[prefs.tier] = neg.method;
-    this.seenMethods.set(itemId, seen);
 
     this.current = {
       itemId,
@@ -275,9 +253,6 @@ export class PlayerController {
       playSessionId: neg.playSessionId,
       method: neg.method,
       hdr: neg.hdr,
-      url: neg.url,
-      tiers: tiersFor(prefs.tier, neg.method, seen),
-      tier: prefs.tier,
       next: nav.next,
       prev: nav.prev,
       danmaku: this.danmakuOf(item),
@@ -329,25 +304,20 @@ export class PlayerController {
     return { next: at(eps[i + 1]), prev: at(eps[i - 1]) };
   }
 
-  /** mpv only renders into a window handed to it at launch, so the handle and the profile must both be
-   *  right before anything loads. A changed render profile is the one thing that needs a new process:
-   *  `gpu-hq` is a bundle of settings mpv cannot un-set, so it is chosen by the command line. */
+  /** mpv only renders into a window handed to it at launch, so the handle has to be right before anything
+   *  loads. The launch shape itself never changes now — one render profile, chosen in the command line — so
+   *  a process that is already up is reused and only the runtime-settable decoder is moved. */
   private async ensureKernel(prefs: PlayerPrefs): Promise<void> {
     if (this.kernel?.running) {
-      if (this.kernel.renderProfile === prefs.render) {
-        // hwdec is runtime-settable, so switching decoders costs neither a reload nor a restart.
-        await this.kernel.setHwdec(prefs.hwdec).catch(() => undefined);
-        return;
-      }
-      await this.kernel.quit().catch(() => undefined);
-      this.kernel = null;
+      await this.kernel.setHwdec(prefs.hwdec).catch(() => undefined);
+      return;
     }
     const k = new MpvKernel();
     k.onState = s => this.onKernelState(s);
     k.onMedia = m => this.onKernelMedia(m);
     k.onGone = message => this.onGone(message);
     this.kernel = k;
-    await k.start({ hwnd: this.windows.hostHwnd(), prefs: { hwdec: prefs.hwdec, hdrHint: prefs.hdrHint, render: prefs.render } });
+    await k.start({ hwnd: this.windows.hostHwnd(), prefs: { hwdec: prefs.hwdec, hdrHint: prefs.hdrHint } });
     await this.windows.raiseVideoWhenReady();
   }
 
@@ -389,7 +359,7 @@ export class PlayerController {
 
   private onKernelMedia(m: PlayerMedia): void {
     // mpv's own track list is the only witness that a sidecar is still loaded. Loading another file — a
-    // quality rung, a version switch, 下一集 — drops every track `sub-add` made, and a menu that kept
+    // version switch, 下一集 — drops every track `sub-add` made, and a menu that kept
     // marking its row 正在用 would be pointing at a track the process no longer has.
     const loaded = this.sidecar;
     const live = loaded && m.tracks.some(t => t.kind === 'subtitle' && t.id === loaded.trackId) ? loaded : null;
@@ -457,8 +427,8 @@ export class PlayerController {
     };
   }
 
-  /** The one 开场 a viewing gets, sent from 播开那一步 — a stream rebuilt for a quality or a renderer change
-   *  is still the same viewing and stays quiet, because FirstPlay is what stamps PlayCount. Nothing is
+  /** The one 开场 a viewing gets, sent from 播开那一步 — a stream rebuilt for a version switch is still the
+   *  same viewing and stays quiet, because FirstPlay is what stamps PlayCount. Nothing is
    *  written while the film runs: 进度 used to post every 15 s, and every one of those numbers was already
    *  stale by the time it landed. `atMs`/`durationMs` are the offset the server already holds rather than the
    *  live clock, because mpv has not reported one yet — and the number a start carries is the number the
@@ -621,9 +591,6 @@ export class PlayerController {
       case 'source':
         await this.useSource(cmd.value);
         return;
-      case 'quality':
-        await this.useTier(cmd.value);
-        return;
       case 'next':
         if (this.current?.next) await this.play(this.current.next.itemId);
         else throw new Error('这已经是最后一集');
@@ -684,18 +651,23 @@ export class PlayerController {
     const src = c?.sources[index];
     if (!c || !src) throw new Error('没有这个播放源');
     if (src.id === c.sources[c.sourceIndex]?.id) return;
-    await this.replay({ tier: c.tier, sourceId: src.id });
+    await this.replay({ sourceId: src.id });
   }
 
-  /** Changing rung is a fresh negotiation and a reload that keeps the position and the rate. The chosen
-   *  rung is a setting, not per-playback state: Emby's own clients remember it, and so do we. */
-  private async useTier(bitrate: number): Promise<void> {
-    const c = this.current;
-    if (!c) throw new Error('没有在播放任何东西');
-    if (!QUALITY_TIERS.includes(bitrate)) throw new Error('没有这个画质档位');
-    if (c.tier === bitrate) return;
-    config.saveSettings({ player: { tier: bitrate } });
-    await this.replay({ tier: bitrate, sourceId: c.sources[c.sourceIndex]?.id });
+  /** The version the next 播放 of this item takes — the same answer `play` reads, so the page's 播放资源
+   *  card can open on the strip that is really pressed instead of keeping a second copy of the choice.
+   *  Empty means nobody has chosen and the card falls on the first playable row. */
+  lastSource(itemId: string): string {
+    return this.itemVersion.get(itemId) || '';
+  }
+
+  /** A pick made on the page, before anything is played. It lands in the one memory rather than in a ref
+   *  the library window holds, because a switch inside the player writes that same map and the newer word
+   *  has to win: ranked against each other, the page's older click used to outrank the player's newer one.
+   *  The show's shape word is not written here — 下一集 gets it from `rememberVersion` when this pick
+   *  actually plays, which is the moment it becomes an answer about the rest of the season. */
+  chooseSource(itemId: string, sourceId: string): void {
+    this.itemVersion.set(itemId, sourceId);
   }
 
   /** File the player is now on, into both memories. Called from `play` and from `replay`, which is what a
@@ -709,7 +681,7 @@ export class PlayerController {
     if (seriesId && shape) this.seriesVersion.set(seriesId, shape);
   }
 
-  private async replay(opts: { tier: number; sourceId?: string }): Promise<void> {
+  private async replay(opts: { sourceId?: string }): Promise<void> {
     const c = this.current;
     const k = this.kernel;
     if (!c || !k) throw new Error('没有在播放任何东西');
@@ -718,8 +690,6 @@ export class PlayerController {
     const speed = this.state.speed;
     const neg = await this.client().negotiate(itemId, opts);
     if (this.current !== c) return;
-    const seen = { ...(this.seenMethods.get(itemId) || {}), [opts.tier]: neg.method };
-    this.seenMethods.set(itemId, seen);
     const url = await this.bridge.mount(neg.url);
     c.sourceIndex = neg.sourceIndex;
     c.sources = neg.sources;
@@ -727,9 +697,6 @@ export class PlayerController {
     c.playSessionId = neg.playSessionId || c.playSessionId;
     c.method = neg.method;
     c.hdr = neg.hdr;
-    c.url = neg.url;
-    c.tier = opts.tier;
-    c.tiers = tiersFor(opts.tier, neg.method, seen);
     this.out.session(this.getSession());
     try {
       await k.load(url, { startMs: wasAt });
@@ -744,36 +711,13 @@ export class PlayerController {
     // viewing. The stopped report on the way out carries the source this stream actually ended on.
   }
 
-  /** A knob changed while something is playing: apply live what mpv can apply live, re-negotiate when the
-   *  cap moved, and rebuild the process when only a new command line can honour it. Nothing here defers a
-   *  change to 「下一次」 — the row would have to explain itself, and a reload that keeps your place is
-   *  cheaper than that sentence. */
+  /** The decoder is the only knob that can move while something is playing. There is nothing else to do
+   *  here: the render shape is fixed at launch and the version is chosen before the stream opens, so no
+   *  setting can still ask for a reload or a new process. */
   applyPrefs(prefs: PlayerPrefs): void {
-    const c = this.current;
-    if (c && c.tier !== prefs.tier) {
-      void this.useTier(prefs.tier).catch(e => this.fail(e));
-      return;
-    }
     const k = this.kernel;
     if (!k?.running) return;
     void k.setHwdec(prefs.hwdec).catch(() => undefined);
-    if (prefs.render !== k.renderProfile) void this.restartFor(prefs).catch(e => this.fail(e));
-  }
-
-  /** New process, same seat: the position and the rate are read back first and put on the new load. */
-  private async restartFor(prefs: PlayerPrefs): Promise<void> {
-    const c = this.current;
-    const k = this.kernel;
-    if (!c || !k) return;
-    const wasAt = await k.positionMs();
-    const speed = this.state.speed;
-    this.kernel = null;
-    await k.quit().catch(() => undefined);
-    await this.ensureKernel(prefs);
-    const url = await this.bridge.mount(c.url);
-    await this.kernel!.load(url, { startMs: wasAt });
-    await this.kernel!.setSpeed(speed).catch(() => undefined);
-    this.raise();
   }
 
   /** The fetched sidecars are a copy of something the server still holds, so they live only as long as the

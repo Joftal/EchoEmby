@@ -28,6 +28,7 @@ import { useAppStore } from '../stores/app';
 import { fmtClock } from '../lib/format';
 import { embyCached } from '../lib/embycache';
 import { VOLUME_MAX } from '../../shared/types';
+import { versionNames } from '../../shared/version-label';
 
 const player = usePlayerStore();
 const app = useAppStore();
@@ -85,12 +86,13 @@ const rate = computed(() => {
   return `${(b / 1048576).toFixed(1)} MB/s`;
 });
 
-/** The 画质 trigger says what is being used, the way the reference's 「1080p」 button does. `tier` is the
- *  negotiated bitrate, not an index, so the rung is found the same way the 播放资源 menu finds it. */
-const tierLabel = computed(() => {
+/** The 播放资源 trigger says which version is on screen, in the same word the card inside the panel and the
+ *  page's 播放资源 card both use: there is no bitrate ladder to name any more, so the only answer this button
+ *  can give is the file itself. */
+const sourceLabel = computed(() => {
   const se = session.value;
-  if (!se) return '画质';
-  return se.tiers.find(t => t.bitrate === se.tier)?.label || '画质';
+  if (!se) return '播放资源';
+  return versionNames(se.sources)[se.sourceIndex] || '播放资源';
 });
 
 /* The top-left carries the work's own title treatment, on the same rule the two heroes use. An episode
@@ -336,7 +338,7 @@ onUnmounted(() => {
 
           <span class="cap-sep"></span>
 
-          <button class="ib word" data-panel="quality" :class="{ act: player.panel === 'quality' }" title="播放资源（Q）" @click="player.openPanel('quality')">{{ tierLabel }}</button>
+          <button class="ib word" data-panel="quality" :class="{ act: player.panel === 'quality' }" title="播放资源（Q）" @click="player.openPanel('quality')">{{ sourceLabel }}</button>
 
           <button class="ib word cc" data-panel="subtitle" :class="{ act: player.panel === 'subtitle' || media.subtitle !== 'no' }" title="字幕（S）" @click="player.openPanel('subtitle')">CC</button>
 

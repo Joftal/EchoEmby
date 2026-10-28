@@ -715,14 +715,15 @@ export class EmbyClient {
   }
 
   /** What one negotiation round decided: which version, by which method, from which address. */
-  async negotiate(itemId: string, opts: { tier: number; sourceId?: string }): Promise<Negotiation> {
-    const profile = buildDeviceProfile(opts.tier);
+  async negotiate(itemId: string, opts: { sourceId?: string }): Promise<Negotiation> {
+    const profile = buildDeviceProfile();
     // 原片 is not a bitrate so much as a refusal: offer a cap no file needs and forbid transcoding, which
-    // is what Emby's own clients send for the top row of the quality ladder.
+    // is what Emby's own clients send when they mean the file itself. The answer that comes back is then
+    // the server's word on how it will hand this file over, and nothing here decides it.
     const j = await this.post<any>(
       `/Items/${itemId}/PlaybackInfo`,
-      { DeviceProfile: profile, ...profile, MaxStreamingBitrate: opts.tier || 400_000_000 },
-      { UserId: this.account.userId, StartTimeTicks: 0, EnableTranscoding: opts.tier > 0 },
+      { DeviceProfile: profile, ...profile },
+      { UserId: this.account.userId, StartTimeTicks: 0, EnableTranscoding: false },
     );
     const sources = mapSources(j.MediaSources);
     // A row the gateway cannot probe — no stream at all, 133 of the 23,027 sources measured 2026-10-27, 132
@@ -747,18 +748,14 @@ export class EmbyClient {
     q.set('MediaSourceId', raw.id);
     if (j.PlaySessionId) q.set('PlaySessionId', String(j.PlaySessionId));
     q.set('api_key', this.account.accessToken);
-    let url: string;
-    if (method === 'Transcode') {
-      // The server builds the playlist address itself, with the segment container, the audio/substring
-      // indexes and the codec it picked already in it. Only when it does not is it ours to assemble.
-      url = ms.TranscodingUrl
-        ? `${this.account.baseUrl}${ms.TranscodingUrl.startsWith('/') ? '' : '/'}${ms.TranscodingUrl}`
-        : `${this.base}/videos/${itemId}/main.m3u8?${q}`;
-    } else {
-      q.set('static', 'true');
-      q.set('seek', '0');
-      url = `${this.base}/videos/${itemId}/stream?${q}`;
-    }
+    // A gateway that insists on re-making a file on the way out has been told no already, and there is
+    // nothing here to receive the result: no segment list is followed, no re-encoded picture is shown.
+    // Saying so at the pick is the honest answer — 转码 as a playlist never played on any proxy route
+    // this machine has, so the alternative was a stream that stalls.
+    if (method === 'Transcode') throw new EmbyError('这台服务器要把这一版转码才肯给，播放器不做转码', 502);
+    q.set('static', 'true');
+    q.set('seek', '0');
+    const url = `${this.base}/videos/${itemId}/stream?${q}`;
     const range = String(raw.video?.range || '');
     return {
       playSessionId: String(j.PlaySessionId || ''),

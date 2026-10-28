@@ -17,15 +17,10 @@ const prefs = computed<PlayerPrefs>(() => app.config?.settings.player || ({} as 
 
 const METHOD_CN: Record<PlayMethod, string> = { DirectPlay: '直接播放', DirectStream: '直接串流', Transcode: '转码' };
 
-/** 0 is the rung that forbids transcoding outright, which is what 原片 means to Emby. */
-const methodLabel = (m?: PlayMethod): string => (m ? METHOD_CN[m] : '未试过');
-
-async function setTier(bitrate: number): Promise<void> {
-  if (session.value?.tier === bitrate) return;
-  // Writing the setting is the one path the main process listens to: it re-negotiates and reloads in
-  // place, so the panel does not need a second command of its own.
-  await app.saveSettings({ player: { tier: bitrate } });
-}
+/** The app never asks the server to re-encode: a version that cannot be handed over whole is refused by the
+ *  negotiation, so 转码 has no way to reach this row and what it prints is a confirmation rather than a
+ *  choice. The dash is the panel open with no session, where there is no answer to give yet. */
+const methodLabel = (m?: PlayMethod | ''): string => (m ? METHOD_CN[m] : '—');
 
 async function patch(p: Partial<PlayerPrefs>): Promise<void> {
   await app.saveSettings({ player: p });
@@ -77,16 +72,8 @@ const playingRange = computed(() => {
 </script>
 
 <template>
-  <div class="pl-sect">清晰度</div>
-  <button v-for="t in session?.tiers || []" :key="t.bitrate" class="pl-row" :class="{ on: session?.tier === t.bitrate }" @click="setTier(t.bitrate)">
-    <span class="mark"></span>
-    <span class="label">{{ t.label }}</span>
-    <span class="meta">{{ session?.tier === t.bitrate ? methodLabel(t.method) : '' }}</span>
-  </button>
-
-  <div class="pl-sep"></div>
   <SubRow name="sources" label="播放源" :value="`${versions.length} 个版本`" />
-  <SubRow name="decode" label="解码与渲染" :value="decoderWord(media.hwdec) || '软解'" />
+  <SubRow name="decode" label="解码" :value="decoderWord(media.hwdec) || '软解'" />
   <SubRow name="range" label="动态范围" :value="playingRange" />
 
   <SubPopover name="sources" title="播放源">
@@ -103,24 +90,16 @@ const playingRange = computed(() => {
     </div>
     <p v-if="!versions.length" class="pl-empty">这个条目没有可播放的版本</p>
     <p v-else-if="versions.length < 2" class="pl-empty">这个条目只有一个版本</p>
+    <div class="pl-sep"></div>
+    <div class="pl-line"><span class="label">播放方式</span><span class="pl-text">{{ methodLabel(session?.method) }}</span></div>
   </SubPopover>
 
-  <SubPopover name="decode" title="解码与渲染">
+  <SubPopover name="decode" title="解码">
     <div class="pl-sect">解码器</div>
     <div class="pl-chips">
       <button v-for="h in HWDECS" :key="h.value" class="pl-chip" :class="{ on: prefs.hwdec === h.value }" @click="patch({ hwdec: h.value })">{{ h.label }}</button>
     </div>
     <p class="pl-note">实际用上的那个写在下面：选了自动或硬件不可用时，mpv 会落回软解。</p>
-    <div class="pl-sep"></div>
-    <div class="pl-sect">渲染</div>
-    <div class="pl-line">
-      <span class="label">取向</span>
-      <span class="pl-seg">
-        <button :class="{ on: prefs.render !== 'hq' }" @click="patch({ render: 'smooth' })">流畅优先</button>
-        <button :class="{ on: prefs.render === 'hq' }" @click="patch({ render: 'hq' })">清晰优先</button>
-      </span>
-    </div>
-    <p class="pl-note">清晰优先开的是 gpu-hq，会换一个新的 mpv 进程：画面会黑一下。</p>
     <div class="pl-line"><span class="label">正在用</span><span class="pl-text">{{ decoderWord(media.hwdec) || '—' }}</span></div>
   </SubPopover>
 
@@ -131,6 +110,6 @@ const playingRange = computed(() => {
       <span class="label">把 HDR 信号交给显示器</span>
       <span class="track"><i></i></span>
     </div>
-    <p class="pl-note">关掉时 mpv 把 HDR 压成 SDR 显示；打开后如果屏幕不支持 HDR，画面会发灰。改动在下一次播放生效。</p>
+    <p class="pl-note">关掉时 mpv 把 HDR 压成 SDR 显示；打开后如果屏幕不支持 HDR，画面会发灰。这一项写在播放器的启动参数里，要合上播放器再打开才换过来。</p>
   </SubPopover>
 </template>

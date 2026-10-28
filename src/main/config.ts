@@ -6,24 +6,17 @@ import type { Account, AppConfig, DanmakuSettings, DanmakuSourceConfig, MetaKeys
 
 const HWDEC = ['d3d11va', 'cuda', 'auto', 'no'] as const;
 const PROXY_MODES = ['system', 'manual', 'none'] as const;
-const RENDER = ['smooth', 'hq'] as const;
 const DANMAKU_SOURCES = ['bilibili', 'dandan'] as const;
 
 /** What a masked secret reads as on screen. A patch carrying it back means "the row was not touched",
  *  so saving one setting never writes the placeholder over the real credential. */
 export const SECRET_MASK = '<set>';
 
-/** The rungs the quality panel offers, low to high; 0 is 原片. The default cap is the one the old
- *  single-slider setting used, so an existing install keeps negotiating the way it did. */
-export const QUALITY_TIERS = [0, 10_000_000, 25_000_000, 60_000_000, 100_000_000, 140_000_000, 200_000_000];
-
 const DEFAULT_PLAYER: PlayerPrefs = {
-  tier: 140_000_000,
   hwdec: 'd3d11va',
   seekStepMs: 10_000,
   controlsTimeoutMs: 3200,
   hdrHint: false,
-  render: 'smooth',
   autoNext: true,
 };
 
@@ -51,17 +44,11 @@ const num = (v: unknown, lo: number, hi: number, dflt: number): number =>
 
 const str = (v: unknown, max = 160): string => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 
-/** The ladder is a fixed list, so a cap that is not one of its rungs falls back to the default rather
- *  than offering the server a number no row in the panel can select. */
-const pickTier = (v: unknown): number => (QUALITY_TIERS.includes(Number(v)) ? Number(v) : DEFAULT_PLAYER.tier);
-
 const pickPlayer = (raw: Partial<PlayerPrefs> | undefined): PlayerPrefs => ({
-  tier: pickTier(raw?.tier),
   hwdec: raw?.hwdec && HWDEC.includes(raw.hwdec) ? raw.hwdec : DEFAULT_PLAYER.hwdec,
   seekStepMs: num(raw?.seekStepMs, 1000, 120_000, DEFAULT_PLAYER.seekStepMs),
   controlsTimeoutMs: num(raw?.controlsTimeoutMs, 800, 30_000, DEFAULT_PLAYER.controlsTimeoutMs),
   hdrHint: raw?.hdrHint === true,
-  render: raw?.render && RENDER.includes(raw.render) ? raw.render : DEFAULT_PLAYER.render,
   autoNext: raw?.autoNext !== false,
 });
 
@@ -222,9 +209,8 @@ export function updateAccount(id: string, patch: Partial<Omit<Account, 'accountI
   return next;
 }
 
-/** The tier and the decoder are read again when the next stream is negotiated and when mpv is launched,
- *  so a change needs no restart and takes effect on the next play. A patch may name only the rows the
- *  user touched: `{ player: { seekStepMs } }` keeps the tier, the decoder and the danmaku block. */
+/** The decoder is read again when mpv is launched and at runtime, so it needs no restart. A patch may name
+ *  only the rows the user touched: `{ player: { seekStepMs } }` keeps the decoder and the danmaku block. */
 export function saveSettings(patch: SettingsPatch): Settings {
   const cfg = load();
   const source = { ...cfg.settings.danmaku.source, ...(patch.danmaku?.source || {}) };

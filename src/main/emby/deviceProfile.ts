@@ -4,32 +4,30 @@
  * Verified against this server: with these codecs listed it answers `SupportsDirectPlay=true` for 4K
  * HEVC Main10 + E-AC3 and never transcodes, while a narrower profile flips `SupportsTranscoding` — so
  * the body is honoured, and the only honest claim a self-built client can make is which decoders mpv
- * really has. It has all of them (mpv ships ffmpeg's full decoder set), which is why the ladder is
- * bounded by the bitrate cap rather than by pretending h265 is unsupported.
+ * really has. It has all of them (mpv ships ffmpeg's full decoder set).
  *
- * The cap is the one number that decides the round trip: `MaxBitrate` on the transcoding profile is set
- * to the tier the user picked, so a 4K file at 10 Mbps comes back as a 10 Mbps transcode instead of the
- * fixed 8 Mbps the old table promised regardless of what the row said.
+ * There is one shape of this body and it says 原片: no transcoding, and a cap no file on either gateway
+ * comes near. A bitrate cap was never a picture knob here — the app has no encoder, so the only thing a
+ * lower number buys is a server that re-makes the file on the fly, and a re-made file is not the version
+ * anybody chose to watch. Which picture you get is decided by which row 播放资源 offers, which is why the
+ * ladder and this number were removed together.
  */
 
 const VIDEO = 'hevc,h264,av1,vp9,vp8,mpeg4,mpeg2video,vc1,avc,mpeg1video,mpeg2ts';
 const AUDIO = 'truehd,eac3,ac3,dts,dtshd,dca,flac,aac,mp3,opus,vorbis,alac,wav,pcm_s16le,pcm_s24le,pcm_f32le';
 
-/** 7.1 survives at the top of the ladder and drops to stereo only where the cap forces the server's
- *  hand, so a low rung cannot silently cost the multitrack someone paid for. */
-const channelsFor = (tier: number): string => (tier >= 60_000_000 || tier === 0 ? '7.1' : tier >= 12_000_000 ? '5.1' : '2');
+/** A file's own track is what plays, so nothing here may cost the multitrack someone paid for. */
+const CAP = 400_000_000;
 
-export function buildDeviceProfile(tier: number) {
-  const cap = tier || 400_000_000;
-  const channels = channelsFor(tier);
+export function buildDeviceProfile() {
   return {
-    EnableTranscoding: tier > 0,
+    EnableTranscoding: false,
     EnableDirectStream: true,
     EnableDirectPlay: true,
-    MaxStreamingBitrate: cap,
-    MaxStaticBitrate: cap,
-    MusicStreamingTranscodingBitrate: cap,
-    MaxAudioChannels: channels,
+    MaxStreamingBitrate: CAP,
+    MaxStaticBitrate: CAP,
+    MusicStreamingTranscodingBitrate: CAP,
+    MaxAudioChannels: '7.1',
     SupportedInsecureMethods: 'http-get',
     SupportDolbyVision: true,
     VideoCodecs: VIDEO,
@@ -42,6 +40,9 @@ export function buildDeviceProfile(tier: number) {
       { Container: 'avi,wmv,asf,flv,mov,3gp,mxf,mpg,mpeg,vob', Type: 'Video', VideoCodec: VIDEO, AudioCodec: AUDIO },
       { Container: 'mp3,flac,wav,aac,ogg,opus,m4a', Type: 'Audio', AudioCodec: AUDIO },
     ],
+    // Never offered a chance to run: `EnableTranscoding` is false and a server that answers with a
+    // transcode anyway is refused. They stay in the body because the shape of this reply is what was
+    // verified against the gateway, not because a segment list is ever assembled from them.
     TranscodingProfiles: [
       {
         Container: 'ts',
@@ -50,9 +51,9 @@ export function buildDeviceProfile(tier: number) {
         VideoCodec: 'h264,hevc',
         Context: 'Streaming',
         Protocol: 'hls',
-        MaxAudioChannels: channels,
+        MaxAudioChannels: '7.1',
         MinBitrate: '0',
-        MaxBitrate: String(cap),
+        MaxBitrate: String(CAP),
         BreakOnNonKeyFrames: true,
       },
       {
@@ -63,7 +64,7 @@ export function buildDeviceProfile(tier: number) {
         Protocol: 'http',
         MaxAudioChannels: '2',
         MinBitrate: '0',
-        MaxBitrate: String(cap),
+        MaxBitrate: String(CAP),
       },
     ],
     SubtitleProfiles: [
@@ -75,8 +76,9 @@ export function buildDeviceProfile(tier: number) {
       { Format: 'srt,vtt,sup', Method: 'External', DidlMode: '', Language: '' },
       { Format: 'srt,vtt', Method: 'Embed', DidlMode: '', Language: '' },
     ],
-    // Without this the server answers a playlist request with `video/mp2t` and a body of TypeScript
-    // segment names, and the rewrite in the bridge would be guessing.
+    // A library kept as an HLS folder is direct-played as a playlist, and without this the server answers
+    // such a playlist request with `video/mp2t` and a body of TypeScript segment names, leaving the
+    // rewrite in the bridge to guess.
     ResponseProfiles: [{ Type: 'm3u8', Container: 'ts', AttachName: false }],
   };
 }

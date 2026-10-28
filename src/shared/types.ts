@@ -29,12 +29,11 @@ export type SettingsPatch = Omit<Partial<Settings>, 'player' | 'danmaku'> & {
   danmaku?: Omit<Partial<DanmakuSettings>, 'source'> & { source?: Partial<DanmakuSourceConfig> };
 };
 
-/** Knobs that belong to the player itself. `tier` and `hwdec` are read again when the next stream is
- *  negotiated and when mpv is launched, so neither needs a restart. */
+/** Knobs that belong to the player itself. `hwdec` is read when mpv is launched and again at runtime, so
+ *  it needs no restart. There is no bitrate cap here on purpose: the app plays the version it is pointed
+ *  at and never asks the server to re-encode it, so quality is decided by which file is picked, not by a
+ *  number offered to the gateway. */
 export interface PlayerPrefs {
-  /** The bitrate cap offered to the server during PlaybackInfo. 0 is 原片: ask for the file itself and
-   *  forbid transcoding, which is what 原片 means to Emby. */
-  tier: number;
   hwdec: 'd3d11va' | 'cuda' | 'auto' | 'no';
   /** ← / →, and the two skip buttons either side of the play button. */
   seekStepMs: number;
@@ -43,8 +42,6 @@ export interface PlayerPrefs {
   /** Hand the HDR signal to the display instead of letting mpv tone-map it to SDR. Off by default: a
    *  screen that cannot show it renders the picture washed out. */
   hdrHint: boolean;
-  /** 'smooth' spends the GPU on frames, 'hq' spends it on sharpness (gpu-hq + interpolation). */
-  render: 'smooth' | 'hq';
   /** Move to the next episode when the file reaches its end. */
   autoNext: boolean;
 }
@@ -482,8 +479,6 @@ export interface PlaybackSource {
   video?: MediaStreamInfo;
   audio: MediaStreamInfo[];
   subtitle: MediaStreamInfo[];
-  /** What the last negotiation answered for this source at the current tier. */
-  method?: PlayMethod;
 }
 
 /** Whether a version holds anything at all. Measured 2026-10-27 over both gateways' 23,027 sources: 133 of
@@ -540,15 +535,6 @@ export interface LibraryRow {
 }
 
 export type PlayMethod = 'DirectPlay' | 'DirectStream' | 'Transcode';
-
-/** One rung of the quality ladder. The rungs are ours, the verdict is the server's: a tier only learns
- *  its `method` when it has been negotiated, so an untried rung makes no promise about direct play. */
-export interface QualityTier {
-  /** Negotiation cap in bits/s; 0 is 原片. */
-  bitrate: number;
-  label: string;
-  method?: PlayMethod;
-}
 
 /** What the current file contains, as mpv reports it after the demuxer has opened it. Everything here
  *  can differ from what the server advertised (a subtitle the muxer dropped, a second audio track). */
@@ -635,8 +621,8 @@ export interface PlayerSession {
   sourceId: string;
   sources: PlaybackSource[];
   sourceIndex: number;
-  tiers: QualityTier[];
-  tier: number;
+  /** How the server agreed to hand over the version that is playing. It can only say 转码 for a file the
+   *  gateway refuses to give as it is, which the negotiation reports as a refusal rather than a stream. */
   method: PlayMethod | '';
   /** The server's own label for the file's dynamic range, shown whether or not the hint is on. */
   hdr: boolean;
@@ -733,8 +719,10 @@ export type PlayerCommand =
   | { action: 'chapter'; value: number }
   | { action: 'frameStep'; value: number }
   | { action: 'restart' }
+  /** Another version of the same item, by its seat in the session's list. This is the switch that chooses
+   *  which file plays, so it re-negotiates; there is no rung command beside it because the file is never
+   *  re-encoded on the way. */
   | { action: 'source'; value: number }
-  | { action: 'quality'; value: number }
   | { action: 'next' }
   | { action: 'prev' }
   | { action: 'fullscreen'; value: boolean };

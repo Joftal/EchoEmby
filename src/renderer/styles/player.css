@@ -484,26 +484,6 @@
   background: var(--pl-fill);
   color: #fff;
 }
-/* The segmented strip the reference uses for 预设: choices inside one rounded track. */
-.pl-seg {
-  display: inline-flex;
-  padding: 3px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.1);
-  gap: 3px;
-}
-.pl-seg button {
-  padding: 6px 12px;
-  border-radius: 999px;
-  color: var(--pl-dim);
-  font-size: 14px;
-  transition: background var(--hov) var(--ease), color var(--hov) var(--ease);
-}
-.pl-seg button.on {
-  background: rgba(255, 255, 255, 0.92);
-  color: #14141a;
-  font-weight: 600;
-}
 
 .pl-switch {
   display: flex;
@@ -733,7 +713,7 @@
 
 /* The cursor is only ever drawn by the keyboard: a menu opened with the mouse would otherwise show a ring
    on the row the pointer just happened to cross. */
-.pl-sheet :is(.pl-row, .pl-chip, .pl-card, .pl-switch, .pl-seg button, .pl-step button, .pl-words, .pl-head .ib):focus-visible {
+.pl-sheet :is(.pl-row, .pl-chip, .pl-card, .pl-switch, .pl-step button, .pl-words, .pl-head .ib):focus-visible {
   outline: 2px solid var(--pl-hi);
   outline-offset: -2px;
 }

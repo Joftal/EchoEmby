@@ -71,7 +71,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', onResize));
 
 /** Everything the card can land a cursor on. `offsetParent` is how a hidden one shows itself: while a
  *  drill-in is up the first level is out of the layout, and its rows must not be reachable. */
-const ITEMS = '.pl-row, .pl-cell, .pl-card, .pl-chip, .pl-switch, .pl-seg button, .pl-step button, .pl-words';
+const ITEMS = '.pl-row, .pl-cell, .pl-card, .pl-chip, .pl-switch, .pl-step button, .pl-words';
 
 function items(): HTMLElement[] {
   return Array.from(card.value?.querySelectorAll<HTMLElement>(ITEMS) ?? []).filter(el => el.offsetParent !== null && !el.hasAttribute('disabled'));

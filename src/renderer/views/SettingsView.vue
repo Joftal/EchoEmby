@@ -19,12 +19,6 @@ const DECODERS: { value: PlayerPrefs['hwdec']; label: string }[] = [
   { value: 'no', label: '软解' },
 ];
 
-/** The same ladder the player's 画质 drawer lists, so a rung picked here is a rung the panel can show. */
-const TIERS: { value: number; label: string }[] = [
-  { value: 0, label: '原片' },
-  ...[10, 25, 60, 100, 140, 200].map(m => ({ value: m * 1_000_000, label: `${m}M` })),
-];
-
 const STEPS = [5000, 10000, 15000, 30000];
 const HOLDS = [2000, 3200, 5000, 8000];
 
@@ -272,10 +266,10 @@ async function runProbe(): Promise<void> {
                   <span class="tic"><Play :size="15" :stroke-width="1.7" /></span>
                   <h2>播放</h2>
                 </header>
-                <div v-for="n in 7" :key="n" class="row">
+                <div v-for="n in 5" :key="n" class="row">
                   <div class="k">
                     <span class="sk skk"></span>
-                    <span v-if="n === 1 || n === 3 || n === 6 || n === 7" class="sk skhint"></span>
+                    <span v-if="n === 4 || n === 5" class="sk skhint"></span>
                   </div>
                   <i class="sk skg"></i>
                 </div>
@@ -308,35 +302,12 @@ async function runProbe(): Promise<void> {
 
                 <div class="row">
                   <div class="k">
-                    <b>清晰度上限</b>
-                    <i>原片禁止转码；其余档位由服务器决定是直连还是切片段</i>
-                  </div>
-                  <div class="seg">
-                    <button v-for="o in TIERS" :key="o.value" type="button" :class="{ on: player.tier === o.value }" @click="set({ player: { tier: o.value } })">
-                      {{ o.label }}
-                    </button>
-                  </div>
-                </div>
-
-                <div class="row">
-                  <div class="k">
                     <b>硬件解码</b>
                   </div>
                   <div class="seg">
                     <button v-for="o in DECODERS" :key="o.value" type="button" :class="{ on: player.hwdec === o.value }" @click="set({ player: { hwdec: o.value } })">
                       {{ o.label }}
                     </button>
-                  </div>
-                </div>
-
-                <div class="row">
-                  <div class="k">
-                    <b>渲染</b>
-                    <i>清晰优先会换一个新的播放器进程</i>
-                  </div>
-                  <div class="seg">
-                    <button type="button" :class="{ on: player.render !== 'hq' }" @click="set({ player: { render: 'smooth' } })">流畅优先</button>
-                    <button type="button" :class="{ on: player.render === 'hq' }" @click="set({ player: { render: 'hq' } })">清晰优先</button>
                   </div>
                 </div>
 
@@ -375,7 +346,7 @@ async function runProbe(): Promise<void> {
                 <div class="row">
                   <div class="k">
                     <b>HDR 直通</b>
-                    <i>屏幕不支持 HDR 时画面会发灰；下一次播放生效</i>
+                    <i>屏幕不支持 HDR 时画面会发灰；合上播放器再打开才换过来</i>
                   </div>
                   <button type="button" class="sw" :class="{ on: player.hdrHint }" @click="set({ player: { hdrHint: !player.hdrHint } })">
                     <span class="track"><i></i></span>

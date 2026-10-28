@@ -17,7 +17,7 @@ import {
 
 export interface KernelLaunch {
   hwnd: string;
-  prefs: { hwdec: string; hdrHint: boolean; render: 'smooth' | 'hq' };
+  prefs: { hwdec: string; hdrHint: boolean };
 }
 
 export function mpvExecutable(): string {
@@ -165,7 +165,7 @@ export class MpvKernel {
   /** A process we asked to quit is not a crash, so neither its exit nor the socket that goes down with it
    *  may reach `onGone` - that is the session's last-resort write of the position, and a socket with no
    *  such guard turned every deliberate teardown into a server report: measured 2026-10-27, one viewing
-   *  whose two render-profile restarts each logged `[player] 退出 gone` + `停止已写` before the real
+   *  whose two mid-play restarts each logged `[player] 退出 gone` + `停止已写` before the real
    *  `close` one. */
   private quitting = false;
   /** One process dies once. A real death announces itself twice - the child's `exit`, and the pipe socket
@@ -174,8 +174,6 @@ export class MpvKernel {
    *  `flushedMs` before it awaits the request, so the second one checks a number the first has not
    *  stamped yet. */
   private goneReported = false;
-  /** The launch's render profile, so a change to it is visible without re-reading the config. */
-  private launchedRender = '';
   readonly pipeName = `echoemby-mpv-${randomUUID().slice(0, 8)}`;
 
   onState: (s: PlayerState) => void = () => undefined;
@@ -187,14 +185,7 @@ export class MpvKernel {
     return !!this.proc;
   }
 
-  /** 'smooth' and 'hq' are chosen by the launch arguments, not at runtime: mpv's `gpu-hq` profile is a
-   *  bundle of settings that cannot be un-set, so switching it means a new process. */
-  get renderProfile(): string {
-    return this.launchedRender;
-  }
-
   private args(l: KernelLaunch): string[] {
-    const hq = l.prefs.render === 'hq';
     const a = [
       `--wid=${l.hwnd}`,
       `--input-ipc-server=${this.pipeName}`,
@@ -211,12 +202,19 @@ export class MpvKernel {
       // yt-dlp is not installed and ytdl_hook otherwise grabs every failed open, turning one bad connect
       // into ~10s of subprocess probing.
       '--no-ytdl',
-      // A transcode playlist is a live stream to ffmpeg unless told otherwise; this makes it seekable.
+      // A library kept as an HLS folder reaches mpv as a stream that looks live, and this is what lets the
+      // bar move on it anyway.
       '--force-seekable=yes',
       `--hwdec=${l.prefs.hwdec}`,
       '--vo=gpu',
       '--gpu-api=d3d11',
-      `--profile=${hq ? 'gpu-hq' : 'fast'}`,
+      // One launch shape for every file. `gpu-hq` is a bundle of settings mpv cannot un-set at runtime, so
+      // it can only be chosen here — and with no knob to move, the choice is the one this machine has been
+      // running on: the sharp scalers, at the cost of some GPU work the player no longer trades away.
+      '--profile=gpu-hq',
+      '--scale=ewa_lanczossharp',
+      '--cscale=ewa_lanczossharp',
+      '--tscale=oversample',
       '--hr-seek=yes',
       // Pacing never comes from the display. Measured 2026-10-27 on a 144 Hz screen with a 24 fps file:
       // `display-resample` advanced mpv's own `time-pos` at 5.94-6.05× wall clock (6 = 144 ÷ 24) while
@@ -226,7 +224,7 @@ export class MpvKernel {
       // resume when switched back), so the only place to decide this is here, before the process starts.
       '--video-sync=audio',
       // Interpolation is display-sync's companion — mpv's own docs warn about A/V drift when it runs on an
-      // audio clock — so the tier that used to buy it keeps its scalers and lets this one go.
+      // audio clock — so gpu-hq keeps its spatial scalers and lets this one go.
       '--interpolation=no',
       '--demuxer-max-bytes=220MiB',
       '--demuxer-max-back-bytes=120MiB',
@@ -245,7 +243,6 @@ export class MpvKernel {
       // while Chromium retries the real server behind it.
       `--demuxer-lavf-o=${['reconnect=1', 'reconnect_streamed=1', 'reconnect_delay_max=5'].join(',')}`,
     ];
-    if (hq) a.push('--scale=ewa_lanczossharp', '--cscale=ewa_lanczossharp', '--tscale=oversample');
     // Give the display the HDR signal instead of tone-mapping it. Off by default: on a screen that cannot
     // show it the picture washes out, which is worse than mpv's own mapping.
     if (l.prefs.hdrHint) a.push('--target-colorspace-hint=yes');
@@ -263,7 +260,6 @@ export class MpvKernel {
   async start(l: KernelLaunch): Promise<void> {
     if (this.proc) throw new Error('mpv 已经在运行');
     const exe = mpvExecutable();
-    this.launchedRender = l.prefs.render;
     this.quitting = false;
     this.goneReported = false;
     this.raw = { ...freshRaw(), volume: 100 };
