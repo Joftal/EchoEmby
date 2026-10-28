@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import { AppWindow, Database, Globe, MessageSquareText, Play } from 'lucide-vue-next';
-import type { DanmakuSettings, NetProbe, PlayerPrefs, Settings, WindowPrefs } from '../../shared/types';
+import { AppWindow, Database, Globe, HardDrive, MessageSquareText, Play } from 'lucide-vue-next';
+import type { DanmakuSettings, MediaCachePrefs, MediaCacheStats, NetProbe, PlayerPrefs, Settings, WindowPrefs } from '../../shared/types';
 import { useAppStore } from '../stores/app';
 
 const store = useAppStore();
@@ -12,6 +12,45 @@ const settings = computed(() => store.config?.settings);
 const player = computed<PlayerPrefs | undefined>(() => settings.value?.player);
 const win = computed<WindowPrefs | undefined>(() => settings.value?.window);
 const dm = computed<DanmakuSettings | undefined>(() => settings.value?.danmaku);
+const mc = computed<MediaCachePrefs | undefined>(() => settings.value?.mediaCache);
+
+/* The ceilings the sheet offers. Five is a few episodes, two hundred is a season of 4K: the numbers are
+   round because the eviction is coarse (whole videos), so a limit expressed to the gigabyte would only
+   suggest a precision the folder does not have. */
+const LIMITS = [5, 10, 20, 50, 100, 200];
+
+/** What is on disk right now. Read from the main process's own index, because a `dir` walk here would
+ *  see a folder the renderer cannot address anyway (it lives under userData, outside the app bundle). */
+const stats = ref<MediaCacheStats | null>(null);
+const cacheBusy = ref(false);
+
+function sizeRead(n: number): string {
+  if (!(n > 0)) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let v = n;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return (i <= 1 || v >= 100 ? Math.round(v) : v.toFixed(1)) + ' ' + units[i];
+}
+
+const usedRead = computed(() => (stats.value ? sizeRead(stats.value.bytes) + ' · ' + stats.value.items + ' 个视频' : '统计中…'));
+
+async function readCache(): Promise<void> {
+  const r = await window.echoemby.mediaCache.stats();
+  if (r.ok) stats.value = r.data ?? null;
+}
+
+async function clearCache(): Promise<void> {
+  if (cacheBusy.value) return;
+  cacheBusy.value = true;
+  const r = await window.echoemby.mediaCache.clear();
+  cacheBusy.value = false;
+  if (r.ok) stats.value = r.data ?? null;
+  else store.error = r.error || '清理失败';
+}
 
 const DECODERS: { value: PlayerPrefs['hwdec']; label: string }[] = [
   { value: 'd3d11va', label: 'D3D11' },
@@ -43,6 +82,7 @@ const SOURCES: { value: DanmakuSettings['source']['type']; label: string }[] = [
 
 const SECTIONS = [
   { id: 'play', label: '播放', icon: Play },
+  { id: 'cache', label: '缓存', icon: HardDrive },
   { id: 'window', label: '窗口', icon: AppWindow },
   { id: 'danmaku', label: '弹幕', icon: MessageSquareText },
   { id: 'meta', label: '元数据', icon: Database },
@@ -176,6 +216,13 @@ const probeRead = computed(() => {
 onMounted(async () => {
   if (!store.ready) await store.init();
   if (!store.account) router.replace('/login');
+  void readCache();
+});
+
+/** The reading is taken again whenever the sheet is opened on 缓存, because the number moves while the
+ *  page is elsewhere: a viewing in the player is filling it. */
+watch(active, id => {
+  if (id === 'cache') void readCache();
 });
 
 /** A reading belongs to the route it was taken on, so changing either half of that route retires it -
@@ -368,6 +415,66 @@ async function runProbe(): Promise<void> {
               </div>
             </section>
 
+            <section class="group" data-sec="cache">
+              <div class="pane">
+                <header class="ph">
+                  <span class="tic"><HardDrive :size="15" :stroke-width="1.7" /></span>
+                  <h2>缓存</h2>
+                </header>
+
+                <div class="row">
+                  <div class="k">
+                    <b>媒体缓存</b>
+                    <i>看过的片段留在本地，重看与回拖都不再走网络；关掉后每次播放都重新拉取</i>
+                  </div>
+                  <button type="button" class="sw" :class="{ on: mc?.enabled }" @click="set({ mediaCache: { enabled: !mc?.enabled } })">
+                    <span class="track"><i></i></span>
+                  </button>
+                </div>
+
+                <div class="row">
+                  <div class="k">
+                    <b>缓存上限</b>
+                    <i>超出后按最久没看的整条删掉，不会把一部片切成碎片</i>
+                  </div>
+                  <div class="seg">
+                    <button v-for="g in LIMITS" :key="g" type="button" :class="{ on: mc?.limitGB === g }" @click="set({ mediaCache: { limitGB: g } })">
+                      {{ g }} GB
+                    </button>
+                  </div>
+                </div>
+
+                <div class="row">
+                  <div class="k">
+                    <b>追剧时预取下一集</b>
+                    <i>这一集播放时先把下一集的开头十分钟拉到本地，切集几乎不用等</i>
+                  </div>
+                  <button type="button" class="sw" :class="{ on: mc?.prefetchNext }" @click="set({ mediaCache: { prefetchNext: !mc?.prefetchNext } })">
+                    <span class="track"><i></i></span>
+                  </button>
+                </div>
+
+                <div class="row">
+                  <div class="k">
+                    <b>退出程序时清理缓存</b>
+                    <i>退出前把整个缓存目录删掉，下次打开从空开始</i>
+                  </div>
+                  <button type="button" class="sw" :class="{ on: mc?.clearOnExit }" @click="set({ mediaCache: { clearOnExit: !mc?.clearOnExit } })">
+                    <span class="track"><i></i></span>
+                  </button>
+                </div>
+
+                <div class="row">
+                  <div class="k">
+                    <b>已用 {{ usedRead }}</b>
+                    <i>{{ mc?.limitGB }} GB 上限 · 改小后多出来的部分会立刻清掉</i>
+                  </div>
+                  <button class="go" type="button" :disabled="cacheBusy || !stats || stats.bytes === 0" @click="clearCache">
+                    {{ cacheBusy ? '清理中…' : '清理全部缓存' }}
+                  </button>
+                </div>
+              </div>
+            </section>
             <section class="group" data-sec="window">
               <div class="pane">
                 <header class="ph">

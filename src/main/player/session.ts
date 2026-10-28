@@ -24,6 +24,7 @@ import { episodeSlot } from '../../shared/episode-slot';
 import { versionLabel } from '../../shared/version-label';
 import { MpvKernel } from './kernel';
 import { StreamBridge } from './bridge';
+import { mediaCache } from '../media-cache';
 import { PlayerWindows } from './windows';
 
 /** What the renderer is told, and when. The controller never touches ipc itself, so the same object can
@@ -135,6 +136,9 @@ export class PlayerController {
       if (!this.tearing) void this.close().catch(() => undefined);
     };
     this.windows.onFullscreen = on => this.kernel?.setFullscreen(on);
+    // Every byte this player ever reads comes through the bridge, so the cache is installed here once and
+    // sees the gateway URLs themselves - rewritten playlist entries included.
+    this.bridge.useCache(mediaCache);
   }
 
   get running(): boolean {
@@ -202,6 +206,9 @@ export class PlayerController {
    *  so a label can never promise a first view the player then starts halfway through. */
   async play(itemId: string, fromStart = false): Promise<void> {
     this.tearing = false;
+    // A prefetch belongs to the item that was playing; leaving it runs in the background of a picture nobody
+    // is going to look at, and it competes for the same connection the new item is about to need.
+    mediaCache.cancelPrefetch();
     // Leaving an item for another one is an exit just as surely as closing the window is, so the episode
     // the user walked away from gets its stop written before anything new is asked for.
     const leaving = this.current;
@@ -283,6 +290,27 @@ export class PlayerController {
     // session is live, so a hard-killed app left 187396 sitting at nothing and the next 看到 had no number
     // to print. An open that reports the stored offset leaves that offset standing.
     void this.announceStart(resume.startMs, Math.round((item.runTimeTicks || 0) / 1e4)).catch(() => undefined);
+    // 追剧时预取下一集: only after this one is actually up, so the film being watched never waits behind a
+    // speculative fetch. `nav.next` is the neighbour inside the season - the same row 下一集 would take.
+    const next = this.current?.next;
+    if (next && item.type === 'Episode') this.prefetchNext(c, next.itemId, item.seriesId);
+  }
+
+  /** Pulls the opening minutes of the next episode into the media cache, in the version this show is being
+   *  watched in: a season picked at 1080p must not prefetch 4K. Failure is silent by design - a prefetch that
+   *  cannot happen is the state the app was in before this feature existed. */
+  private prefetchNext(c: EmbyClient, nextId: string, seriesId?: string): void {
+    const prefs = config.get().settings.mediaCache;
+    if (!prefs.enabled || !prefs.prefetchNext) return;
+    const shape = seriesId ? this.seriesVersion.get(seriesId) : undefined;
+    void (async () => {
+      const next = await c.item(nextId);
+      const sourceId = shape && (next.sources || []).length > 1
+        ? next.sources?.find(s => versionLabel(s.name).toLowerCase() === shape)?.id
+        : undefined;
+      const neg = await c.negotiate(nextId, { sourceId: sourceId || this.itemVersion.get(nextId) });
+      await mediaCache.prefetch(neg.url, Math.round((next.runTimeTicks || 0) / 1e4));
+    })().catch(() => undefined);
   }
 
   /** What a danmaku service is asked about. An episode called 「第 3 集」 matches nothing, so the series
@@ -768,6 +796,7 @@ export class PlayerController {
   async close(): Promise<void> {
     this.tearing = true;
     this.hidMain = false;
+    mediaCache.cancelPrefetch();
     // The stop is written before anything is torn down: mpv still holds the real position, and the number
     // the lobby is handed must be the one the server just took.
     const w = await this.flushStop(undefined, 'close');
@@ -791,6 +820,7 @@ export class PlayerController {
    *  would read it is being destroyed and the ask it triggers would only delay the exit. */
   async shutdown(): Promise<void> {
     this.hidMain = false;
+    mediaCache.cancelPrefetch();
     await this.flushStop(undefined, 'quit');
     this.current = null;
     await this.kernel?.quit().catch(() => undefined);

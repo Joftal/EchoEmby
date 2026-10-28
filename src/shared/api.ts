@@ -1,4 +1,4 @@
-import type { Account, AppConfig, BangumiScore, CalendarResult, CsmGuide, DanmakuQuery, DanmakuTrack, DanmakuTrackInfo, FacetOption, ImdbRating, IpcResult, LibraryItem, LibraryRow, MetaKeys, NetProbe, PlayerCommand, PlayerMedia, PlayerSession, PlayerState, RtScores, Settings, SettingsPatch, TmdbCredits, TmdbMeta, TmdbRelated, TmdbStills, TraktScores, WatchedRecord } from './types';
+import type { Account, AppConfig, BangumiScore, CalendarResult, CsmGuide, DanmakuQuery, DanmakuTrack, DanmakuTrackInfo, FacetOption, ImdbRating, IpcResult, LibraryItem, LibraryRow, MediaCacheStats, MetaKeys, NetProbe, PlayerCommand, PlayerMedia, PlayerSession, PlayerState, RtScores, Settings, SettingsPatch, TmdbCredits, TmdbMeta, TmdbRelated, TmdbStills, TraktScores, WatchedRecord } from './types';
 
 export interface EchoEmbyApi {
   app: {
@@ -87,6 +87,11 @@ export interface EchoEmbyApi {
     search(q: DanmakuQuery): Promise<IpcResult<DanmakuTrackInfo[] | null>>;
     /** One candidate's comments, filtered and sorted; null when the source has nothing for it. */
     track(q: DanmakuQuery, trackId: string): Promise<IpcResult<DanmakuTrack | null>>;
+  };
+  /** 媒体缓存: the numbers are what is on disk right now, cleared down to nothing by `clear`. */
+  mediaCache: {
+    stats(): Promise<IpcResult<MediaCacheStats>>;
+    clear(): Promise<IpcResult<MediaCacheStats>>;
   };
   ui: {
     window(action: 'minimize' | 'maximize' | 'close'): void;

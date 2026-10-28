@@ -73,6 +73,10 @@ const api: EchoEmbyApi = {
     search: q => invoke('danmaku:search', q),
     track: (q, trackId) => invoke('danmaku:track', { q, trackId }),
   },
+  mediaCache: {
+    stats: () => invoke('mediaCache:stats'),
+    clear: () => invoke('mediaCache:clear'),
+  },
   ui: {
     window: action => ipcRenderer.send('ui:window', { action }),
   },

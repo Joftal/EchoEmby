@@ -6,6 +6,7 @@ import { applyProxy } from './net';
 import { startNetMeter } from './netmeter';
 import { AppServices } from './ipc';
 import { createTray, revealWindow } from './tray';
+import { mediaCache } from './media-cache';
 
 const DEV_URL = process.env.VITE_DEV_URL || '';
 const rendererRoot = path.join(app.getAppPath(), 'dist', 'renderer');
@@ -100,6 +101,9 @@ if (!app.requestSingleInstanceLock()) {
       await applyProxy(fallback).catch(() => undefined);
       config.saveSettings(fallback);
     }
+    // The cache index is read before any window exists, so 设置 can print a real number the first time it is
+    // opened and the first playback does not race the folder scan.
+    void mediaCache.init();
     services = new AppServices(getMainWindow, rendererUrl);
     services.register();
     createMainWindow();

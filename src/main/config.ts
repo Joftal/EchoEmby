@@ -2,7 +2,7 @@ import { app, safeStorage } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
-import type { Account, AppConfig, DanmakuSettings, DanmakuSourceConfig, MetaKeys, PlayerPrefs, Settings, SettingsPatch, WindowPrefs } from '../shared/types';
+import type { Account, AppConfig, DanmakuSettings, DanmakuSourceConfig, MediaCachePrefs, MetaKeys, PlayerPrefs, Settings, SettingsPatch, WindowPrefs } from '../shared/types';
 
 const HWDEC = ['d3d11va', 'cuda', 'auto', 'no'] as const;
 const PROXY_MODES = ['system', 'manual', 'none'] as const;
@@ -25,6 +25,11 @@ const CLOSE_ACTIONS = ['quit', 'tray'] as const;
  *  the app has no tray and no menu, so an unusual default would leave a user with no obvious way out. */
 const DEFAULT_WINDOW: WindowPrefs = { closeAction: 'quit', hideOnPlay: false };
 
+/** Twenty gigabytes is the default because it is the size of one season of 1080p: enough for 追剧 to feel
+ *  instant, small enough to be invisible on a normal disk. On by default - the point of the feature is the
+ *  second viewing, and a cache nobody switched on can never deliver one. */
+const DEFAULT_MEDIA_CACHE: MediaCachePrefs = { enabled: true, limitGB: 20, clearOnExit: false, prefetchNext: true };
+
 const DEFAULT_DANMAKU: DanmakuSettings = {
   enabled: false,
   source: { type: 'bilibili', url: '', token: '' },
@@ -40,6 +45,7 @@ const DEFAULT_DANMAKU: DanmakuSettings = {
 const DEFAULT_SETTINGS: Settings = {
   player: { ...DEFAULT_PLAYER },
   window: { ...DEFAULT_WINDOW },
+  mediaCache: { ...DEFAULT_MEDIA_CACHE },
   proxyMode: 'system',
   proxyUrl: '',
   danmaku: { ...DEFAULT_DANMAKU, source: { ...DEFAULT_DANMAKU.source } },
@@ -73,6 +79,16 @@ const pickWindow = (raw: Partial<WindowPrefs> | undefined): WindowPrefs => {
   };
 };
 
+/* A missing key is read as the default rather than as false: every config written before this row existed
+   has no mediaCache block at all. The limit is clamped rather than trusted, because the eviction loop
+   compares it against real bytes and a typo of 2000 would simply never evict anything. */
+const pickMediaCache = (raw: Partial<MediaCachePrefs> | undefined): MediaCachePrefs => ({
+  enabled: raw?.enabled !== false,
+  limitGB: Math.round(num(raw?.limitGB, 1, 500, DEFAULT_MEDIA_CACHE.limitGB)),
+  clearOnExit: raw?.clearOnExit === true,
+  prefetchNext: raw?.prefetchNext !== false,
+});
+
 const pickDanmaku = (raw: Partial<DanmakuSettings> | undefined): DanmakuSettings => {
   const src: Partial<DanmakuSourceConfig> = raw?.source || {};
   const type = src.type && DANMAKU_SOURCES.includes(src.type) ? src.type : DEFAULT_DANMAKU.source.type;
@@ -96,6 +112,7 @@ const pickDanmaku = (raw: Partial<DanmakuSettings> | undefined): DanmakuSettings
 const pickSettings = (raw: Partial<Settings> | undefined): Settings => ({
   player: pickPlayer(raw?.player),
   window: pickWindow(raw?.window),
+  mediaCache: pickMediaCache(raw?.mediaCache),
   proxyMode: raw?.proxyMode && PROXY_MODES.includes(raw.proxyMode) ? raw.proxyMode : DEFAULT_SETTINGS.proxyMode,
   proxyUrl: str(raw?.proxyUrl),
   danmaku: pickDanmaku(raw?.danmaku),
@@ -243,6 +260,7 @@ export function saveSettings(patch: SettingsPatch): Settings {
     ...patch,
     player: { ...cfg.settings.player, ...(patch.player || {}) },
     window: { ...cfg.settings.window, ...(patch.window || {}) },
+    mediaCache: { ...cfg.settings.mediaCache, ...(patch.mediaCache || {}) },
     danmaku: { ...cfg.settings.danmaku, ...(patch.danmaku || {}), source },
   };
   cfg.settings = pickSettings(next);

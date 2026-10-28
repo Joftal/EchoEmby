@@ -12,6 +12,7 @@ import { csmGuide } from './meta/csm';
 import { PlayerWindows } from './player/windows';
 import { revealWindow } from './tray';
 import { PlayerController, type PlayerOut } from './player/session';
+import { mediaCache } from './media-cache';
 import * as danmaku from './danmaku';
 import { applyProxy, probeNetwork } from './net';
 import { type Account, type DanmakuQuery, type IpcResult, type PlayerCommand, type SettingsPatch } from '../shared/types';
@@ -214,6 +215,12 @@ export class AppServices {
     ipcMain.handle('player:session', () => wrap('player:session', () => this.player.getSession()));
     ipcMain.handle('player:media', () => wrap('player:media', () => this.player.getMedia()));
 
+    // 媒体缓存: the numbers the settings sheet prints come from the index the bridge already keeps, so this
+    // is not a second accounting of the same bytes. Clearing runs while nothing is playing; a viewing that
+    // is already on screen keeps its open file handles and simply stops adding to a folder that is gone.
+    ipcMain.handle('mediaCache:stats', () => wrap('mediaCache:stats', async () => (await mediaCache.init(), mediaCache.stats())));
+    ipcMain.handle('mediaCache:clear', () => wrap('mediaCache:clear', async () => (await mediaCache.clear(), mediaCache.stats())));
+
     // 弹幕 asks two services that are not the media server, so both handlers answer nothing at all while
     // the switch in 设置 is off.
     ipcMain.handle('danmaku:search', (_e, q: DanmakuQuery) => wrap('danmaku:search', () => danmaku.search(q)));
@@ -231,5 +238,9 @@ export class AppServices {
   /** Quit-time teardown only: the app is going away, so nothing waits for a window to be talked to. */
   async shutdown(): Promise<void> {
     await this.player.shutdown();
+    // 退出程序时清理缓存. Ordered after the player so no chunk is being written while the folder is dropped;
+    // the caller races this whole call against a five-second exit budget, so a slow disk loses the race
+    // rather than holding the window open.
+    await mediaCache.clearIfAsked().catch(() => undefined);
   }
 }

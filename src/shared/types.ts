@@ -22,9 +22,33 @@ export interface WindowPrefs {
   hideOnPlay: boolean;
 }
 
+/** What 播放 leaves on disk. A viewing is a byte range read once off a server that is often on the far
+ *  side of the internet, so the ranges that were read are kept: watching an episode again, or the minute a
+ *  seek just came back from, is answered from here instead of from the gateway. */
+export interface MediaCachePrefs {
+  /** Off means the bridge never reads or writes the cache — the player still works, it just re-fetches. */
+  enabled: boolean;
+  /** The ceiling, in GB, for everything under the cache folder. LRU whole items leave to make room. */
+  limitGB: number;
+  /** Delete the folder on the way out; a machine that is only used to binge wants the space back. */
+  clearOnExit: boolean;
+  /** 追剧时预取下一集: the first minutes of the next episode are pulled while this one plays. */
+  prefetchNext: boolean;
+}
+
+/** What the settings sheet prints next to 清理全部缓存: the index the bridge keeps, not a second walk of
+ *  the folder. `items` counts cached files, so the sentence reads 12 个视频 · 8.4 GB. */
+export interface MediaCacheStats {
+  bytes: number;
+  items: number;
+  limitBytes: number;
+  enabled: boolean;
+}
+
 export interface Settings {
   player: PlayerPrefs;
   window: WindowPrefs;
+  mediaCache: MediaCachePrefs;
   /** Which route the whole app takes to reach the server. Every request this client makes - API,
    *  images, the playback bridge, the outside metadata services - goes through Chromium's net.fetch,
    *  so one session proxy setting covers all of them. */
@@ -37,9 +61,10 @@ export interface Settings {
 
 /** A settings write may name only the rows the user touched, so every nested block is partial too; the
  *  main process rebuilds each block from its own defaults before it lands in the file. */
-export type SettingsPatch = Omit<Partial<Settings>, 'player' | 'danmaku' | 'window'> & {
+export type SettingsPatch = Omit<Partial<Settings>, 'player' | 'danmaku' | 'window' | 'mediaCache'> & {
   player?: Partial<PlayerPrefs>;
   window?: Partial<WindowPrefs>;
+  mediaCache?: Partial<MediaCachePrefs>;
   danmaku?: Omit<Partial<DanmakuSettings>, 'source'> & { source?: Partial<DanmakuSourceConfig> };
 };
 

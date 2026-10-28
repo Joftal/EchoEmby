@@ -18,12 +18,27 @@ import { net } from 'electron';
  * can never play. Every URI in a playlist is therefore rewritten here into this bridge's own address
  * space, and the request for it carries the absolute upstream URL it came from.
  */
+/** The slice of the media cache this server needs: it decides whether a URL is a chunkable file, and it
+ *  answers the request when it can. Kept as an interface so the bridge stays a pipe that knows nothing
+ *  about settings, eviction or the gateway. */
+export interface RangeCache {
+  can(url: string): boolean;
+  handle(url: string, req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean>;
+}
+
 export class StreamBridge {
   private server: http.Server | null = null;
   private port = 0;
   private origin = '';
   private readonly token = randomUUID().slice(0, 16);
   private readonly inflight = new Set<AbortController>();
+  private cache: RangeCache | null = null;
+
+  /** Installed once by AppServices, before any window can play: a cache that arrived halfway through the
+   *  first viewing would answer the second half of the file and forward the first. */
+  useCache(cache: RangeCache): void {
+    this.cache = cache;
+  }
 
   /** Starts listening if needed and returns the address to hand the player for `upstream`. */
   async mount(upstream: string): Promise<string> {
@@ -100,6 +115,18 @@ export class StreamBridge {
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.writeHead(405).end();
       return;
+    }
+    // A cached range is answered here instead of by the gateway; anything the cache cannot vouch for (a
+    // playlist, a subtitle file, a file whose size the server refused to report) falls through unchanged.
+    // The cache decides from the URL itself, because that is the only place MediaSourceId is visible.
+    if (this.cache?.can(upstream)) {
+      try {
+        if (await this.cache.handle(upstream, req, res)) return;
+      } catch {
+        // Nothing was written on this path, or the response is already torn down; either way the forward
+        // below is the plain, always-correct answer.
+      }
+      if (res.headersSent) return;
     }
     await this.forward(upstream, req, res);
   }
