@@ -20,7 +20,6 @@ const DECODERS: { value: PlayerPrefs['hwdec']; label: string }[] = [
 ];
 
 const STEPS = [5000, 10000, 15000, 30000];
-const HOLDS = [2000, 3200, 5000, 8000];
 
 const PROXY_MODES: { value: Settings['proxyMode']; label: string }[] = [
   { value: 'system', label: '系统代理' },
@@ -266,10 +265,10 @@ async function runProbe(): Promise<void> {
                   <span class="tic"><Play :size="15" :stroke-width="1.7" /></span>
                   <h2>播放</h2>
                 </header>
-                <div v-for="n in 5" :key="n" class="row">
+                <div v-for="n in 4" :key="n" class="row">
                   <div class="k">
                     <span class="sk skk"></span>
-                    <span v-if="n === 4 || n === 5" class="sk skhint"></span>
+                    <span v-if="n === 3 || n === 4" class="sk skhint"></span>
                   </div>
                   <i class="sk skg"></i>
                 </div>
@@ -318,17 +317,6 @@ async function runProbe(): Promise<void> {
                   <div class="seg">
                     <button v-for="s in STEPS" :key="s" type="button" :class="{ on: player.seekStepMs === s }" @click="set({ player: { seekStepMs: s } })">
                       {{ s / 1000 }} 秒
-                    </button>
-                  </div>
-                </div>
-
-                <div class="row">
-                  <div class="k">
-                    <b>控制条停留</b>
-                  </div>
-                  <div class="seg">
-                    <button v-for="h in HOLDS" :key="h" type="button" :class="{ on: player.controlsTimeoutMs === h }" @click="set({ player: { controlsTimeoutMs: h } })">
-                      {{ h / 1000 }} 秒
                     </button>
                   </div>
                 </div>

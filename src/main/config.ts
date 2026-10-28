@@ -15,7 +15,6 @@ export const SECRET_MASK = '<set>';
 const DEFAULT_PLAYER: PlayerPrefs = {
   hwdec: 'd3d11va',
   seekStepMs: 10_000,
-  controlsTimeoutMs: 3200,
   hdrHint: false,
   autoNext: true,
 };
@@ -47,7 +46,6 @@ const str = (v: unknown, max = 160): string => (typeof v === 'string' ? v.trim()
 const pickPlayer = (raw: Partial<PlayerPrefs> | undefined): PlayerPrefs => ({
   hwdec: raw?.hwdec && HWDEC.includes(raw.hwdec) ? raw.hwdec : DEFAULT_PLAYER.hwdec,
   seekStepMs: num(raw?.seekStepMs, 1000, 120_000, DEFAULT_PLAYER.seekStepMs),
-  controlsTimeoutMs: num(raw?.controlsTimeoutMs, 800, 30_000, DEFAULT_PLAYER.controlsTimeoutMs),
   hdrHint: raw?.hdrHint === true,
   autoNext: raw?.autoNext !== false,
 });

@@ -37,8 +37,6 @@ export interface PlayerPrefs {
   hwdec: 'd3d11va' | 'cuda' | 'auto' | 'no';
   /** ← / →, and the two skip buttons either side of the play button. */
   seekStepMs: number;
-  /** How long the controls stay up after the pointer stops moving. */
-  controlsTimeoutMs: number;
   /** Hand the HDR signal to the display instead of letting mpv tone-map it to SDR. Off by default: a
    *  screen that cannot show it renders the picture washed out. */
   hdrHint: boolean;

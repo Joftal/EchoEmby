@@ -38,7 +38,10 @@ const session = computed(() => player.session);
 const media = computed(() => player.media);
 const step = computed(() => app.config?.settings.player.seekStepMs || 10000);
 const skipSec = computed(() => Math.round(step.value / 1000));
-const hideAfter = computed(() => app.config?.settings.player.controlsTimeoutMs || 3200);
+/** How long the chrome survives after the pointer stops moving. Not a setting: every player on this
+ *  machine puts its bar away about a second after the hand leaves it, and a knob for the same number only
+ *  made the reader guess which guess was theirs. */
+const HIDE_AFTER_MS = 1000;
 
 const visible = ref(true);
 const dragging = ref(false);
@@ -46,14 +49,28 @@ const hover = ref<{ ratio: number; x: number } | null>(null);
 const rail = ref<HTMLElement | null>(null);
 let timer: ReturnType<typeof setTimeout> | null = null;
 
-/** Anything that can start a hide is funneled through here: a bar that vanishes while a menu is open
- *  would take the way out of it with it. */
+/** The one way the chrome goes away, so the timer and the pointer leaving the window cannot disagree about
+ *  when it is allowed to go: a bar that vanishes while a menu is open takes the way out of it with it, a bar
+ *  that vanishes mid-drag drops the seek, and a paused film is being looked at, not watched past. */
+function hide(): void {
+  if (dragging.value || player.panel || s.value.paused || s.value.status === 'error') return;
+  visible.value = false;
+}
+
+/** Anything that can start a hide is funneled through here. */
 function show(): void {
   visible.value = true;
   if (timer) clearTimeout(timer);
-  timer = setTimeout(() => {
-    if (!dragging.value && !player.panel && !s.value.paused && s.value.status !== 'error') visible.value = false;
-  }, hideAfter.value);
+  timer = setTimeout(hide, HIDE_AFTER_MS);
+}
+
+/** The cursor is off the window — over the desktop, another monitor, another app. Nothing on this film is
+ *  being pointed at any more, so the bar goes now rather than in a second. `relatedTarget` is null only when
+ *  the pointer really left the document; moving between two elements names the one it landed on. */
+function onPointerOut(e: PointerEvent): void {
+  if (e.relatedTarget) return;
+  if (timer) clearTimeout(timer);
+  hide();
 }
 
 const buffered = computed(() => `${(s.value.durationMs ? Math.min(1, s.value.bufferedMs / s.value.durationMs) : 0) * 100}%`);
@@ -248,10 +265,12 @@ onMounted(() => {
   show();
   window.addEventListener('keydown', onKey, true);
   window.addEventListener('mousemove', show);
+  window.addEventListener('pointerout', onPointerOut);
 });
 onUnmounted(() => {
   window.removeEventListener('keydown', onKey, true);
   window.removeEventListener('mousemove', show);
+  window.removeEventListener('pointerout', onPointerOut);
   if (timer) clearTimeout(timer);
   player.detach();
 });
