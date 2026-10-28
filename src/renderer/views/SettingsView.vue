@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import { Database, Globe, MessageSquareText, Play } from 'lucide-vue-next';
-import type { DanmakuSettings, NetProbe, PlayerPrefs, Settings } from '../../shared/types';
+import { AppWindow, Database, Globe, MessageSquareText, Play } from 'lucide-vue-next';
+import type { DanmakuSettings, NetProbe, PlayerPrefs, Settings, WindowPrefs } from '../../shared/types';
 import { useAppStore } from '../stores/app';
 
 const store = useAppStore();
@@ -10,6 +10,7 @@ const router = useRouter();
 
 const settings = computed(() => store.config?.settings);
 const player = computed<PlayerPrefs | undefined>(() => settings.value?.player);
+const win = computed<WindowPrefs | undefined>(() => settings.value?.window);
 const dm = computed<DanmakuSettings | undefined>(() => settings.value?.danmaku);
 
 const DECODERS: { value: PlayerPrefs['hwdec']; label: string }[] = [
@@ -27,6 +28,14 @@ const PROXY_MODES: { value: Settings['proxyMode']; label: string }[] = [
   { value: 'none', label: '不代理' },
 ];
 
+/* 关闭按钮的两种处理：退出程序 / 隐藏至菜单栏。判定在主进程 src/main/index.ts 的 w.on('close') 里，
+ * 每次按压现读设置，所以改完立刻生效；隐藏时播放器不动（它会跑在托盘里看不见的地方），退出则把它连位置
+ * 一起收掉 —— 那条 stopped 上报才决定下次从哪儿接着看。 */
+const CLOSE_ACTIONS: { value: WindowPrefs['closeAction']; label: string }[] = [
+  { value: 'quit', label: '退出程序' },
+  { value: 'tray', label: '隐藏至菜单栏' },
+];
+
 const SOURCES: { value: DanmakuSettings['source']['type']; label: string }[] = [
   { value: 'bilibili', label: 'Bilibili' },
   { value: 'dandan', label: '弹弹 play' },
@@ -34,6 +43,7 @@ const SOURCES: { value: DanmakuSettings['source']['type']; label: string }[] = [
 
 const SECTIONS = [
   { id: 'play', label: '播放', icon: Play },
+  { id: 'window', label: '窗口', icon: AppWindow },
   { id: 'danmaku', label: '弹幕', icon: MessageSquareText },
   { id: 'meta', label: '元数据', icon: Database },
   { id: 'network', label: '网络', icon: Globe },
@@ -277,6 +287,21 @@ async function runProbe(): Promise<void> {
             <section class="group">
               <div class="pane">
                 <header class="ph">
+                  <span class="tic"><AppWindow :size="15" :stroke-width="1.7" /></span>
+                  <h2>窗口</h2>
+                </header>
+                <div class="row">
+                  <div class="k">
+                    <span class="sk skk"></span>
+                    <span class="sk skhint"></span>
+                  </div>
+                  <i class="sk skg"></i>
+                </div>
+              </div>
+            </section>
+            <section class="group">
+              <div class="pane">
+                <header class="ph">
                   <span class="tic"><MessageSquareText :size="15" :stroke-width="1.7" /></span>
                   <h2>弹幕</h2>
                 </header>
@@ -339,6 +364,27 @@ async function runProbe(): Promise<void> {
                   <button type="button" class="sw" :class="{ on: player.hdrHint }" @click="set({ player: { hdrHint: !player.hdrHint } })">
                     <span class="track"><i></i></span>
                   </button>
+                </div>
+              </div>
+            </section>
+
+            <section class="group" data-sec="window">
+              <div class="pane">
+                <header class="ph">
+                  <span class="tic"><AppWindow :size="15" :stroke-width="1.7" /></span>
+                  <h2>窗口</h2>
+                </header>
+
+                <div class="row">
+                  <div class="k">
+                    <b>点关闭按钮时</b>
+                    <i>{{ win?.closeAction === 'tray' ? '标题栏的 × 与 Alt+F4 只把界面藏进托盘，程序与播放都不停；托盘图标上可以再打开或退出' : '标题栏的 × 与 Alt+F4 直接退出，会一起关掉播放器，看到哪里会写回服务器' }}</i>
+                  </div>
+                  <div class="seg">
+                    <button v-for="o in CLOSE_ACTIONS" :key="o.value" type="button" :class="{ on: win?.closeAction === o.value }" @click="set({ window: { closeAction: o.value } })">
+                      {{ o.label }}
+                    </button>
+                  </div>
                 </div>
               </div>
             </section>

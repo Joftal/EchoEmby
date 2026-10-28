@@ -10,8 +10,17 @@ export interface Account {
   lastUsed: number;
 }
 
+/** What the window's own close button does. 退出程序 ends the whole process, player included; 最小化到任务栏
+ *  leaves the app running with nothing on screen but its taskbar button, which is how a machine that is
+ *  also the media box keeps a film one click away. Read when the button is pressed, not at launch. */
+export interface WindowPrefs {
+  /** 退出程序 or 隐藏至菜单栏 — what the × does. `tray` keeps the app and the player alive behind the tray icon. */
+  closeAction: 'quit' | 'tray';
+}
+
 export interface Settings {
   player: PlayerPrefs;
+  window: WindowPrefs;
   /** Which route the whole app takes to reach the server. Every request this client makes - API,
    *  images, the playback bridge, the outside metadata services - goes through Chromium's net.fetch,
    *  so one session proxy setting covers all of them. */
@@ -24,8 +33,9 @@ export interface Settings {
 
 /** A settings write may name only the rows the user touched, so every nested block is partial too; the
  *  main process rebuilds each block from its own defaults before it lands in the file. */
-export type SettingsPatch = Omit<Partial<Settings>, 'player' | 'danmaku'> & {
+export type SettingsPatch = Omit<Partial<Settings>, 'player' | 'danmaku' | 'window'> & {
   player?: Partial<PlayerPrefs>;
+  window?: Partial<WindowPrefs>;
   danmaku?: Omit<Partial<DanmakuSettings>, 'source'> & { source?: Partial<DanmakuSourceConfig> };
 };
 

@@ -2,7 +2,7 @@ import { app, safeStorage } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
-import type { Account, AppConfig, DanmakuSettings, DanmakuSourceConfig, MetaKeys, PlayerPrefs, Settings, SettingsPatch } from '../shared/types';
+import type { Account, AppConfig, DanmakuSettings, DanmakuSourceConfig, MetaKeys, PlayerPrefs, Settings, SettingsPatch, WindowPrefs } from '../shared/types';
 
 const HWDEC = ['d3d11va', 'cuda', 'auto', 'no'] as const;
 const PROXY_MODES = ['system', 'manual', 'none'] as const;
@@ -19,6 +19,12 @@ const DEFAULT_PLAYER: PlayerPrefs = {
   autoNext: true,
 };
 
+const CLOSE_ACTIONS = ['quit', 'tray'] as const;
+
+/** 退出程序, because a window that goes away without a word is what every switch in this file starts from:
+ *  the app has no tray and no menu, so an unusual default would leave a user with no obvious way out. */
+const DEFAULT_WINDOW: WindowPrefs = { closeAction: 'quit' };
+
 const DEFAULT_DANMAKU: DanmakuSettings = {
   enabled: false,
   source: { type: 'bilibili', url: '', token: '' },
@@ -33,6 +39,7 @@ const DEFAULT_DANMAKU: DanmakuSettings = {
 
 const DEFAULT_SETTINGS: Settings = {
   player: { ...DEFAULT_PLAYER },
+  window: { ...DEFAULT_WINDOW },
   proxyMode: 'system',
   proxyUrl: '',
   danmaku: { ...DEFAULT_DANMAKU, source: { ...DEFAULT_DANMAKU.source } },
@@ -49,6 +56,18 @@ const pickPlayer = (raw: Partial<PlayerPrefs> | undefined): PlayerPrefs => ({
   hdrHint: raw?.hdrHint === true,
   autoNext: raw?.autoNext !== false,
 });
+
+/* 'minimize' is what this row used to be called; a config written before the tray existed must map onto the
+   behaviour that keeps the app running, not fall back to quitting — that would turn an old setting into the
+   opposite of what was asked for, silently. The value is read as a bare string because that is all an old
+   config.json is: the type would make the legacy spelling unreachable. */
+const pickWindow = (raw: { closeAction?: string } | undefined): WindowPrefs => {
+  const v = raw?.closeAction;
+  if (v === 'minimize') return { closeAction: 'tray' };
+  return {
+    closeAction: v && (CLOSE_ACTIONS as readonly string[]).includes(v) ? (v as WindowPrefs['closeAction']) : DEFAULT_WINDOW.closeAction,
+  };
+};
 
 const pickDanmaku = (raw: Partial<DanmakuSettings> | undefined): DanmakuSettings => {
   const src: Partial<DanmakuSourceConfig> = raw?.source || {};
@@ -72,6 +91,7 @@ const pickDanmaku = (raw: Partial<DanmakuSettings> | undefined): DanmakuSettings
     wipe the sibling keys it did not mention. */
 const pickSettings = (raw: Partial<Settings> | undefined): Settings => ({
   player: pickPlayer(raw?.player),
+  window: pickWindow(raw?.window),
   proxyMode: raw?.proxyMode && PROXY_MODES.includes(raw.proxyMode) ? raw.proxyMode : DEFAULT_SETTINGS.proxyMode,
   proxyUrl: str(raw?.proxyUrl),
   danmaku: pickDanmaku(raw?.danmaku),
@@ -218,6 +238,7 @@ export function saveSettings(patch: SettingsPatch): Settings {
     ...cfg.settings,
     ...patch,
     player: { ...cfg.settings.player, ...(patch.player || {}) },
+    window: { ...cfg.settings.window, ...(patch.window || {}) },
     danmaku: { ...cfg.settings.danmaku, ...(patch.danmaku || {}), source },
   };
   cfg.settings = pickSettings(next);

@@ -1,9 +1,11 @@
 import { app, BrowserWindow, shell } from 'electron';
+import type { Tray } from 'electron';
 import path from 'node:path';
 import * as config from './config';
 import { applyProxy } from './net';
 import { startNetMeter } from './netmeter';
 import { AppServices } from './ipc';
+import { createTray, revealWindow } from './tray';
 
 const DEV_URL = process.env.VITE_DEV_URL || '';
 const rendererRoot = path.join(app.getAppPath(), 'dist', 'renderer');
@@ -13,6 +15,12 @@ const rendererUrl = (hash: string): string =>
 
 let mainWindow: BrowserWindow | null = null;
 let services: AppServices | null = null;
+/** Held for the life of the app: a Tray that nothing references is garbage-collected and the icon vanishes. */
+let tray: Tray | null = null;
+/** Set as soon as the app is on its way out, by whichever gesture asked for it. The window's own close
+ *  handler reads it: without the flag, the close that follows 「退出程序」 would be read as the user pressing
+ *  × again and get minimized (or re-quit) instead of going through with the exit. */
+let quitting = false;
 
 const getMainWindow = () => mainWindow;
 
@@ -36,6 +44,25 @@ function createMainWindow(): BrowserWindow {
   });
   w.once('ready-to-show', () => w.show());
   w.setMenuBarVisibility(false);
+  /* The × lives in the renderer's own title bar (the window is frameless), but Alt+F4 and the window
+     manager's close reach the same event, so the decision belongs here rather than in the button: one
+     place, every gesture. The setting is read when the button is pressed, not when the app launched, so
+     changing the row in 设置 does not need a restart. */
+  w.on('close', e => {
+    if (quitting) return;
+    if (config.load().settings.window.closeAction === 'tray') {
+      /* Hidden, not minimized: 隐藏至菜单栏 means the window leaves the taskbar too, and only the tray icon
+         brings it back. Playback is untouched — the player's own windows are separate and stay where they are. */
+      e.preventDefault();
+      w.hide();
+      return;
+    }
+    /* 退出程序 closes the player with it. Closing only this window would leave the overlay and the mpv
+       process running with no page to control them — the film keeps playing and nothing can stop it but
+       the task manager — so the app quits and the shutdown below takes the player down first. */
+    e.preventDefault();
+    app.quit();
+  });
   w.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/.test(url)) shell.openExternal(url);
     return { action: 'deny' };
@@ -49,11 +76,9 @@ function createMainWindow(): BrowserWindow {
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
-    if (mainWindow?.isMinimized()) mainWindow.restore();
-    mainWindow?.show();
-    mainWindow?.focus();
-  });
+  /* Launching the app again is the second way back from the tray, so it has to do what 显示主界面 does:
+     a hidden window has to be shown, not merely focused. */
+  app.on('second-instance', () => revealWindow(mainWindow));
 
   // Chromium's network stack carries every request this app makes, so the saved proxy mode is applied
   // to the session once here and again on each change; the direct route to this server measured
@@ -78,9 +103,11 @@ if (!app.requestSingleInstanceLock()) {
     services = new AppServices(getMainWindow, rendererUrl);
     services.register();
     createMainWindow();
+    tray = createTray(getMainWindow);
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
+      else revealWindow(mainWindow);
     });
   });
 
@@ -91,6 +118,11 @@ if (!app.requestSingleInstanceLock()) {
   // exit goes ahead without it after a beat.
   let cleanupStarted = false;
   app.on('before-quit', e => {
+    quitting = true;
+    /* The icon outlives the window, so it has to go when the exit is already decided: otherwise a shutdown
+       that waits on the player's stop (up to 5s) leaves a tray icon nothing can answer. */
+    tray?.destroy();
+    tray = null;
     if (cleanupStarted) return;
     e.preventDefault();
     cleanupStarted = true;
