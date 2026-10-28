@@ -35,6 +35,11 @@ export interface PlayerOut {
   /** Where the film stopped, sent on the way out so the lobby can write the number onto the card it
    *  already holds instead of re-reading the whole page to find it. */
   watched(w: WatchedRecord): void;
+  /** 播放时隐藏主程序 — asked once per viewing, when the picture actually starts. The controller does not
+   *  decide whether the row is on: that answer lives in the settings and is read where the window is.
+   *  Answers whether the window was actually hidden, so a call that changed nothing does not use up the
+   *  one ask this viewing gets. */
+  hideMain(): boolean;
   /** Bring the library window back once the player is gone. */
   reveal(): void;
 }
@@ -108,6 +113,9 @@ export class PlayerController {
    *  `MediaSourceId` belongs to one file, so it cannot travel to the next episode; the shape word can.
    *  See `play`, which answers a sibling's negotiation from it. */
   private seriesVersion = new Map<string, string>();
+  /** Whether this viewing has already asked for the library window to be hidden. Per viewing, not per item:
+   *  a user who brought the page back while a film played must not have it taken away again by 下一集. */
+  private hidMain = false;
   /** The version of *this* file this machine has decided to play, per item — and the only place that answer
    *  is kept. Both cards write it: the 播放源 card inside the player and, through `chooseSource`, the
    *  播放资源 card on the page, which used to hold a second copy of the same choice and hand it to `play`
@@ -354,6 +362,10 @@ export class PlayerController {
     const merged: PlayerState = { ...s, netBytesPerSec: s.netBytesPerSec + Math.round(appBytesPerSec()) };
     this.state = merged;
     this.out.state(merged);
+    /* 播放时隐藏主程序 happens on the first frame rather than when 播放 was pressed: mpv takes a beat to open
+       the file, and a window that vanished before the picture arrived would leave the desktop empty for
+       that whole beat — the one moment where nothing on screen even says what is going on. */
+    if (merged.status === 'playing' && !this.hidMain) this.hidMain = this.out.hideMain();
     if (s.status === 'ended') void this.onEnded().catch(e => this.fail(e));
   }
 
@@ -755,6 +767,7 @@ export class PlayerController {
 
   async close(): Promise<void> {
     this.tearing = true;
+    this.hidMain = false;
     // The stop is written before anything is torn down: mpv still holds the real position, and the number
     // the lobby is handed must be the one the server just took.
     const w = await this.flushStop(undefined, 'close');
@@ -777,6 +790,7 @@ export class PlayerController {
    *  The server still gets the stopped report; the lobby's write-back does not, because the page that
    *  would read it is being destroyed and the ask it triggers would only delay the exit. */
   async shutdown(): Promise<void> {
+    this.hidMain = false;
     await this.flushStop(undefined, 'quit');
     this.current = null;
     await this.kernel?.quit().catch(() => undefined);

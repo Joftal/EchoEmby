@@ -386,6 +386,16 @@ async function runProbe(): Promise<void> {
                     </button>
                   </div>
                 </div>
+
+                <div class="row">
+                  <div class="k">
+                    <b>播放时隐藏主程序</b>
+                    <i>画面出来的那一刻把主界面收进托盘，关掉播放器后自己回来</i>
+                  </div>
+                  <button type="button" class="sw" :class="{ on: win?.hideOnPlay }" @click="set({ window: { hideOnPlay: !win?.hideOnPlay } })">
+                    <span class="track"><i></i></span>
+                  </button>
+                </div>
               </div>
             </section>
 

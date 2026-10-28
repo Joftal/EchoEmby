@@ -10,6 +10,7 @@ import { tmdbMeta, tmdbSeasonCast, tmdbSeasonStills, tmdbRelated, tmdbImages, tm
 import { calendarSchedule } from './meta/calendar';
 import { csmGuide } from './meta/csm';
 import { PlayerWindows } from './player/windows';
+import { revealWindow } from './tray';
 import { PlayerController, type PlayerOut } from './player/session';
 import * as danmaku from './danmaku';
 import { applyProxy, probeNetwork } from './net';
@@ -39,7 +40,10 @@ export class AppServices {
       session: s => this.broadcast('player:session', s),
       media: m => this.broadcast('player:media', m),
       watched: w => this.broadcast('player:watched', w),
-      reveal: () => this.getMainWindow()?.show(),
+      hideMain: () => this.hideForPlayback(),
+      /* Restoring goes through the same function the tray uses, so a window that was minimized rather than
+         hidden still comes back as itself and not as a taskbar button asking for a second click. */
+      reveal: () => revealWindow(this.getMainWindow()),
     };
     this.player = new PlayerController(this.windows, out, this.rendererUrl);
   }
@@ -53,6 +57,18 @@ export class AppServices {
     const acc = config.activeAccount();
     if (!acc) throw new EmbyError('还没有登录任何服务器', 401);
     return new EmbyClient(acc, this.identity());
+  }
+
+  /** 播放时隐藏主程序: the same act × performs under 隐藏至菜单栏, made by the player instead of by a finger.
+   *  Read from the settings at the moment it fires, so turning the row off while a film runs takes effect on
+   *  the next viewing rather than at a relaunch. A window that is already hidden is left alone — and it is
+   *  never minimized, because the tray icon is what brings the library back. */
+  private hideForPlayback(): boolean {
+    if (!config.load().settings.window.hideOnPlay) return false;
+    const w = this.getMainWindow();
+    if (!w || w.isDestroyed() || !w.isVisible()) return false;
+    w.hide();
+    return true;
   }
 
   private broadcast(channel: string, payload: unknown): void {

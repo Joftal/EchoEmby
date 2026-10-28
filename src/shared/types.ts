@@ -10,12 +10,16 @@ export interface Account {
   lastUsed: number;
 }
 
-/** What the window's own close button does. 退出程序 ends the whole process, player included; 最小化到任务栏
- *  leaves the app running with nothing on screen but its taskbar button, which is how a machine that is
- *  also the media box keeps a film one click away. Read when the button is pressed, not at launch. */
+/** How the library window behaves around a viewing. 退出程序 ends the whole process, player included;
+ *  隐藏至菜单栏 leaves the app running with nothing on screen but its tray icon, which is how a machine that
+ *  is also the media box keeps a film one click away. Read when the gesture happens, not at launch. */
 export interface WindowPrefs {
   /** 退出程序 or 隐藏至菜单栏 — what the × does. `tray` keeps the app and the player alive behind the tray icon. */
   closeAction: 'quit' | 'tray';
+  /** 播放时隐藏主程序: hide the library window by the same route × takes under `tray`, at the moment the
+   *  picture starts rather than at a press of the button. Off by default — a screen that also browses has
+   *  nothing to gain from an empty desktop, and the film plays in a window of its own either way. */
+  hideOnPlay: boolean;
 }
 
 export interface Settings {

@@ -23,7 +23,7 @@ const CLOSE_ACTIONS = ['quit', 'tray'] as const;
 
 /** 退出程序, because a window that goes away without a word is what every switch in this file starts from:
  *  the app has no tray and no menu, so an unusual default would leave a user with no obvious way out. */
-const DEFAULT_WINDOW: WindowPrefs = { closeAction: 'quit' };
+const DEFAULT_WINDOW: WindowPrefs = { closeAction: 'quit', hideOnPlay: false };
 
 const DEFAULT_DANMAKU: DanmakuSettings = {
   enabled: false,
@@ -61,11 +61,15 @@ const pickPlayer = (raw: Partial<PlayerPrefs> | undefined): PlayerPrefs => ({
    behaviour that keeps the app running, not fall back to quitting — that would turn an old setting into the
    opposite of what was asked for, silently. The value is read as a bare string because that is all an old
    config.json is: the type would make the legacy spelling unreachable. */
-const pickWindow = (raw: { closeAction?: string } | undefined): WindowPrefs => {
-  const v = raw?.closeAction;
-  if (v === 'minimize') return { closeAction: 'tray' };
+const pickWindow = (raw: Partial<WindowPrefs> | undefined): WindowPrefs => {
+  const v = raw?.closeAction as string | undefined;
   return {
-    closeAction: v && (CLOSE_ACTIONS as readonly string[]).includes(v) ? (v as WindowPrefs['closeAction']) : DEFAULT_WINDOW.closeAction,
+    closeAction: v === 'minimize' || v === 'tray'
+      ? 'tray'
+      : v && (CLOSE_ACTIONS as readonly string[]).includes(v) ? (v as WindowPrefs['closeAction']) : DEFAULT_WINDOW.closeAction,
+    /* Only a literal true turns this on: a config written before the row existed has no key at all, and a
+       missing key must read as 「don't hide my window」 rather than as the falsy half of a ternary. */
+    hideOnPlay: raw?.hideOnPlay === true,
   };
 };
 
