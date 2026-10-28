@@ -85,6 +85,14 @@ export interface PlayerPrefs {
   hdrHint: boolean;
   /** Move to the next episode when the file reaches its end. */
   autoNext: boolean;
+  /** Which subtitle track a file with several opens on: a value from `SUB_LANGS` (`chi`, `chi-hant`, `eng`…),
+   *  `'none'` for 关闭字幕, or `''` for 自动 — the file's own default, which is what the app did before this
+   *  row existed. Stored as the picker's own value rather than as a language code so a config file reads as
+   *  the answer the user chose, and validated against that same list when it is loaded. */
+  subLang: string;
+  /** The same question for audio. Only `''` or a language: there is no 关闭音轨, and a film played silently
+   *  is never what a default setting should mean. */
+  audioLang: string;
 }
 
 export interface DanmakuSourceConfig {

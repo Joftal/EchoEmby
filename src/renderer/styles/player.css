@@ -578,6 +578,9 @@
   color: var(--pl-text);
 }
 .pl-card .kind {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 15px;
   font-weight: 600;
   color: var(--pl-text);

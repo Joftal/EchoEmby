@@ -313,6 +313,7 @@ export class MpvKernel {
           void this.pipe.call(['set_property', 'playback-time', this.startAt]).catch(() => undefined);
           this.startAt = 0;
         }
+        this.applyWanted();
         this.mark(true);
         return;
       }
@@ -393,6 +394,7 @@ export class MpvKernel {
         return;
       case 'track-list':
         r.tracks = Array.isArray(v) ? v.map(mapTrack).filter(Boolean) as PlayerTrack[] : [];
+        this.applyWanted();
         return;
       case 'chapter-list':
         r.chapters = Array.isArray(v)
@@ -619,6 +621,52 @@ export class MpvKernel {
     await this.pipe.call(['set_property', 'speed', Math.max(0.1, Math.min(4, v))]);
   }
 
+  /** The streams the 首选语言 settings answered with, waiting for the file to be open: `audio`/`subtitle` are
+   *  the server's own `Index` for those streams — the one number mpv repeats as `ff-index` — and `'no'` is
+   *  关闭字幕.
+   *
+   *  It cannot be set before the load. mpv's `aid`/`sid` take a *track* id, which is handed out when a file
+   *  is opened and means nothing before that, so a property written on an idle pipe would either be refused or,
+   *  worse, sit waiting and land on whatever opened next. The list mpv publishes with the file is the first
+   *  moment both numbers exist and can be lined up, and `file-loaded` is the second chance for a file whose
+   *  list arrives in more than one pass as the demuxer adds streams. Each answer is applied once and then
+   *  forgotten, so a knob the viewer turns by hand later is never pulled back. */
+  private wanted: { audio?: number; subtitle?: number | 'no' } | null = null;
+
+  /** Called by the session before every load — a first play and a version switch alike — with the answer for
+   *  the file about to open, or null when nothing is to be forced. Null is a real answer: it is what clears a
+   *  pick that the previous file never matched. */
+  setNextTracks(w: { audio?: number; subtitle?: number | 'no' } | null): void {
+    this.wanted = w && (w.audio !== undefined || w.subtitle !== undefined) ? w : null;
+  }
+
+  private applyWanted(): void {
+    const w = this.wanted;
+    if (!w) return;
+    const tracks = this.raw.tracks;
+    if (!tracks.length) return;
+    if (w.audio !== undefined) {
+      const t = tracks.find(t => t.kind === 'audio' && t.ffIndex === w.audio);
+      if (t) {
+        w.audio = undefined;
+        void this.pipe.call(['set_property', 'aid', t.id]).catch(() => undefined);
+      }
+    }
+    if (w.subtitle !== undefined) {
+      const want = w.subtitle;
+      if (want === 'no') {
+        w.subtitle = undefined;
+        void this.pipe.call(['set_property', 'sid', 'no']).catch(() => undefined);
+      } else {
+        const t = tracks.find(t => t.kind === 'subtitle' && t.ffIndex === want);
+        if (t) {
+          w.subtitle = undefined;
+          void this.pipe.call(['set_property', 'sid', t.id]).catch(() => undefined);
+        }
+      }
+    }
+    if (w.audio === undefined && w.subtitle === undefined) this.wanted = null;
+  }
   /** sid/aid/vid take a track id, "no" (off) or "auto" (let mpv choose). */
   async setTrack(kind: 'video' | 'audio' | 'subtitle', id: TrackSelection): Promise<void> {
     const prop = kind === 'video' ? 'vid' : kind === 'audio' ? 'aid' : 'sid';

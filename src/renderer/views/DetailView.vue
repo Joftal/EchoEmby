@@ -743,6 +743,39 @@ let techTrigger: HTMLElement | null = null;
    main side while the card paints on this side: the strip has to be pressed before the ask returns.
    Keyed by item id because the popup's card and the 选集 row it was opened from name the same episode. */
 const wantedSource = ref<Record<string, string>>({});
+/** The file the player has open, as the player reports it — not as this page asked for it: a pick that failed
+ *  never becomes a session, and a version switched on the player's own 播放源 card must move this page's
+ *  「使用中」 with it. Keyed by item id for the same reason the pick is: a 分集 popup and the card behind it
+ *  are one episode. Read once on mount, because a page opened while something is already playing gets no
+ *  session event until the next switch, and again on every publish, which is the case that keeps it live. */
+const playing = ref<{ itemId: string; sourceId: string } | null>(null);
+const usingFor = (it: LibraryItem | null): string =>
+  it && playing.value && playing.value.itemId === it.id ? playing.value.sourceId : '';
+/** One read of the controller's answer, written only when it has one: a null means nothing is playing, and
+ *  that case is already covered by the session event that carries the close. */
+function readPlaying(): void {
+  void window.echoemby.player.session().then(r => {
+    if (r.ok && r.data) playing.value = { itemId: r.data.itemId, sourceId: r.data.sourceId };
+  });
+}
+/** Reading once on mount is not enough, and this is the case it misses: 继续观看 on the home row starts
+ *  playback and navigates in one click, so this page can mount before the session exists — it asks, hears
+ *  nothing, and (having subscribed after the publish) never hears again. The 播放资源 card then shows no
+ *  「使用中」 on the very file the picture is coming out of, for as long as the reader stays on the page.
+ *  Three reads over the first seconds cover that race; each writes the same pair the event writes, and the
+ *  last one wins, so a session that started and ended in between still lands on the truth. */
+const playingTimers: number[] = [];
+function readPlayingSoon(): void {
+  readPlaying();
+  playingTimers.push(window.setTimeout(readPlaying, 700), window.setTimeout(readPlaying, 2200));
+}
+/** A window hidden behind the player still receives the event, but one that was minimised or throttled
+ *  while a session started can be handed it late; coming back to the front is the moment to ask again. */
+function onVisible(): void { if (!document.hidden) readPlaying(); }
+onMounted(() => {
+  document.addEventListener('visibilitychange', onVisible);
+  readPlayingSoon();
+});
 const onTechPick = (itemId: string, sourceId: string): void => {
   const prev = wantedSource.value[itemId];
   wantedSource.value[itemId] = sourceId;
@@ -769,14 +802,25 @@ async function syncWanted(id: string): Promise<void> {
  *  it remounts every time it opens, and a locally-held `picked = 0` there showed 第一格 pressed while 播放
  *  still loaded the second. */
 const wantedFor = (it: LibraryItem | null): string | undefined => (it ? wantedSource.value[it.id] : undefined);
-watch(techInline, it => void syncWanted(it?.id || ''), { immediate: true });
+watch(techInline, it => {
+  void syncWanted(it?.id || '');
+  // The card only paints once the row with its `sources` has arrived, which on a cold page is seconds after
+  // the mount read; asking again here is what makes the badge appear on a page opened mid-playback.
+  if (it) readPlaying();
+}, { immediate: true });
 /* A version switched on the player's own 播放源 card must move this page's mark too. The session event is
    already sent to every window, so this is the library window reading the same publish the player reads;
    without it a DetailView that stayed mounted behind the player kept pressing the older row. */
 const offPlayerSession = window.echoemby.player.onSession(s => {
+  playing.value = s ? { itemId: s.itemId, sourceId: s.sourceId } : null;
   if (s) wantedSource.value[s.itemId] = s.sourceId;
 });
-onBeforeUnmount(() => offPlayerSession());
+onBeforeUnmount(() => {
+  offPlayerSession();
+  document.removeEventListener('visibilitychange', onVisible);
+  for (const t of playingTimers) window.clearTimeout(t);
+  playingTimers.length = 0;
+});
 /* Three plates are a guess, because the ask has not answered yet: whether the 字幕 band appears at all, and how
    tall the version strip, the 音频 card and that band came in. One season is one release — 小林家的龙女仆
    answers 10 consecutive episodes with the same sheet, 44 strip and 138.1 audio and an 88.4 band — so the page
@@ -1721,7 +1765,7 @@ const LEVEL_WORD = ['无', '极少', '轻微', '中等', '较多', '严重'];
 
         <section v-if="techInline" class="block">
           <h2>播放资源</h2>
-          <TechCard :item="techInline" :wanted="wantedFor(techInline)" @pick="onTechPick" />
+          <TechCard :item="techInline" :wanted="wantedFor(techInline)" :using="usingFor(techInline)" @pick="onTechPick" />
         </section>
 
         <!-- A collection's only content. The cards are the lobby's own, so a member opens the same page from
@@ -1823,7 +1867,7 @@ const LEVEL_WORD = ['无', '极少', '轻微', '中等', '较多', '严重'];
                 <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6.5 6.5 17.5 17.5M17.5 6.5 6.5 17.5" /></svg>
               </button>
             </header>
-            <TechCard v-if="techPop.item" :item="techPop.item" :wanted="wantedFor(techPop.item)" @pick="onTechPick" />
+            <TechCard v-if="techPop.item" :item="techPop.item" :wanted="wantedFor(techPop.item)" :using="usingFor(techPop.item)" @pick="onTechPick" />
             <p v-else-if="techPop.dead === 'empty'" class="tp-msg">这台服务器在这一集没有可播的文件。</p>
             <p v-else-if="techPop.dead === 'failed'" class="tp-msg">{{ techPop.note }}</p>
             <div v-else class="tp-load" aria-hidden="true">

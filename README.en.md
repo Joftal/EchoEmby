@@ -14,7 +14,7 @@
 - Home page recommendations, continue watching
 - Details: seasons, episodes, cast, stills, genres, similar works
 - Library browsing with filters and search
-- Playback: hardware decoding, subtitles and audio tracks, chapters, speed, auto-next
+- Playback: hardware decoding, subtitles and audio tracks, preferred languages, chapters, speed, auto-next
 - Danmaku from dandanplay
 - Ratings and Chinese synopses filled in from TMDB, Rotten Tomatoes, Bangumi, Trakt and others
 - Keyboard control

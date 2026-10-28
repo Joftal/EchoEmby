@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { codecLabel, enName, fmtDateTime, fmtRate, fmtRuntime, fmtSize, formatWord, langName, layoutWord, NO_LANG, openBrackets, rangeWord, zhTrackWords } from '../../lib/format';
-import { versionLabel } from '../../../shared/version-label';
+import { versionLabel, versionNames } from '../../../shared/version-label';
+import { pickTracks, type TrackPick } from '../../../shared/track-pick';
+import { useAppStore } from '../../stores/app';
 import { hasContent, type LibraryItem, type MediaStreamInfo } from '../../../shared/types';
 
 /** One file's technical sheet: the version strip, the video card, every audio track, the subtitle list,
@@ -20,7 +22,13 @@ import { hasContent, type LibraryItem, type MediaStreamInfo } from '../../../sha
 /* The version this page already pointed at, when it has one: the popup is `v-if`, so closing it destroys
    this component and reopening it starts at 0 — while the page still holds the pick and 播放 would load the
    second file under a card showing the first pressed. The page owns the answer, so it passes it in. */
-const props = defineProps<{ item: LibraryItem | null; wanted?: string }>();
+const props = defineProps<{ item: LibraryItem | null; wanted?: string; using?: string }>();
+/** The file the player actually has open, which is a different fact from `wanted`: that one is the version
+ *  this page would hand the player, this one is the version it already has. Two versions of one film differ
+ *  by nothing on the strip but a range word, so without this the reader who walked in from 播放 cannot tell
+ *  which of the two files the picture is coming out of — and after pressing the other card, whether the
+ *  press took. Only one strip can ever say it; the page mirrors the session event to say which. */
+const live = (id: string): boolean => !!props.using && id === props.using;
 /** The pick is not only this card's business: 播放 on this page has to load the version the reader was
  *  reading, so the page keeps the id and hands it to the player when playback starts. */
 const emit = defineEmits<{ pick: [itemId: string, sourceId: string] }>();
@@ -64,6 +72,38 @@ const pick = (i: number): void => {
   if (props.item) emit('pick', props.item.id, s.id);
 };
 const vstream = computed(() => described.value?.video);
+/** Which track the 首选语言 settings would open this version on, answered by the picker the player itself
+ *  runs (`pickTracks`) rather than by a second opinion written here: a card that guessed differently from
+ *  the player would be worse than a card that said nothing. The card can only say it, not do it — pressing a
+ *  version strip re-runs the same picker in the controller.
+ *
+ *  Both lists belong to the version being described, so pressing the other strip re-answers them: 霸王别姬's
+ *  2160p opens on 原版国语 TrueHD and its 1080p on a flac, and one TL;DR mark carried across the switch would
+ *  name a track the other file does not have. */
+const app = useAppStore();
+const prefs = computed(() => app.config?.settings.player);
+const planned = computed<TrackPick>(() => {
+  const src = described.value;
+  if (!src) return {};
+  return pickTracks({ audio: src.audio || [], subtitle: src.subtitle || [] }, { audioLang: prefs.value?.audioLang, subLang: prefs.value?.subLang });
+});
+/** The two answers as stream indexes, which is what the rows below carry. `-1` is 「nothing was picked」 —
+ *  no preference set, or a preference this file has no track for — and it is the state the card draws
+ *  nothing for, because the file's own default still decides and the 默认 tag already says which that is. */
+const audPick = computed(() => planned.value.audio?.index ?? -1);
+const subPick = computed(() => (typeof planned.value.subtitle === 'string' ? -1 : planned.value.subtitle?.index ?? -1));
+const subOff = computed(() => planned.value.subtitle === 'off');
+/** Which subtitle track the card frames, preference or not: the picker's answer when the preference found a
+ *  track, and otherwise the file's own single default — the row mpv would switch on for a file nobody has
+ *  an opinion about. `-1` is 「nothing to frame」: 关闭字幕, or a file that marks no single default, where
+ *  the choice is left to the player and a frame would be this card guessing. */
+const subShown = computed(() => {
+  if (subOff.value) return -1;
+  if (subPick.value >= 0) return subPick.value;
+  const list = described.value?.subtitle || [];
+  const def = onlyDefault(list);
+  return def >= 0 ? list[def].index ?? -1 : -1;
+});
 
 /** What the server used to tell two tracks of one language apart, opened up for the pass that translates
  *  it — see `openBrackets`, which the player's subtitle menu reads through the same pass so the two
@@ -90,6 +130,14 @@ const onlyDefault = <T extends { isDefault?: boolean }>(list: T[]): number => {
 const audioRows = computed(() => {
   const list = described.value?.audio || [];
   const def = onlyDefault(list);
+  /* The row the frame goes on: the preference's own pick when it found one, and otherwise the file's single
+     default — the same fallback the subtitle list makes, so 「which one will I hear」 has an answer on every
+     file rather than only on the ones a preference happens to cover. A file marking no default at all (18 of
+     474 sources) is the one case with no frame: there the player's own first-track rule decides, and the
+     card says nothing rather than guessing at it. */
+  const frameAt = audPick.value >= 0
+    ? list.findIndex(a => a.index === audPick.value)
+    : def >= 0 ? def : -1;
   const rows = list.map((a, i) => {
     const nums = [
       langName(a.lang) || NO_LANG,
@@ -103,7 +151,7 @@ const audioRows = computed(() => {
       // stayed and the row read 「bit」 in Latin letters beside a Chinese line.
       a.bitDepth ? `${a.bitDepth} 位` : '',
     ].filter(Boolean).join(' · ');
-    return { nums, name: audioName(a, nums), isDefault: i === def };
+    return { nums, name: audioName(a, nums), isDefault: i === def, idx: a.index, pick: i === frameAt };
   });
   /* Two rows that come out word for word the same are two tracks the gateway reports no field apart.
      Measured 2026-10-27 over 23,027 sources: 231 files hold 550 such rows, 18 of them three or more alike,
@@ -250,6 +298,12 @@ const subGroups = computed(() => {
     else if (prev !== raw) lift.add(c.lang);
   });
   const chips = lift.size ? subs.map((_, i) => keyOf(i, lift.has(heads[i]))) : cut;
+  /** Which chip the 首选 language would land on. The mark has to travel with the key the chip was cut from,
+   *  not with the words printed on it: two rows that fold into one label — and the `×N` that follows them —
+   *  are still two tracks, and a reader comparing this card against the player's menu needs the one the
+   *  player will really switch on. Resolved by stream index, the same address the picker answers with. */
+  const pickKeys = new Set<string>();
+  if (subShown.value >= 0) chips.forEach((c, i) => { if (subs[i].index === subShown.value) pickKeys.add(c.key); });
   const byLang = new Map<string, string[]>();
   for (const c of chips) {
     const list = byLang.get(c.lang) || [];
@@ -265,14 +319,14 @@ const subGroups = computed(() => {
     // carries the count on itself — SDH×2 is two tracks of one kind, not two kinds of one track.
     if (entries.length === 1) {
       const [key, count] = entries[0];
-      if (!key) return { lang: count > 1 ? `${lang}×${count}` : lang, vars: [] };
-      return { lang, vars: [count > 1 ? `${key}×${count}` : key] };
+      if (!key) return { lang: count > 1 ? `${lang}×${count}` : lang, vars: [], pickLang: pickKeys.has('') };
+      return { lang, vars: [{ t: count > 1 ? `${key}×${count}` : key, pick: pickKeys.has(key) }], pickLang: false };
     }
     // Two shapes or more, and an empty key is a track in its own right: the plain one — not SDH, not
     // forced, not an external file. Naming it 普通 is what keeps 爱的迫降's 32 条 on screen as 32: 韩语,
     // 葡萄牙语 and 西班牙语 each hide such a track beside a labelled sibling, and a list that prints 29
     // names under a heading of 32 is the same lie by omission the `×N` was added for.
-    return { lang, vars: entries.map(([k, m]) => `${k || '普通'}${m > 1 ? `×${m}` : ''}`) };
+    return { lang, vars: entries.map(([k, m]) => ({ t: `${k || '普通'}${m > 1 ? `×${m}` : ''}`, pick: pickKeys.has(k) })), pickLang: false };
   });
 });
 const subTotal = computed(() => described.value?.subtitle?.length || 0);
@@ -356,17 +410,25 @@ const strips = computed(() => {
   });
   const same = new Map<string, number>();
   for (const r of rows) same.set(r.head, (same.get(r.head) || 0) + 1);
+  /** Two versions whose names say no shape are two strips reading the same word — measured 2026-10-29 on
+   *  无职转生 S03E09: both files are 1080p SDR 1.45 GB 8.2 Mbps and the only difference is 12 subtitle tracks
+   *  against 4, which the strip already prints beside the size. What it did not print was a handle: the
+   *  player's own 播放源 card calls those two files 版本 1 and 版本 2, so a reader who picked one here had no
+   *  way to know which of the two that panel was calling 版本 2 — two surfaces, one file, two names. The
+   *  number therefore comes from versionNames(), the same call the panel makes, and it is the server's own
+   *  position rather than this list's: 133 of 23,027 sources carry no stream and sink to the end here, so
+   *  counting rows would renumber a file the panel numbers by its place in the session. Only ties get the
+   *  word — on 挽救计划's 2160p beside 1080p the head already says which is which. */
+  const names = new Map((props.item?.sources || []).map((s, i) => [s.id, versionNames(props.item?.sources || [])[i]]));
   for (const r of rows) {
     if ((same.get(r.head) || 0) < 2 || !hasContent(r.src)) continue;
     r.meta.push(`音频 ${r.src.audio?.length || 0} 条`, `字幕 ${r.src.subtitle?.length || 0} 条`);
   }
-  const sigs = rows.map(r => [r.head, ...r.meta].join('|'));
-  const dup = new Set(sigs.filter((g, i, all) => all.indexOf(g) !== i));
-  return rows.map((r, i) => ({
+  return rows.map(r => ({
     head: r.head,
     meta: r.meta,
     pressable: hasContent(r.src),
-    ord: dup.has(sigs[i]) ? `版本 ${i + 1}` : '',
+    ord: (same.get(r.head) || 0) > 1 && hasContent(r.src) ? /版本 \d+$/.exec(names.get(r.src.id) || '')?.[0] || '' : '',
   }));
 });
 </script>
@@ -382,7 +444,7 @@ const strips = computed(() => {
         v-for="(s, i) in sources"
         :key="s.id"
         class="srccard"
-        :class="{ solo: !multi, on: multi && i === at, inert: !strips[i].pressable }"
+        :class="{ solo: !multi, on: multi && i === at, live: live(s.id), inert: !strips[i].pressable }"
         :type="multi && strips[i].pressable ? 'button' : undefined"
         :aria-pressed="multi && strips[i].pressable ? i === at : undefined"
         @click="pick(i)"
@@ -418,14 +480,17 @@ const strips = computed(() => {
       <div v-if="audioRows.length" class="tcard aud">
         <h3>音频<span v-if="audioRows.length > 1" class="cnt">{{ audioRows.length }} 条</span></h3>
         <ul class="tracks">
-          <li v-for="(a, i) in audioRows" :key="i" class="trk" :class="{ def: a.isDefault }">
+          <li v-for="(a, i) in audioRows" :key="i" class="trk" :class="{ def: a.isDefault, on: a.pick }">
             <p class="tk">{{ a.nums }}<span v-if="a.name" class="tk-name">{{ a.name }}</span><span v-if="a.ord" class="tk-tag">{{ a.ord }}</span><span v-if="a.isDefault" class="tk-tag">默认</span></p>
           </li>
         </ul>
       </div>
       <div v-if="subGroups.length || multi" class="tcard wide">
         <h3>字幕<span v-if="subTotal > 1" class="cnt">{{ subTotal }} 条</span></h3>
-        <p v-if="subGroups.length" class="labs"><span v-for="g in subGroups" :key="g.lang" class="lg"><span class="lead"><b>{{ g.lang }}</b><span v-if="g.vars[0]" class="v" :class="{ tail: g.vars.length > 1 }">{{ g.vars[0] }}</span></span><span v-for="(v, j) in g.vars.slice(1)" :key="j" class="v" :class="{ tail: j < g.vars.length - 2 }">{{ v }}</span></span></p>
+        <!-- The separator is its own element rather than the chip's ::after pseudo-element, so the green frame can
+             close on the label alone: a frame drawn around 「上译简中特效 /」 reads as if the slash were part of the
+             track's name, which is the one thing on this card a reader could mistake for the row's own text. -->
+        <p v-if="subGroups.length" class="labs"><span v-for="g in subGroups" :key="g.lang" class="lg"><span class="lead"><b :class="{ on: g.pickLang }">{{ g.lang }}</b><span v-if="g.vars.length" class="v" :class="{ on: g.vars[0].pick }">{{ g.vars[0].t }}</span><span v-if="g.vars.length > 1" class="sep">/</span></span><template v-for="(v, j) in g.vars.slice(1)" :key="j"><span class="v" :class="{ on: v.pick }">{{ v.t }}</span><span v-if="j < g.vars.length - 2" class="sep">/</span></template></span></p>
         <!-- A version with no subtitle track has no list, and 9,165 of the 23,027 sources are that way with
              no second version to press — on those, the card's absence is the honest answer. Under a switch
              it is not: measured on OkEmby 197229 阿甘正传, the 字幕 card holding 30 tracks vanished the
@@ -492,6 +557,13 @@ button.srccard {
    where nothing else differs it is the only word telling two buttons apart, and it still must not outrank
    the range beside it. */
 .sc-ord { margin-left: 8px; font-size: 13px; font-weight: 500; color: var(--text-dim); }
+/* 「the file playing」 is a state, not a choice, and the strip already spends its accent on the choice — the
+   pressed version. So this one is a green frame and nothing more: the same box on a lone version (which has
+   no tab bar and no press) and on the one row of a tab bar the player is reading. Frame only, no ring and no
+   word, because 「使用中」 printed on every card a viewer happens to be playing was the label doing the frame's
+   job twice. --brand is the app's live dot (账号 · 侧栏), mixed toward --line so it reads as a frame on the
+   white sheet instead of a selection tint. */
+.srccard.live { border-color: color-mix(in srgb, var(--brand) 60%, var(--line)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand) 30%, transparent), var(--shadow-sm); }
 /* Wraps, because a strip that shares its headline with a rival carries two more facts than one that does
    not, and at 836px of dialog each of two cards gets 411px — a line of 七 values would have run out of box.
    Both rivals gain the counts together, and `.src` stretches them to one height, so the second row costs
@@ -532,11 +604,23 @@ button.srccard {
 /* The default is marked rather than assumed: 18 of 474 sources carry no default at all and 27 carry more
    than one, so which track the player picks is not something this sheet can infer silently. */
 .trk.def { border-left-color: color-mix(in srgb, var(--text) 34%, transparent); }
+/* The frame on the audio row is tight around the row's own text rather than its full width: a thousand-pixel box
+   drawn around 「英语 · TRUEHD · 7.1」 reads as a table row selected, not as one track pointed at. */
+.trk.on .tk { display: inline-flex; max-width: 100%; padding: 1px 8px; margin: 0 -8px; border-radius: 8px; outline: 1.5px solid color-mix(in srgb, var(--brand) 55%, transparent); outline-offset: 0; }
 .tk {
   margin: 0; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
   font-size: 13px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums;
 }
 .tk-tag { flex: none; padding: 0 6px; border-radius: 999px; background: var(--chip); color: var(--text-dim); font-size: 13px; font-weight: 500; }
+/* The row the player will have open — the 首选语言 pick, or the file's own default when the preference found
+   nothing — is framed rather than labelled. A word beside every marked row would print 「将使用」 on the
+   default of every file that carries no preference at all, which is most of them; a frame says 「this one」
+   and leaves the reading to the row's own text. It draws outside the box, so a frame never re-wraps the list
+   it sits in: the audio rows keep their 7px gap and the chips their slashes. */
+/* Same frame on the subtitle chip. The chip steps up to the reading weight too, because a framed box sitting
+   dim beside its siblings would still read as the one nobody is looking at. */
+.labs .v.on { color: var(--text); font-weight: 600; border: 1.5px solid color-mix(in srgb, var(--brand) 55%, transparent); border-radius: 999px; padding: 0 7px; margin: 0 -7px; }
+.labs b.on { color: var(--text); outline: 1.5px solid color-mix(in srgb, var(--brand) 55%, transparent); outline-offset: 3px; border-radius: 8px; }
 /* The server's own words for the track — the only thing that separates 德加拉国配 from 央视国配. One step
    quieter than the numbers, because it is the field a reader compares only after the numbers match. */
 .tk-name { font-weight: 500; color: var(--text-dim); overflow-wrap: anywhere; }
@@ -559,7 +643,7 @@ button.srccard {
 }
 /* A box with another one behind it closes on the slash, so a wrapped line ends on the divider instead of
    opening on one. Which boxes have a follower is the cluster's own arithmetic, so the template says it. */
-.labs .v.tail::after { content: '/'; margin: 0 8px; font-weight: 400; }
+.labs .sep { margin: 0 8px; color: var(--text-dim); font-weight: 400; }
 /* The language and its first variant are one reading unit: without the glue, a cluster that wrapped left
    「葡萄牙语」 at the end of a line and its two names at the start of the next, which reads as those names
    belonging to whatever language the eye happened to land on. Flex, not just nowrap, so the pair is capped

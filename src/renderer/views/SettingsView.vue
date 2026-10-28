@@ -4,6 +4,8 @@ import { useRouter } from 'vue-router';
 import { AppWindow, Database, Globe, HardDrive, MessageSquareText, Play } from 'lucide-vue-next';
 import type { DanmakuSettings, MediaCachePrefs, MediaCacheStats, NetProbe, PlayerPrefs, Settings, WindowPrefs } from '../../shared/types';
 import { useAppStore } from '../stores/app';
+import FilterSelect from '../components/browse/FilterSelect.vue';
+import { AUDIO_LANGS, SUB_LANGS } from '../../shared/lang';
 
 const store = useAppStore();
 const router = useRouter();
@@ -410,6 +412,41 @@ async function runProbe(): Promise<void> {
                       {{ s / 1000 }} 秒
                     </button>
                   </div>
+                </div>
+
+                <!-- 首选语言 sits above the switches because it decides what opens, not how the picture ends:
+                     a file with several tracks is the ordinary case in this library, and until these two rows
+                     existed the only thing that had ever answered 「which one」 was the file's own default. The
+                     hints say what the picker prefers, because 「首选」 alone would leave a reader wondering why
+                     a 5.1 mix won over a 2.0 one that happens to come first in the container. -->
+                <div class="row">
+                  <div class="k">
+                    <b>字幕首选语言</b>
+                    <i>有多条字幕时先选这一种；同为中文时优先完整译制、文字字幕</i>
+                  </div>
+                  <FilterSelect
+                    label="字幕"
+                    :options="SUB_LANGS"
+                    :model-value="player.subLang"
+                    menu
+                    neutral
+                    @update:model-value="v => set({ player: { subLang: String(v) } })"
+                  />
+                </div>
+
+                <div class="row">
+                  <div class="k">
+                    <b>音频首选语言</b>
+                    <i>多轨时优先无损、多声道、高码率</i>
+                  </div>
+                  <FilterSelect
+                    label="音频"
+                    :options="AUDIO_LANGS"
+                    :model-value="player.audioLang"
+                    menu
+                    neutral
+                    @update:model-value="v => set({ player: { audioLang: String(v) } })"
+                  />
                 </div>
 
                 <div class="row">

@@ -22,6 +22,7 @@ import {
 } from '../../shared/types';
 import { episodeSlot } from '../../shared/episode-slot';
 import { versionLabel } from '../../shared/version-label';
+import { pickTracks, type TrackPick } from '../../shared/track-pick';
 import { MpvKernel } from './kernel';
 import { StreamBridge } from './bridge';
 import { mediaCache } from '../media-cache';
@@ -248,6 +249,12 @@ export class PlayerController {
     const neg = await c.negotiate(itemId, { sourceId: wanted });
     this.rememberVersion(itemId, item.seriesId, neg.sources[neg.sourceIndex]);
 
+    // 首选语言: which of this version's tracks opens. Answered against the streams the server just described,
+    // before mpv holds a file — the pick travels with the load (see `setNextTracks`) instead of being written
+    // onto a pipe that has nothing to write it to yet. Nothing set means nothing forced: an empty preference
+    // leaves mpv's own order in charge, which is what every file got before this row existed.
+    const pick = pickTracks(neg.sources[neg.sourceIndex], prefs);
+
     // The windows only open once the server has agreed to serve something: a refused negotiation should
     // fail on the page 播放 was pressed from, not on a black screen with no controls.
     if (!this.windows.isOpen) this.windows.open(this.rendererUrl('#/player'));
@@ -279,12 +286,14 @@ export class PlayerController {
     this.out.session(this.getSession());
     this.raise();
 
+    this.kernel!.setNextTracks(this.trackWanted(pick));
     try {
       await this.kernel!.load(url, { startMs: fromStart ? 0 : resume.startMs });
     } catch (e) {
       this.fail(e);
       throw e;
     }
+    void this.openPickedSidecar(pick);
     // The start report carries the offset the *server* holds, never the 0 a 「播放」 button loaded at:
     // measured on bangumi, an open that reports 0 rewrites the item to 0 about a minute later while the
     // session is live, so a hard-killed app left 187396 sitting at nothing and the next 看到 had no number
@@ -696,6 +705,39 @@ export class PlayerController {
     }
   }
 
+  /** The pick, in the numbers the kernel can act on: the server's `Index` per stream — the same number mpv
+   *  repeats as `ff-index`, which `serverStreamIndex` above is the measurement for — and `'no'` for 关闭字幕.
+   *  Null when neither preference named a language, so the kernel never keeps a half-answer to apply later. */
+  private trackWanted(pick: TrackPick): { audio?: number; subtitle?: number | 'no' } | null {
+    const w: { audio?: number; subtitle?: number | 'no' } = {};
+    if (pick.audio?.index !== undefined) w.audio = pick.audio.index;
+    if (pick.subtitle === 'off') w.subtitle = 'no';
+    // An external pick is not a number mpv can be handed: a sidecar gets its own track id only after
+    // sub-add, and its ff-index is -1 — a server Index it can never equal. Leaving it in the list would
+    // keep a pick pending for the whole viewing, ready to land on any later track-list event (a second
+    // sidecar, a remux), so it is fetched and selected by openPickedSidecar instead.
+    else if (pick.subtitle && !pick.subtitle.isExternal && pick.subtitle.index !== undefined) w.subtitle = pick.subtitle.index;
+    return w.audio === undefined && w.subtitle === undefined ? null : w;
+  }
+
+  /** A preferred subtitle the server keeps beside the file rather than inside it. mpv can only reach those
+   *  once the bytes are on disk, so the pick is fetched and added after the load — and a failure here stays
+   *  silent on purpose: the file's own subtitles are on screen by then, which is the state the app was in
+   *  before the setting existed. `pickTracks` already ruled out the rows that cannot work (a `sup` picture
+   *  is not something mpv can read from a file), so what is left is a dropped connection or a gateway that
+   *  no longer holds it. */
+  private async openPickedSidecar(pick: TrackPick): Promise<void> {
+    const sub = pick.subtitle;
+    if (!sub || sub === 'off' || !sub.isExternal || sub.index === undefined) return;
+    if (sub.isTextSubtitle === false) return;
+    const c = this.current;
+    if (!c) return;
+    try {
+      await this.useSidecar(sub.index);
+    } catch {
+      /* 外挂取不回来时，内封的轨道还在，画面照常 */
+    }
+  }
   /** Another version of the same item, if the server holds more than one. */
   private async useSource(index: number): Promise<void> {
     const c = this.current;
@@ -753,6 +795,7 @@ export class PlayerController {
     const wasAt = await k.positionMs();
     const speed = this.state.speed;
     const neg = await this.client().negotiate(itemId, opts);
+    const pick = pickTracks(neg.sources[neg.sourceIndex], config.get().settings.player);
     if (this.current !== c) return;
     const url = await this.bridge.mount(neg.url);
     c.sourceIndex = neg.sourceIndex;
@@ -762,6 +805,12 @@ export class PlayerController {
     c.method = neg.method;
     c.hdr = neg.hdr;
     this.out.session(this.getSession());
+    // A remux is a different file: its stream numbers, its subtitle tracks and any sidecar `sub-add` gave it
+    // all belong to the version being left. mpv drops external files on a load, so a remembered track id here
+    // would name a track that no longer exists and a `sid` write would fail silently — the next sidecar
+    // therefore has to be fetched again rather than re-selected.
+    this.sidecar = null;
+    this.kernel!.setNextTracks(this.trackWanted(pick));
     try {
       await k.load(url, { startMs: wasAt });
     } catch (e) {
@@ -769,6 +818,7 @@ export class PlayerController {
       throw e;
     }
     await k.setSpeed(speed).catch(() => undefined);
+    void this.openPickedSidecar(pick);
     // No second 开场 here. This is the same item inside the same session, and FirstPlay is the event that
     // stamps PlayCount and LastPlayedDate — measured 2026-10-24, one open of 小鬼当家 answers PlayCount 1 —
     // so re-announcing on every knob move would publish another 收看过 for something that was never a new

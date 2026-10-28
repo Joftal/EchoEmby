@@ -2,6 +2,7 @@ import { app, safeStorage } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
+import { isAudioLang, isSubLang } from '../shared/lang';
 import type { Account, AppConfig, DanmakuSettings, DanmakuSourceConfig, MediaCachePrefs, MetaKeys, PlayerPrefs, Settings, SettingsPatch, WindowPrefs } from '../shared/types';
 
 const HWDEC = ['d3d11va', 'cuda', 'auto', 'no'] as const;
@@ -12,11 +13,17 @@ const DANMAKU_SOURCES = ['bilibili', 'dandan'] as const;
  *  so saving one setting never writes the placeholder over the real credential. */
 export const SECRET_MASK = '<set>';
 
+/* 自动 for both languages, and not 中文: the app has never chosen a subtitle on its own — mpv's own order
+   did that, Chinese first — and a default of 中文 would silently change what plays for every file whose
+   default track names another language. A row that starts on 自动 is a promise that nothing moved until the
+   viewer pressed something. */
 const DEFAULT_PLAYER: PlayerPrefs = {
   hwdec: 'd3d11va',
   seekStepMs: 10_000,
   hdrHint: false,
   autoNext: true,
+  subLang: '',
+  audioLang: '',
 };
 
 const CLOSE_ACTIONS = ['quit', 'tray'] as const;
@@ -63,6 +70,10 @@ const pickPlayer = (raw: Partial<PlayerPrefs> | undefined): PlayerPrefs => ({
   seekStepMs: num(raw?.seekStepMs, 1000, 120_000, DEFAULT_PLAYER.seekStepMs),
   hdrHint: raw?.hdrHint === true,
   autoNext: raw?.autoNext !== false,
+  // Only a value the dialog can still print: a hand-edited `yuee` reads as 自动 instead of as a language no
+  // track will ever match, which would look like the player ignoring the setting.
+  subLang: isSubLang(raw?.subLang) ? raw.subLang : DEFAULT_PLAYER.subLang,
+  audioLang: isAudioLang(raw?.audioLang) ? raw.audioLang : DEFAULT_PLAYER.audioLang,
 });
 
 /* 'minimize' is what this row used to be called; a config written before the tray existed must map onto the

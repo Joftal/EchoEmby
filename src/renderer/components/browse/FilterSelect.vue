@@ -29,8 +29,12 @@ const props = withDefaults(
      *  「第 1 季」 sits next to 「第 4 季 · 最终季」 - a matrix would need a cell wide enough for the longest
      *  and a cloud wraps into uneven columns. */
     rows?: boolean;
+    /** Rows drawn as a menu rather than a stack of chips: the answer carries a tick, and the row the pointer
+     *  rests on fills with the accent. For a question with exactly one answer (首选语言), where a grid of
+     *  filled chips reads as a set of filters that are on. */
+    menu?: boolean;
   }>(),
-  { multi: false, searchable: false, bare: false, neutral: false, cell: 0, cols: 4, rows: false },
+  { multi: false, searchable: false, bare: false, neutral: false, cell: 0, cols: 4, rows: false, menu: false },
 );
 const emit = defineEmits<{ (e: 'update:modelValue', v: string | string[]): void }>();
 
@@ -50,8 +54,14 @@ const shown = computed(() =>
   term.value.trim() ? props.options.filter(o => o.label.toLowerCase().includes(term.value.trim().toLowerCase())) : props.options,
 );
 
-/** The pill carries the answer, not a count of it: whatever is picked, spelled out on one line. */
-const valueText = computed(() => chosen.value.map(v => props.options.find(o => o.value === v)?.label || v).join(' · '));
+/** The pill carries the answer, not a count of it: whatever is picked, spelled out on one line. An option
+ *  whose value is the empty string is a real answer here (媒体默认 is what the file's own default is called),
+ *  not the absence of one, so it has to print like any other pick. */
+const blank = computed(() => props.options.find(o => o.value === ''));
+const valueText = computed(() => {
+  if (!props.multi && props.modelValue === '' && blank.value) return blank.value.label;
+  return chosen.value.map(v => props.options.find(o => o.value === v)?.label || v).join(' · ');
+});
 const engaged = computed(() => chosen.value.length > 0 && !props.neutral);
 
 /** 不限 is a chip like any other, except it answers by emptying the list instead of adding itself. */
@@ -77,9 +87,16 @@ function clear(): void {
   emit('update:modelValue', props.multi ? [] : '');
 }
 
+/** 不限 answers by emptying the list, which for a multi list is one more choice among many - the panel
+ *  stays open so the next pick is one click away. A single list whose empty value is a real answer (媒体默认)
+ *  is a menu, and a menu closes on the answer it was asked for. */
 function pick(value: string): void {
-  if (value) toggle(value);
-  else clear();
+  if (value) {
+    toggle(value);
+    return;
+  }
+  clear();
+  if (!props.multi) open.value = false;
 }
 
 /** A list that runs out mid-chip looks broken; the fade below only appears while there is more below. */
@@ -93,6 +110,9 @@ function measure(): void {
  *  there and turns to the side that has more of it. */
 const room = ref(322);
 const up = ref(false);
+/** Whether the panel hangs off the pill's right corner instead of its left one. */
+const end = ref(false);
+const panelEl = ref<HTMLElement | null>(null);
 function place(): void {
   const el = root.value;
   if (!el) return;
@@ -101,6 +121,23 @@ function place(): void {
   const above = r.top - 14;
   up.value = below < 200 && above > below;
   room.value = Math.max(0, Math.round(up.value ? above : below));
+  end.value = false;
+}
+/** Which side has room. The window is not the only wall: the settings pane clips its own overflow, and a
+ *  pill parked against that wall poured a 336px menu 171px past it — the last column of the language matrix
+ *  was simply not there. So the limit is the nearest clipping box, and the panel turns when the pill's left
+ *  edge plus the panel's measured width would cross it. Measured after mount, because the width is the
+ *  panel's own (a matrix is as wide as its columns, a cloud as wide as its longest name). */
+function fit(): void {
+  const el = root.value;
+  const panel = panelEl.value;
+  if (!el || !panel) return;
+  const left = el.getBoundingClientRect().left;
+  let limit = innerWidth - 8;
+  for (let n = el.parentElement; n; n = n.parentElement) {
+    if (getComputedStyle(n).overflowX !== 'visible') limit = Math.min(limit, n.getBoundingClientRect().right - 6);
+  }
+  end.value = left + panel.offsetWidth > limit;
 }
 
 watch(open, async v => {
@@ -115,10 +152,12 @@ watch(open, async v => {
   await nextTick();
   searchEl.value?.focus();
   measure();
+  fit();
 });
 watch([term, () => props.options], async () => {
   await nextTick();
   measure();
+  fit();
 });
 
 function onDocPointer(e: PointerEvent): void {
@@ -160,7 +199,7 @@ onBeforeUnmount(() => {
     </button>
 
     <Transition name="bubble">
-      <div v-if="open" class="panel" :class="{ more, grid, up }" :style="[vars, { '--room': `${room}px` }]">
+      <div v-if="open" ref="panelEl" class="panel" :class="{ more, grid, up, end }" :style="[vars, { '--room': `${room}px` }]">
         <label v-if="searchable" class="find">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
             <path d="M11 4.6a6.4 6.4 0 1 0 0 12.8 6.4 6.4 0 0 0 0-12.8Z" />
@@ -169,16 +208,31 @@ onBeforeUnmount(() => {
           <input ref="searchEl" v-model="term" type="text" placeholder="搜索" spellcheck="false" />
         </label>
 
-        <div ref="listEl" class="list" :class="{ grid, rows }" @scroll="measure">
+        <div ref="listEl" class="list" :class="{ grid, rows, menu }" @scroll="measure">
           <button
             v-for="o in chipList"
             :key="o.value || '*'"
             class="chip"
             :class="{ picked: isPicked(o.value) }"
             type="button"
-            :aria-pressed="multi ? isPicked(o.value) : undefined"
+            :aria-pressed="multi || menu ? isPicked(o.value) : undefined"
             @click="pick(o.value)"
           >
+            <svg
+              v-if="menu"
+              class="tick"
+              :class="{ on: isPicked(o.value) }"
+              viewBox="0 0 24 24"
+              width="13"
+              height="13"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.7"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M4.5 12.7 9.5 17.6 19.6 6.8" />
+            </svg>
             <span class="name">{{ o.label }}</span>
           </button>
           <p v-if="!shown.length" class="none">没有匹配项</p>
@@ -324,6 +378,17 @@ onBeforeUnmount(() => {
   --pop: 8px;
   --back: 6px;
   border-radius: var(--radius) var(--radius) 0 0;
+}
+/* Turned to the other corner: the same card hinged off the pill's right edge, for a control parked against
+   the right wall of the box that holds it. The pill already drops both bottom corners while a panel is open,
+   so the seam stays closed on this side too. */
+.panel.end {
+  left: auto;
+  right: 0;
+  transform-origin: top right;
+}
+.panel.up.end {
+  transform-origin: bottom right;
 }
 /* What the fade marks is the edge the list runs out at, and a list always starts at its first option - so on
    an upward panel the cut is still at the bottom, against the pill. Moving the fade to the top edge, which is
@@ -475,6 +540,58 @@ onBeforeUnmount(() => {
 }
 .grid .none {
   grid-column: 1 / -1;
+}
+
+/* A menu: one answer to a row, the tick in its own column, and the row under the pointer filled with the
+   accent. Nothing here is a chip - the pill above already says a preference is set, so a second set of
+   filled shapes inside the panel reads as two things being on at once. The rows keep the panel's 30px
+   pitch so this menu and the season stack next to it in the same settings pane are the same object. */
+.list.menu {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 1px;
+  padding: 2px;
+}
+.menu .chip {
+  flex: none;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px 0 6px;
+  border-radius: 7px;
+  font-weight: 500;
+  color: var(--text);
+  background: none;
+}
+/* The tick holds its column whether or not it is drawn: a list that shifted 19px sideways every time the
+   answer moved would put the next click under a different word than the one just read. */
+.menu .tick {
+  flex: none;
+  opacity: 0;
+  transition: opacity var(--hov) var(--ease);
+}
+.menu .tick.on {
+  opacity: 1;
+}
+.menu .chip:hover {
+  color: var(--on-ink);
+  background: var(--accent);
+}
+.menu .chip:active {
+  transform: none;
+}
+/* Picked is the tick and the weight, never a second fill: hovering the answer would otherwise paint it the
+   same accent as the row beside it and the menu would show two. */
+.menu .chip.picked {
+  color: var(--text);
+  background: none;
+  font-weight: 600;
+}
+.menu .chip.picked:hover {
+  color: var(--on-ink);
+  background: var(--accent);
+}
+.menu .name {
+  max-width: none;
 }
 
 /* The panel comes out of the edge it hangs on and stops there: 8px of travel, stated in pixels on the hinge
