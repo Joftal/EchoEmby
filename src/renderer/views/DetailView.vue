@@ -7,6 +7,7 @@ import FilterSelect from '../components/browse/FilterSelect.vue';
 import BlockPh from '../components/detail/BlockPh.vue';
 import TechCard from '../components/detail/TechCard.vue';
 import RelatedStrip from '../components/detail/RelatedStrip.vue';
+import MediaCard from '../components/home/MediaCard.vue';
 import ScoreStrip from '../components/ScoreStrip.vue';
 import HeroPlay from '../components/HeroPlay.vue';
 import LoopTitle from '../components/LoopTitle.vue';
@@ -41,6 +42,11 @@ const serverSeasons = ref<{ seriesId: string; season: LibraryItem }[]>([]);
  *  TMDB lists and this page cannot find is unasked-for rather than absent, and only one of those two is a
  *  sentence worth printing. */
 const seasonsAsked = ref(false);
+/** What a collection holds. A `BoxSet` names no file and has no seasons, so this list is the only thing
+ *  its page can show; it used to be nothing at all, which made a 合集 in the search results a dead end that
+ *  read like an empty library (measured: the gateway files 2, nyamedia 1, and both came back from
+ *  `/Users/{uid}/Items?ParentId=…` in a single reply). */
+const collection = ref<LibraryItem[]>([]);
 const episodes = ref<LibraryItem[]>([]);
 /** The season this page is answering for, held as its number. Keyed by number rather than by the server's
  *  row id because the list now offers seasons this server has no row for: a show filed as 第 1 季 and
@@ -1466,6 +1472,22 @@ async function loadChildren(it: LibraryItem): Promise<void> {
       void askSiblings(series);
     }
     await loadSeason(it.indexNumber ?? 0);
+  } else if (it.type === 'BoxSet') {
+    /* A collection is a folder of finished works, not a show: nothing here resolves to a file, so the only
+       thing the page can say beyond its own title is what is inside it. The rows come back in the server's
+       order and are shown as a plain grid — no rail, because a collection this library files is a handful of
+       titles and a row would scroll the answer out of view for nothing.
+       It is deliberately not recursive. Asked with `Recursive: true`, the one collection on nyamedia answered
+       its 24 episodes instead of its 2 shows (measured) — a folder's members are its immediate children, and
+       the works inside them are what each card's page is for. */
+    const r = await window.echoemby.emby.items({
+      ParentId: it.id,
+      IncludeItemTypes: 'Movie,Series,Video',
+      SortBy: 'SortName',
+      SortOrder: 'Ascending',
+      Limit: 120,
+    });
+    collection.value = r.ok ? r.data || [] : [];
   }
 }
 
@@ -1700,6 +1722,15 @@ const LEVEL_WORD = ['无', '极少', '轻微', '中等', '较多', '严重'];
         <section v-if="techInline" class="block">
           <h2>播放资源</h2>
           <TechCard :item="techInline" :wanted="wantedFor(techInline)" @pick="onTechPick" />
+        </section>
+
+        <!-- A collection's only content. The cards are the lobby's own, so a member opens the same page from
+             here as from anywhere else, and the grid carries the reveal class its entrance hangs off. -->
+        <section v-if="collection.length" class="block">
+          <h2>合集 · {{ collection.length }} 部</h2>
+          <div class="cgrid in">
+            <MediaCard v-for="(c, i) in collection" :key="c.id" :item="c" :width="160" :index="i" />
+          </div>
         </section>
 
         <HScroller v-if="crew.length" title="演职员" :count="crew.length" class="block">
@@ -2297,6 +2328,10 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 14px
 .pgw { margin: 0; font-size: 13px; color: var(--text-dim); }
 
 .chips { display: flex; gap: 7px; flex-wrap: wrap; }
+/* The collection grid is a wrap of fixed-width cards rather than a track: a 合集 this library files holds a
+   handful of titles, and stretching three cards across the page would make each picture bigger than the
+   hero's. */
+.cgrid { display: flex; gap: 18px 16px; flex-wrap: wrap; }
 /* Same recipe as the picker chips, so a genre tag and a filter option read as one vocabulary. */
 .chip { display: inline-flex; align-items: center; height: 30px; padding: 0 12px; border-radius: 999px; background: var(--chip); font-size: 13px; font-weight: 600; color: var(--text-dim); }
 
