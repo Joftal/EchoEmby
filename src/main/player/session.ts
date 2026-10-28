@@ -521,11 +521,22 @@ export class PlayerController {
     const ask = () => client.resumePoint(itemId).catch(() => null);
     const first = await ask();
     if (!first) return null;
-    if (Math.abs(first.startMs - at) <= 1500) return first.startMs;
+    // One percent of the film, or 1.5 s, whichever is longer. Measured 2026-10-28 on 挽救计划: a stop sent
+    // at 717,083 ms came back 711,336 — 0.61% apart, which is this gateway running its own progress clock,
+    // not the clearing the line below exists to catch.
+    const near = Math.max(1500, durationMs * 0.01);
+    if (Math.abs(first.startMs - at) <= near) return first.startMs;
     await new Promise(r => setTimeout(r, 700));
     const again = await ask();
     const held = again ? again.startMs : first.startMs;
-    console.warn('[player] 停止被抹', reason, itemId, `sent=${Math.round(at)}`, `held=${Math.round(held)}`, `start=${Math.round(this.current?.startMs ?? 0)}`);
+    // 被抹 is a specific claim: the position went away rather than moved. A gateway clears anything under
+    // ~3% (the three runs put the threshold in (2.55%, 3.47%]), so that is the test — anything else is the
+    // same rounding, and a healthy close that logs a warning is a warning nobody can trust later. The
+    // number published is `held` either way.
+    const floor = durationMs * 0.03;
+    if (at >= floor && held < floor) {
+      console.warn('[player] 停止被抹', reason, itemId, `sent=${Math.round(at)}`, `held=${Math.round(held)}`, `start=${Math.round(this.current?.startMs ?? 0)}`);
+    }
     return held;
   }
 
