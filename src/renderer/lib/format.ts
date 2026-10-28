@@ -406,7 +406,11 @@ const FORMAT: Record<string, string> = {
  *  by a 「SUBRIP」 beside it. */
 export const formatWord = (codec?: string): string => {
   const c = (codec || '').toLowerCase();
-  return FORMAT[c] || (codec || '').toUpperCase();
+  // An unknown name is kept as the code, but spelled the way the title spells it: the tokenizer cuts
+  // `mov_text` into two words, so a card whose title already said 简体 MOV TEXT compared it against
+  // `MOV_TEXT`, failed, and appended the same format a second time (measured 2026-10-28 offline —
+  // `dvb_teletext` has the same shape). Spaces are what a reader sees either way.
+  return FORMAT[c] || (codec || '').toUpperCase().replace(/_/g, ' ');
 };
 /** Codec and channel vocabulary: words a track title borrows from the fields the row already prints
  *  (「English DTS-HD Master Audio 5.1 @ 3310 kbps」 over 「英语 · DTS · 5.1 · 3.3 Mbps」). A token matches
@@ -875,6 +879,49 @@ export const fmtRate = (n?: number): string => (!n ? '' : n >= 1e6 ? `${(n / 1e6
  *  a value painted on in the absence of an answer is the same lie the ✓ and the green dot were. */
 const RANGE_CN: Record<string, string> = { SDR: 'SDR', 'HDR 10': 'HDR10', HDR10: 'HDR10', DolbyVision: '杜比视界' };
 export const rangeWord = (range?: string): string => (!range ? '' : RANGE_CN[range] || range);
+
+/** Which decoder mpv says it is actually using, in the letters the panel's own chips use. The chips offer
+ *  `d3d11va` as 「D3D11」 while the row underneath printed the driver key, so one card said D3D11 and
+ *  d3d11va about the same file; `no` is mpv's own word for software decoding. A `-copy` variant is still
+ *  that driver — the suffix says where the frames land, not who decoded them — and an answer that is not
+ *  this build's keeps its letters rather than being called 软解. Empty means nothing has reported yet,
+ *  which is not the same claim as 软解. */
+export const decoderWord = (v?: string): string => {
+  const d = (v || '').toLowerCase().replace(/-copy$/, '');
+  if (!d) return '';
+  if (d === 'no') return '软解';
+  if (d.startsWith('auto')) return '自动';
+  if (d.startsWith('d3d11')) return 'D3D11';
+  if (d.startsWith('dxva2')) return 'DXVA2';
+  if (d === 'cuda' || d.startsWith('nvdec')) return 'CUDA';
+  if (d === 'vaapi') return 'VAAPI';
+  if (d === 'vdpau') return 'VDPAU';
+  if (d.startsWith('videotoolbox')) return 'VideoToolbox';
+  return d.toUpperCase();
+};
+
+/** The colour matrix as the standard writes it. Two vocabularies reach this: mpv's `video-params/colormatrix`
+ *  spells the ITU-R key with a dot and a dash (`bt.709`, `bt.2020-ncl`), the server's `ColorSpace` field spells
+ *  ffmpeg's enum without them (`bt709`, `bt2020nc`) — measured 2026-10-28 against the live mpv pipe. They are
+ *  the same six names, so the lookup drops the punctuation and both arrive at one word. The `c`/`nc` suffix is
+ *  the one part worth saying in the reader's own words: it says whether chroma is held constant. */
+const COLORSPACE_CN: Record<string, string> = {
+  bt709: 'BT.709', bt601: 'BT.601', bt601p: 'BT.601', bt601e: 'BT.601', bt470bg: 'BT.470BG',
+  smpte170m: 'SMPTE 170M', bt170m: 'SMPTE 170M', smpte240m: 'SMPTE 240M', bt1361e: 'BT.1361E',
+  bt2020: 'BT.2020',
+  bt2020cl: 'BT.2020 恒定色度', bt2020c: 'BT.2020 恒定色度', bt2020ncl: 'BT.2020 非恒定色度', bt2020nc: 'BT.2020 非恒定色度',
+  fcc: 'FCC', rgb: 'RGB',
+};
+/** `dolbyvision` is a value mpv's `colormatrix` carries — measured on the live pipe 2026-10-28 — and it names
+ *  the Y′CbCr matrix, not the primaries, so it is not an answer to 色彩空间. It also says over again what the
+ *  这条片源 line above it already says. The row draws its dash rather than print either. */
+const NOT_A_COLORSPACE = new Set(['dolbyvision']);
+export const colorSpaceWord = (v?: string): string => {
+  const c = (v || '').toLowerCase().replace(/[.\-\s]/g, '');
+  // `unknown` is what both spell the absence of a signal, and it is the dash the row already draws.
+  if (!c || c === 'unknown' || c === 'unspecified' || NOT_A_COLORSPACE.has(c)) return '';
+  return COLORSPACE_CN[c] || c.toUpperCase();
+};
 
 export const fmtDate = (iso?: string): string => {
   if (!iso) return '';

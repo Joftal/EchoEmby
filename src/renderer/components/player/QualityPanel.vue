@@ -5,7 +5,7 @@ import SubPopover from './SubPopover.vue';
 import SubRow from './SubRow.vue';
 import { usePlayerStore } from '../../stores/player';
 import { useAppStore } from '../../stores/app';
-import { fmtRate, fmtSize, rangeWord } from '../../lib/format';
+import { decoderWord, fmtRate, fmtSize, colorSpaceWord, rangeWord } from '../../lib/format';
 import { versionNames } from '../../../shared/version-label';
 import { hasContent, type PlayMethod, type PlaybackSource, type PlayerPrefs } from '../../../shared/types';
 
@@ -86,7 +86,7 @@ const playingRange = computed(() => {
 
   <div class="pl-sep"></div>
   <SubRow name="sources" label="播放源" :value="`${versions.length} 个版本`" />
-  <SubRow name="decode" label="解码与渲染" :value="media.hwdec || '软解'" />
+  <SubRow name="decode" label="解码与渲染" :value="decoderWord(media.hwdec) || '软解'" />
   <SubRow name="range" label="动态范围" :value="playingRange" />
 
   <SubPopover name="sources" title="播放源">
@@ -111,7 +111,6 @@ const playingRange = computed(() => {
       <button v-for="h in HWDECS" :key="h.value" class="pl-chip" :class="{ on: prefs.hwdec === h.value }" @click="patch({ hwdec: h.value })">{{ h.label }}</button>
     </div>
     <p class="pl-note">实际用上的那个写在下面：选了自动或硬件不可用时，mpv 会落回软解。</p>
-    <div class="pl-line"><span class="label">正在用</span><span class="pl-text">{{ media.hwdec || '—' }}</span></div>
     <div class="pl-sep"></div>
     <div class="pl-sect">渲染</div>
     <div class="pl-line">
@@ -122,11 +121,12 @@ const playingRange = computed(() => {
       </span>
     </div>
     <p class="pl-note">清晰优先开的是 gpu-hq，会换一个新的 mpv 进程：画面会黑一下。</p>
+    <div class="pl-line"><span class="label">正在用</span><span class="pl-text">{{ decoderWord(media.hwdec) || '—' }}</span></div>
   </SubPopover>
 
   <SubPopover name="range" title="动态范围">
     <div class="pl-line"><span class="label">这条片源</span><span class="pl-text">{{ playingRange }}</span></div>
-    <div class="pl-line"><span class="label">色彩空间</span><span class="pl-text">{{ media.colorSpace || '—' }}</span></div>
+    <div class="pl-line"><span class="label">色彩空间</span><span class="pl-text">{{ colorSpaceWord(media.colorSpace) || '—' }}</span></div>
     <div class="pl-switch" role="switch" tabindex="0" :aria-checked="!!prefs.hdrHint" :class="{ on: prefs.hdrHint }" @click="patch({ hdrHint: !prefs.hdrHint })">
       <span class="label">把 HDR 信号交给显示器</span>
       <span class="track"><i></i></span>

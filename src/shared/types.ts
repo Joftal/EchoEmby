@@ -587,6 +587,8 @@ export interface PlayerMedia {
   /** The decoder mpv settled on, read back rather than assumed: `auto` and a silent fallback both land here. */
   hwdec: string;
   hdr: boolean;
+  /** mpv's `video-params/primaries` — `bt.709`, `bt.2020` — falling back to `colormatrix` when a file says
+   *  nothing about its primaries. Absent until a file says one. */
   colorSpace?: string;
   trackCount: number;
   tracks: PlayerTrack[];

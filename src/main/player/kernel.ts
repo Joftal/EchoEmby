@@ -377,10 +377,19 @@ export class MpvKernel {
         r.height = Number(v?.h) || 0;
         r.fps = sec(v?.fps) ?? r.fps;
         {
+          // The key names are mpv's own, read off the live pipe on 2026-10-28: `video-params` answers
+          // `colormatrix`/`primaries`/`gamma`/`colorlevels`, and there is no `color-space` or
+          // `color-primaries` in it at all. Both of those names used to be read here, so the 色彩空间 row
+          // could only ever print its dash and the bt.2020 half of the HDR test never ran.
           const gamma = String(v?.gamma ?? '');
-          const primaries = String(v?.['color-primaries'] ?? '');
+          const primaries = String(v?.primaries ?? '');
           r.hdr = gamma === 'pq' || gamma === 'hlg' || primaries === 'bt.2020';
-          r.colorSpace = v?.['color-space'] ? String(v['color-space']) : undefined;
+          // 色彩空间 asks which primaries the picture is drawn in, and that is `primaries`: measured on the
+          // same pipe a minute later, the 挽救计划 杜比视界 version answers `primaries: bt.2020` while its
+          // `colormatrix` says `dolbyvision` — a Y′CbCr matrix name, not a colour space, and the same word
+          // the 这条片源 line above it already prints. The matrix is the fallback for a file whose primaries
+          // are absent, and `colorSpaceWord` refuses to print it when it says `dolbyvision`.
+          r.colorSpace = primaries || (v?.colormatrix ? String(v.colormatrix) : '');
         }
         return;
       case 'track-list':
