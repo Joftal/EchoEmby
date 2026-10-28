@@ -677,8 +677,21 @@ export class PlayerController {
    *  has to win: ranked against each other, the page's older click used to outrank the player's newer one.
    *  The show's shape word is not written here — 下一集 gets it from `rememberVersion` when this pick
    *  actually plays, which is the moment it becomes an answer about the rest of the season. */
-  chooseSource(itemId: string, sourceId: string): void {
+  async chooseSource(itemId: string, sourceId: string): Promise<void> {
     this.itemVersion.set(itemId, sourceId);
+    // A pick about the file already playing is not a note for next time: the page presses that strip and
+    // the panel pops up on it, so leaving the old file in mpv made the page and the player disagree about
+    // what was on screen. A pick about anything else stays a note — there is nothing to switch yet.
+    const c = this.current;
+    if (!c || c.itemId !== itemId) return;
+    const index = c.sources.findIndex(s => s.id === sourceId);
+    if (index < 0 || index === c.sourceIndex) return;
+    try {
+      await this.useSource(index);
+    } catch (e) {
+      this.itemVersion.set(itemId, c.sources[c.sourceIndex]?.id || '');
+      throw e;
+    }
   }
 
   /** File the player is now on, into both memories. Called from `play` and from `replay`, which is what a

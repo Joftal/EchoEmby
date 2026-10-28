@@ -548,6 +548,11 @@ export interface PlayerTrack {
   title?: string;
   lang?: string;
   codec?: string;
+  /** How many channels the container says the track has - mpv's own reading, not the server's row the
+   *  card prints. Measured on the bundled 0.41 build: demux-channel-count is there (6 on a 5.1 track,
+   *  2 on the commentary), while demux-channels answers 「unknown6」 for the same track and cannot be
+   *  shown, and demux-bitrate does not exist at all. */
+  channels?: number;
   selected: boolean;
   default: boolean;
   forced?: boolean;

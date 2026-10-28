@@ -4,7 +4,7 @@ import SubPopover from './SubPopover.vue';
 import SubRow from './SubRow.vue';
 import StepRow from './StepRow.vue';
 import { usePlayerStore } from '../../stores/player';
-import { langName, NO_LANG, openBrackets, saidLang, zhTrackWords, formatWord } from '../../lib/format';
+import { channelsWord, codecLabel, fmtRate, formatWord, langName, layoutWord, NO_LANG, openBrackets, saidLang, zhTrackWords } from '../../lib/format';
 import type { MediaStreamInfo, PlayerTrack, TrackSelection } from '../../../shared/types';
 
 /** Body only: the card that holds this belongs to SheetLayer, and so does its title. */
@@ -58,7 +58,38 @@ const subLang = (t: PlayerTrack): string => (saidLang(rowLabel(t), t.lang) ? '' 
    a subtitle `subrip` where the card says SRT, and `hdmv_pgs_subtitle` where it says PGS — measured
    2026-10-28 over the 127 tracks of the one-file-per-codec walk. It is also the only thing that tells two
    rows apart once their titles fold to the same words, so it stays on the row, just spelled one way. */
-const meta = (t: PlayerTrack): string => [t.selected ? '正在用' : '', formatWord(t.codec)].filter(Boolean).join(' · ');
+/** The server's own row for the stream mpv opened, matched on the container's stream number - the one
+ *  number both sides agree on (mpv's `ff-index` and the server's `MediaStreamInfo.index`). The menu
+ *  takes its numbers from here because mpv does not carry them: on the live pipe it answers
+ *  `demux-channel-count` and `demux-channels`, but the layout word is 「unknown6」 beside a real 5.1
+ *  track, and there is no bitrate at all. */
+const audioStream = (t: PlayerTrack): MediaStreamInfo | undefined => {
+  const s = player.session;
+  const src = s ? s.sources[s.sourceIndex] : undefined;
+  const list = src?.audio || [];
+  return typeof t.ffIndex === 'number' ? list.find(a => a.index === t.ffIndex) : undefined;
+};
+/** 英语 · EAC3 left two tracks of one file saying the same thing: 死神来了2's 5.1 main mix and its 2.0
+ *  commentary credit list are both `eng` `ac3`. The 播放资源 card has always printed the layout and the
+ *  rate beside the codec (「英语 · AC3 · 5.1 · 768 kbps · 48 kHz」), so the menu says the same two words in
+ *  the same order rather than making the viewer open the card to tell the tracks apart. The sample rate
+ *  stays on the card: it is the one field no pair of tracks in these corpora differs by, and the menu's
+ *  column is one line wide. */
+const audioMeta = (t: PlayerTrack): string => {
+  const a = audioStream(t);
+  return [
+    t.selected ? '正在用' : '',
+    // The server's profile is the half mpv does not carry: it reports `dts` where the card says
+    // 「DTS-HD MA」, so the profile wins whenever there is one and the codec alone is the fallback.
+    codecLabel(t.codec, a?.profile) || formatWord(t.codec),
+    layoutWord(a?.channelLayout) || channelsWord(a?.channels || t.channels),
+    fmtRate(a?.bitRate),
+  ].filter(Boolean).join(' · ');
+};
+/** The subtitle and video rows keep the codec-only reading they always had: a subtitle has no layout or
+ *  rate to print, and a video track's numbers live on the 画面 panel beside this one. */
+const meta = (t: PlayerTrack): string =>
+  [t.selected ? '正在用' : '', formatWord(t.codec)].filter(Boolean).join(' · ');
 
 /** A sidecar named by the same pass the 播放资源 card runs, so one track cannot read 巴西 葡萄牙语 there and
  *  Brazilian Portuguese here. The card clusters by language and lets the head carry it; these rows are one
@@ -167,7 +198,7 @@ function nudgeDelay(dir: number): void {
     <button v-for="t in tracks" :key="t.id" class="pl-row" :class="{ on: current === t.id }" @click="pick(t.id)">
       <span class="mark"></span>
       <span class="label">{{ rowLabel(t) }}</span>
-      <span class="meta">{{ meta(t) }}</span>
+      <span class="meta">{{ audioMeta(t) }}</span>
     </button>
     <p v-if="!tracks.length" class="pl-empty">这个文件里没有可切换的音轨</p>
     <div v-if="tracks.length" class="pl-sep"></div>

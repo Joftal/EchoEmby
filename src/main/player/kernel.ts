@@ -133,6 +133,9 @@ const mapTrack = (t: any): PlayerTrack | null => {
     title: typeof t.title === 'string' ? cleanTrackTitle(t.title) : undefined,
     lang: typeof t.lang === 'string' && t.lang ? t.lang : undefined,
     codec: typeof t.codec === 'string' ? t.codec : undefined,
+    // Only the count: demux-channels answered 「unknown6」 on a 5.1 track of the file this was measured on,
+    // so the layout word has to come from the server's own row for the same stream number.
+    channels: sec(t['demux-channel-count']),
     selected: !!t.selected,
     default: !!t.default,
     forced: !!t.forced,

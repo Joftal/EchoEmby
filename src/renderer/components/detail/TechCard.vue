@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { enName, fmtDateTime, fmtRate, fmtRuntime, fmtSize, formatWord, langName, NO_LANG, openBrackets, rangeWord, zhTrackWords } from '../../lib/format';
+import { codecLabel, enName, fmtDateTime, fmtRate, fmtRuntime, fmtSize, formatWord, langName, layoutWord, NO_LANG, openBrackets, rangeWord, zhTrackWords } from '../../lib/format';
 import { versionLabel } from '../../../shared/version-label';
 import { hasContent, type LibraryItem, type MediaStreamInfo } from '../../../shared/types';
 
@@ -71,16 +71,8 @@ const vstream = computed(() => described.value?.video);
  *  the caller says the tracks beside this one differ by format. */
 const discName = (s: MediaStreamInfo, keepFormats: boolean): string =>
   openBrackets(s.title || '') || (keepFormats ? s.codec?.toUpperCase() || '' : '');
-/** Codec and profile on one token. The two fields overlap by design — `Profile` qualifies a codec rather
- *  than naming a second thing — so joining them printed 「DTS DTS」 on every dts track whose profile the
- *  server spells out as `DTS`, and 「AAC HE-AAC」 where HE-AAC *is* the codec. When the profile already
- *  contains the codec name, the profile alone is the whole answer. */
-const codecLabel = (a: MediaStreamInfo): string => {
-  const c = (a.codec || '').toUpperCase().replace(/[̀-ͯ]/g, '');
-  const p = a.profile || '';
-  if (c && p && p.toUpperCase().replace(/[^A-Z0-9]/g, '').includes(c)) return p;
-  return [a.codec?.toUpperCase(), p].filter(Boolean).join(' ');
-};
+/** The card's own codec word, shared with the player's audio menu through `format.ts` — see `codecLabel`. */
+const codecWord = (a: MediaStreamInfo): string => codecLabel(a.codec, a.profile);
 /** Every audio track, one line each: the numbers a reader compares, then the server's own words for it.
  *  One line, not two, because the card is the wide one — 视频 beside it only needs the width of its own
  *  values, and giving the slack to the track list is what keeps ten tracks scannable as a list instead of
@@ -101,8 +93,8 @@ const audioRows = computed(() => {
   const rows = list.map((a, i) => {
     const nums = [
       langName(a.lang) || NO_LANG,
-      codecLabel(a),
-      fmtLayout(a.channelLayout) || (a.channels ? `${a.channels} 声道` : ''),
+      codecWord(a),
+      layoutWord(a.channelLayout) || (a.channels ? `${a.channels} 声道` : ''),
       fmtRate(a.bitRate),
       fmtHz(a.sampleRate),
       // 位深, spelled the one way the 视频 card spells it. Measured 2026-10-27 over 32,770 audio rows:
@@ -294,10 +286,7 @@ const fmtRes = (v?: MediaStreamInfo): string => (v?.width && v?.height ? `${v.wi
  *  carrying no unit. */
 const fmtHz = (n?: number): string => (!n ? '' : `${+(n / 1000).toFixed(1)} kHz`);
 const fmtFps = (n?: number): string => (!n ? '' : `${+n.toFixed(2)} fps`);
-/** 6 channels is 5.1 or 2×stereo or 3.1 depending on the layout, and the count alone cannot say which —
- *  `ChannelLayout` came back on 62 of 62 sampled streams, so it is printed next to the count. */
-const fmtLayout = (s?: string): string =>
-  !s ? '' : s === 'mono' ? '单声道' : s === 'stereo' ? '立体声' : s.replace(/\(.*\)/, '').trim() || s;
+
 /** Where the bytes actually are. The green dot and the ✓ this row used to carry were constants — painted
  *  on all 444 sampled files, including the one `strm` entry that has no file behind it — so they said
  *  nothing. `Protocol` is the server's own answer: File on 474 of 474 sources here, Http on a referral. */

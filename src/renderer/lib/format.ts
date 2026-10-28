@@ -123,6 +123,22 @@ const LANGS: Record<string, string> = {
   // 「No linguistic content」, `la` is 「La Trobe University」 — so those read as a codec, a country or a
   // name, and never as a nationality.
   it: '意大利语', fr: '法语', ru: '俄语', ar: '阿拉伯语', ms: '马来语', hi: '印地语', pt: '葡萄牙语',
+  // Two-letter codes, which the servers answer with only for scene releases (sc/tc above) but mpv hands
+  // back verbatim from the container's own tag: 死神来了2's 6-track file names its Polish dub "pl" in
+  // Matroska, and the panel printed 「pl」 beside 「英语」「俄语」. ISO-639-1 is the same list for every muxer,
+  // so it is spelled out once here instead of being guessed per row. The letters the block above
+  // deliberately left alone (he = HE-AAC, no = No linguistic content, hr = DTS-HD HR, la = La Trobe,
+  // ch = 6 ch, us/my/uk = regions) are still absent: those are words a title borrows, not languages.
+  pl: '波兰语', nl: '荷兰语', sv: '瑞典语', fi: '芬兰语', da: '丹麦语', hu: '匈牙利语', cs: '捷克语',
+  el: '希腊语', sr: '塞尔维亚语', bg: '保加利亚语', ro: '罗马尼亚语', sk: '斯洛伐克语', sl: '斯洛文尼亚语',
+  lt: '立陶宛语', lv: '拉脱维亚语', et: '爱沙尼亚语', is: '冰岛语', fa: '波斯语', ca: '加泰罗尼亚语',
+  gl: '加利西亚语', af: '南非荷兰语', sw: '斯瓦希里语', eu: '巴斯克语', sq: '阿尔巴尼亚语', bs: '波斯尼亚语',
+  mk: '马其顿语', be: '白俄罗斯语', ka: '格鲁吉亚语', hy: '亚美尼亚语', az: '阿塞拜疆语', kk: '哈萨克语',
+  uz: '乌兹别克语', mn: '蒙古语', km: '高棉语', lo: '老挝语', ne: '尼泊尔语', si: '僧伽罗语', ur: '乌尔都语',
+  ta: '泰米尔语', te: '泰卢固语', ml: '马拉雅拉姆语', kn: '卡纳达语', mr: '马拉地语', bn: '孟加拉语',
+  pa: '旁遮普语', gu: '古吉拉特语', am: '阿姆哈拉语', so: '索马里语', ha: '豪萨语', ig: '伊博语',
+  yo: '约鲁巴语', zu: '祖鲁语', cy: '威尔士语', ga: '爱尔兰语', mt: '马耳他语', lb: '卢森堡语',
+  fo: '法罗语', tt: '鞑靼语', ba: '巴什基尔语',
 };
 
 /** The one word for a track that carries no language, which every surface that names a track reaches for
@@ -412,6 +428,20 @@ export const formatWord = (codec?: string): string => {
   // `dvb_teletext` has the same shape). Spaces are what a reader sees either way.
   return FORMAT[c] || (codec || '').toUpperCase().replace(/_/g, ' ');
 };
+/** Codec and profile on one token, the way the audio rows of the 播放资源 card have always spelled a track.
+ *  The two fields overlap by design — `Profile` qualifies a codec rather than naming a second thing — so
+ *  joining them printed 「DTS DTS」 on every dts track whose profile the server spells out as `DTS`, and
+ *  「AAC HE-AAC」 where HE-AAC *is* the codec: when the profile already contains the codec name, the profile
+ *  alone is the whole answer. It lives here rather than in the card because the player's own audio menu
+ *  must name one stream the one way the card names it — measured 2026-10-28 on 死神来了2 (nyamedia
+ *  253192), whose second track read 「DTS-HD MA · 5.1 · 48 kHz · 16 位」 on the card and 「DTS · 5.1」 in the
+ *  menu, because mpv reports the container's codec token and drops the profile entirely. */
+export const codecLabel = (codec?: string, profile?: string): string => {
+  const c = (codec || '').toUpperCase().replace(/[\u0300-\u036f]/g, '');
+  const p = profile || '';
+  if (c && p && p.toUpperCase().replace(/[^A-Z0-9]/g, '').includes(c)) return p;
+  return [c, p].filter(Boolean).join(' ');
+};
 /** Codec and channel vocabulary: words a track title borrows from the fields the row already prints
  *  (「English DTS-HD Master Audio 5.1 @ 3310 kbps」 over 「英语 · DTS · 5.1 · 3.3 Mbps」). A token matches
  *  with its trailing digits off, so DDP5.1 is DDP. */
@@ -503,8 +533,18 @@ const translateRoles = (s: string): string =>
         .replace(/,\s*/g, '、')
         .replace(/\bby\b/gi, ' ')
         .replace(/commentary/gi, '评论')
-        .replace(/、\s+/g, '、')
-        .replace(/、{2,}/g, '、')
+        // What is left in Latin is a proper noun: 「Commentary by David Ellis, Craig Perry, Eric Bress,
+        // J. Mackye Gruber」 translated to 「评论 David Ellis Craig Perry Eric Bress Mackye Gruber」 on both
+        // surfaces of the 播放资源 module - a credit list whose separators the tokenizer then dropped, so
+        // one track read as six naked words of prose, and 「J.」 was lost on the way. The roles are the
+        // fact a viewer choosing between two commentary tracks acts on (导演 or 制片人), so the names go
+        // the way any other word the tables cannot read would if it were noise, and the roles stay.
+        .replace(/[A-Za-z0-9][A-Za-z0-9.'’\-]*/g, '')
+        // The separators stand alone, spaces on both sides: what is left of 「导演、制片人」 is two words
+        // the tokenizer below can read one at a time, and a 、 glued to 制片人 is one token no table knows.
+        .replace(/\s*、\s*/g, ' 、 ')
+        .replace(/(?:\s*、\s*){2,}/g, ' 、 ')
+        .replace(/^\s*、\s*|\s*、\s*$/g, '')
         .replace(/\s{2,}/g, ' ')
         .trim()
     : s;
@@ -872,6 +912,21 @@ export const fmtSize = (n?: number): string => {
 /** A rate rounded to 「0.2 Mbps」 is one significant figure standing in for 192 or 208 kbps, so under a
  *  megabit the number is stated in kilobits — which is where audio bitrates actually live. */
 export const fmtRate = (n?: number): string => (!n ? '' : n >= 1e6 ? `${(n / 1e6).toFixed(1)} Mbps` : `${Math.round(n / 1e3)} kbps`);
+
+/** A channel layout in the words a card says it. 6 channels is 5.1 or 2xstereo or 3.1 depending on the
+ *  layout, and the count alone cannot say which - the server's `ChannelLayout` came back on 62 of 62
+ *  sampled streams - so the layout is the word, and `(side)` is the side of the room rather than the
+ *  shape, which is why the bracket is cut. The 播放资源 card and the player's track menu both read this,
+ *  so one stream cannot read 「5.1」 on one surface and 「5.1(side)」 on the other. */
+export const layoutWord = (s?: string): string =>
+  !s ? '' : s === 'mono' ? '单声道' : s === 'stereo' ? '立体声' : s.replace(/\(.*\)/, '').trim() || s;
+
+/** The same word from a count alone, which is all mpv reports for a track it opened: `demux-channels`
+ *  answered 「unknown6」 on a real 5.1 track while `demux-channel-count` said 6, so the number is the only
+ *  part worth trusting. The four counts that name a layout in the trade get its name; anything else says
+ *  how many channels there are rather than guessing a shape. */
+const CHANNEL_WORDS: Record<number, string> = { 1: '单声道', 2: '立体声', 6: '5.1', 8: '7.1' };
+export const channelsWord = (n?: number): string => (!n ? '' : CHANNEL_WORDS[n] || `${n} 声道`);
 
 /** The gateway's own word for a file's dynamic range, as a card says it. Measured 2026-10-27 over 480
  *  sources: 359 `SDR`, 64 `HDR 10` — with the space, which is how this gateway spells HDR10 — 56

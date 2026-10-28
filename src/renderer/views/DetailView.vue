@@ -709,11 +709,18 @@ let techTrigger: HTMLElement | null = null;
    Keyed by item id because the popup's card and the 选集 row it was opened from name the same episode. */
 const wantedSource = ref<Record<string, string>>({});
 const onTechPick = (itemId: string, sourceId: string): void => {
+  const prev = wantedSource.value[itemId];
   wantedSource.value[itemId] = sourceId;
   // Write through, rather than handing the pick to `play` as an argument: a switch pressed inside the
   // player writes the same map in the controller, and two memories ranked against each other is how a
-  // newer pick on the 播放源 card used to lose to an older click here.
-  void window.echoemby.player.chooseSource(itemId, sourceId);
+  // newer pick on the 播放源 card used to lose to an older click here. The ask is answered, not fired and
+  // forgotten, because a pick about the file already playing now switches that file: if the switch fails
+  // the strip has to go back, or the card keeps pressing a version nothing loaded.
+  void window.echoemby.player.chooseSource(itemId, sourceId).then(r => {
+    if (r.ok) return;
+    if (prev) wantedSource.value[itemId] = prev;
+    else delete wantedSource.value[itemId];
+  });
 };
 /** Pull the controller's answer for one item down before a card paints it. An empty means nobody has
  *  chosen, which leaves this window's copy alone — the card then falls on the first playable row, which is

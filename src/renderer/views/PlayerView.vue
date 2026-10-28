@@ -27,7 +27,7 @@ import { SPEED_STEPS, usePlayerStore } from '../stores/player';
 import { useAppStore } from '../stores/app';
 import { fmtClock } from '../lib/format';
 import { embyCached } from '../lib/embycache';
-import { VOLUME_MAX } from '../../shared/types';
+import { hasContent, VOLUME_MAX } from '../../shared/types';
 import { versionNames } from '../../shared/version-label';
 
 const player = usePlayerStore();
@@ -105,10 +105,15 @@ const rate = computed(() => {
 
 /** The 播放资源 trigger says which version is on screen, in the same word the card inside the panel and the
  *  page's 播放资源 card both use: there is no bitrate ladder to name any more, so the only answer this button
- *  can give is the file itself. */
+ *  can give is the file itself. A file with nothing to choose between says the panel's own name instead of
+ *  a number: 「版本 1」 beside 「1 个版本」 and 「这个条目只有一个版本」 is one fact told three times, and the
+ *  ordinal is the least useful of them - measured 2026-10-28 on 253192, whose single 4K file had no shape
+ *  word in its `Name`, so the trigger, the card and the note all said 版本 1 about the only file there is. */
 const sourceLabel = computed(() => {
   const se = session.value;
   if (!se) return '播放资源';
+  const playable = se.sources.filter(hasContent);
+  if (playable.length < 2) return '播放资源';
   return versionNames(se.sources)[se.sourceIndex] || '播放资源';
 });
 

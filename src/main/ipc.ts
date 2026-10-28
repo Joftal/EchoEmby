@@ -189,7 +189,7 @@ export class AppServices {
     // second renderer, and a switch pressed on its own 播放源 card moves the same map the page reads.
     ipcMain.handle('player:lastSource', (_e, itemId: string) => this.player.lastSource(itemId));
     ipcMain.handle('player:chooseSource', (_e, itemId: string, sourceId: string) =>
-      wrap('player:chooseSource', () => (this.player.chooseSource(itemId, sourceId), true)),
+      wrap('player:chooseSource', async () => (await this.player.chooseSource(itemId, sourceId), true)),
     );
     ipcMain.handle('player:command', (_e, cmd: PlayerCommand) => wrap('player:command', async () => (await this.player.command(cmd), true)));
     ipcMain.handle('player:close', () => wrap('player:close', async () => (await this.player.close(), true)));

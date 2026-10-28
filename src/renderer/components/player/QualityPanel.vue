@@ -84,7 +84,7 @@ const playingRange = computed(() => {
         <span>{{ rate(v.src.bitRate) }}</span>
         <span class="who">
           <Shield :size="17" :fill="session?.sourceIndex === v.i ? '#6ddc8f' : 'rgba(255,255,255,.4)'" stroke-width="1.6" />
-          {{ names[v.i] }}
+          {{ versions.length < 2 ? '正在用' : names[v.i] }}
         </span>
       </button>
     </div>
