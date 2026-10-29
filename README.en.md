@@ -14,7 +14,7 @@
 - Home page recommendations, continue watching
 - Details: seasons, episodes, cast, stills, genres, similar works
 - Library browsing with filters and search
-- Playback: hardware decoding, subtitles and audio tracks, preferred languages, picture fit (fit / fill / stretch), HDR (Windows HDR switched on for HDR titles and restored afterwards), chapters, speed, auto-next, seek-bar previews (off by default, switched on in Settings)
+- Playback: hardware decoding (auto / D3D11 / software), subtitles and audio tracks, preferred languages, picture fit (fit / fill / stretch), HDR (Windows HDR switched on for HDR titles and restored afterwards), chapters, speed, auto-next, seek-bar previews (off by default, switched on in Settings)
 - Danmaku from dandanplay
 - Ratings and Chinese synopses filled in from TMDB, Rotten Tomatoes, Bangumi, Trakt and others
 - Keyboard control

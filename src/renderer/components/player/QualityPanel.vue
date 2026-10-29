@@ -28,7 +28,6 @@ async function patch(p: Partial<PlayerPrefs>): Promise<void> {
 
 const HWDECS: { value: PlayerPrefs['hwdec']; label: string }[] = [
   { value: 'd3d11va', label: 'D3D11' },
-  { value: 'cuda', label: 'CUDA' },
   { value: 'auto', label: '自动' },
   { value: 'no', label: '软解' },
 ];

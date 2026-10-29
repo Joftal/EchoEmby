@@ -5,7 +5,11 @@ import path from 'node:path';
 import { isAudioLang, isSubLang } from '../shared/lang';
 import type { Account, AppConfig, DanmakuSettings, DanmakuSourceConfig, MediaCachePrefs, MetaKeys, PlayerPrefs, Settings, SettingsPatch, WindowPrefs } from '../shared/types';
 
-const HWDEC = ['d3d11va', 'cuda', 'auto', 'no'] as const;
+/* No `cuda`: mpv only offers that path to an OpenGL or Vulkan backend, and this player launches with
+   `--vo=gpu-next --gpu-api=d3d11` — it answered 「CUDA hwdec only works with OpenGL or Vulkan backends」 and
+   fell through to software decode every time. Choosing it therefore never accelerated anything; it only
+   replaced a hardware decoder that was working. A config written before this reads back as the default. */
+const HWDEC = ['d3d11va', 'auto', 'no'] as const;
 const FITS = ['fit', 'fill', 'stretch'] as const;
 const PROXY_MODES = ['system', 'manual', 'none'] as const;
 const DANMAKU_SOURCES = ['bilibili', 'dandan'] as const;
@@ -19,7 +23,13 @@ export const SECRET_MASK = '<set>';
    default track names another language. A row that starts on 自动 is a promise that nothing moved until the
    viewer pressed something. */
 const DEFAULT_PLAYER: PlayerPrefs = {
-  hwdec: 'd3d11va',
+  /* 自动, not a named driver: the machine this was written on is one NVIDIA card, while `auto` lets mpv ask
+     the adapter that will actually present the picture which decoder it supports — the same build then opens
+     a 4K HEVC film on an Intel iGPU (D3D11VA, Kaby Lake and later for 10-bit), an AMD card (D3D11VA since
+     GCN) or an NVIDIA one, and drops to software only for a codec that adapter cannot decode. A named
+     `d3d11va` here would be the same answer on all three today, but it is the app's guess rather than the
+     driver's, and it is the wrong guess on a desktop whose display is driven by a second adapter. */
+  hwdec: 'auto',
   seekStepMs: 10_000,
   // Off by default: switching a display's mode blanks the screen for a moment, and that is not something to
   // do to someone who only asked to watch a film. A row that starts off is a promise that nothing moved.

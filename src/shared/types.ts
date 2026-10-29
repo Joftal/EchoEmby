@@ -77,7 +77,12 @@ export type SettingsPatch = Omit<Partial<Settings>, 'player' | 'danmaku' | 'wind
  *  at and never asks the server to re-encode it, so quality is decided by which file is picked, not by a
  *  number offered to the gateway. */
 export interface PlayerPrefs {
-  hwdec: 'd3d11va' | 'cuda' | 'auto' | 'no';
+  /** Two hardware paths and software; `cuda` used to be a third and is gone. mpv refuses it under this
+   *  player's own launch shape — `--vo=gpu-next --gpu-api=d3d11` logs 「CUDA hwdec only works with OpenGL or
+   *  Vulkan backends」 and then decodes in software, so choosing it cost a 4K HDR film 1.6 cores instead of
+   *  0.3 (measured 2026-10-29) with nothing on screen saying the card had stopped working. A config that
+   *  still says `cuda` reads back as the default (自动), which is what the card was really doing anyway. */
+  hwdec: 'd3d11va' | 'auto' | 'no';
   /** ← / →, and the two skip buttons either side of the play button. */
   seekStepMs: number;
   /** Put Windows' own HDR switch on while an HDR file plays, and put it back the way it was afterwards.
