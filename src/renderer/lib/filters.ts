@@ -1,4 +1,4 @@
-import type { LibraryItem, StudioRef } from '../../shared/types';
+import type { LibraryItem } from '../../shared/types';
 import { langName } from './format';
 import { genreLabel, genreQuery } from './genres';
 
@@ -13,9 +13,10 @@ export interface Filters {
   genres: string[];
   /** Four-digit years, in the order the user ticked them. */
   years: string[];
-  /** One production company. Single because the server's OR separator for this param is the one
-   *  thing the gateway never answered for: both `a|b` and `a,b` came back empty on its busiest id. */
-  studio: StudioRef | null;
+  /** One company as the filter shows it: the ids the server answers for, and the name to print. Usually
+   *  one id; several when two rows are the same service spelled twice (iQIYI and iQiyi), because
+   *  `StudioIds` does read a comma list as an OR — measured: 32 + 21 titles asked together, 53 back. */
+  studio: { ids: string[]; name: string } | null;
   langs: string[];
   sort: SortKey;
 }
@@ -125,7 +126,7 @@ export function filterParams(f: Filters): Record<string, string> {
   if (f.type) p.IncludeItemTypes = f.type;
   if (f.genres.length) p.Genres = genreQuery(f.genres);
   if (f.years.length) p.Years = [...f.years].sort().join(',');
-  if (f.studio?.id) p.StudioIds = f.studio.id;
+  if (f.studio?.ids.length) p.StudioIds = f.studio.ids.join(',');
   if (f.langs.length) p.AudioLanguages = [...new Set(f.langs.flatMap(l => [l, ...(LANG_ALT[l] || [])]))].join(',');
   return p;
 }
@@ -147,7 +148,7 @@ export function toQuery(f: Filters): Record<string, string> {
   if (f.type) q.type = f.type;
   if (f.genres.length) q.genres = f.genres.join('|');
   if (f.years.length) q.years = f.years.join(',');
-  if (f.studio?.id) q.studio = `${f.studio.id}|${f.studio.name}`;
+  if (f.studio?.ids.length) q.studio = `${f.studio.ids.join(',')}|${f.studio.name}`;
   if (f.langs.length) q.langs = f.langs.join(',');
   q.sort = f.sort;
   return q;
@@ -163,7 +164,7 @@ export function fromQuery(q: Record<string, unknown>, sort: SortKey): Filters {
     type: typeof q.type === 'string' ? q.type : '',
     genres: list(q.genres).map(genreLabel),
     years: csv(q.years),
-    studio: cut > 0 ? { id: raw.slice(0, cut), name: raw.slice(cut + 1) } : null,
+    studio: cut > 0 ? { ids: raw.slice(0, cut).split(',').filter(Boolean), name: raw.slice(cut + 1) } : null,
     langs: csv(q.langs),
     sort: SORT_OPTIONS.some(x => x.value === want) ? want : sort,
   };
