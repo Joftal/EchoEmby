@@ -169,8 +169,10 @@ export class AppServices {
     ipcMain.handle('emby:homeRows', () => wrap('emby:homeRows', () => this.client().homeRows()));
     ipcMain.handle('emby:resumeRow', (_e, limit?: number) => wrap('emby:resumeRow', () => this.client().resumeRow(Number(limit) || 18)));
     ipcMain.handle('emby:items', (_e, params) => wrap('emby:items', () => this.client().items(params)));
-    ipcMain.handle('emby:genres', () => wrap('emby:genres', () => this.client().genres()));
-    ipcMain.handle('emby:studios', () => wrap('emby:studios', () => this.client().studios()));
+    // Both facet lists take an optional library id: a 分类 or 公司 list built from the whole account offers
+    // entries that answer nothing inside the library being looked at.
+    ipcMain.handle('emby:genres', (_e, scope?: string) => wrap('emby:genres', () => this.client().genres(String(scope || ''))));
+    ipcMain.handle('emby:studios', (_e, scope?: string) => wrap('emby:studios', () => this.client().studios(String(scope || ''))));
     ipcMain.handle('emby:item', (_e, id: string) => wrap('emby:item', () => this.client().item(id)));
     ipcMain.handle('emby:seasons', (_e, id: string) => wrap('emby:seasons', () => this.client().seasons(id)));
     ipcMain.handle('emby:episodes', (_e, { seriesId, seasonId }: { seriesId: string; seasonId: string }) => wrap('emby:episodes', () => this.client().episodes(seriesId, seasonId)));

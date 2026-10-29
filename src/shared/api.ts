@@ -25,11 +25,12 @@ export interface EchoEmbyApi {
      *  to build — the lobby's rail wants 18, the 在看 page wants the whole shelf. */
     resumeRow(limit?: number): Promise<IpcResult<LibraryRow | null>>;
     items(params: Record<string, string | number | boolean>): Promise<IpcResult<LibraryItem[]>>;
-    /** The library's own genre labels, used to fill the 分类 dropdown. */
-    genres(): Promise<IpcResult<FacetOption[]>>;
+    /** The library's own genre labels, used to fill the 分类 dropdown. `scope` is a library id: the
+     *  gateway narrows the list to that library's own genres when given one. */
+    genres(scope?: string): Promise<IpcResult<FacetOption[]>>;
     /** The library's whole company list, with ids: the only answer that makes 公司 mean the same thing on
-     *  a search page as on a library window. */
-    studios(): Promise<IpcResult<FacetOption[]>>;
+     *  a search page as on a library window. `scope` narrows it to one library. */
+    studios(scope?: string): Promise<IpcResult<FacetOption[]>>;
     item(id: string): Promise<IpcResult<LibraryItem>>;
     seasons(seriesId: string): Promise<IpcResult<LibraryItem[]>>;
     episodes(params: { seriesId: string; seasonId: string }): Promise<IpcResult<LibraryItem[]>>;

@@ -6,7 +6,7 @@ import MediaCard from '../components/home/MediaCard.vue';
 import ListCard from '../components/home/ListCard.vue';
 import RowScroller from '../components/home/RowScroller.vue';
 import FilterBar from '../components/browse/FilterBar.vue';
-import { defaultSort, emptyFilters, filterParams, fromQuery, isFiltered, localSort, sortParams, toQuery, type Filters } from '../lib/filters';
+import { defaultSort, emptyFilters, filterParams, fromQuery, isFiltered, localSort, sortParams, toQuery, TYPE_OPTIONS, type Filters } from '../lib/filters';
 import { embyCached } from '../lib/embycache';
 import { resetPageScroll } from '../lib/scroll';
 import { PLAYABLE, applyStop } from '../lib/resume';
@@ -45,6 +45,21 @@ const readFilters = (): Filters =>
 const filters = ref<Filters>(readFilters());
 const term = ref(String(route.query.q || ''));
 
+/** A language can only be answered by a row that owns audio streams, and a Series row owns none: measured on
+ *  this gateway, `IncludeItemTypes=Series&AudioLanguages=jpn` answers 0 of 415 shows, while the same code on
+ *  Episodes answers 9,854 of 18,243. So a page asked for a language reaches its shows through their episodes
+ *  — the server filters the episodes, and the fold in `shown` turns the run back into one card per show. */
+const langOn = computed(() => filters.value.langs.length > 0);
+/** 电影 and 合集 have their own audio, so the detour is only for lists that can hold a show — and a library
+ *  filed as films only holds none, so walking it would be a page of rows with nothing to fold. */
+const libraryKind = computed(() => store.views.find(v => v.id === viewId.value)?.collectionType || '');
+const showsWanted = computed(
+  () =>
+    filters.value.type !== 'Movie' &&
+    filters.value.type !== 'BoxSet' &&
+    libraryKind.value !== 'movies' &&
+    libraryKind.value !== 'boxsets',
+);
 const titles: Record<Exclude<Kind, 'view'>, string> = {
   resume: '在看',
   favorites: '收藏',
@@ -90,7 +105,9 @@ function effectiveQuery(): string {
   return searchQuery;
 }
 
-function params(startIndex: number): Record<string, string | number | boolean> {
+/** `q` overrides the term, which only the retry pass below does: it asks the same page again under another
+ *  spelling of what was typed and has to travel through the same branching as a normal ask. */
+function params(startIndex: number, q?: string): Record<string, string | number | boolean> {
   const f = filterParams(filters.value);
   const s = sortParams(filters.value);
   const page = { StartIndex: startIndex, Limit: pageSize.value };
@@ -108,16 +125,129 @@ function params(startIndex: number): Record<string, string | number | boolean> {
   // shows turned one two-character search into eight unrelated cards. 合集 stays: its own title is a
   // title, and 类型=合集 then narrows to it. 在看/收藏 keep their own lists below — only search narrows.
   if (kind.value === 'search')
-    return { Recursive: true, SearchTerm: effectiveQuery(), IncludeItemTypes: 'Movie,Series,BoxSet', ...f, ...page };
-  return { ParentId: viewId.value, IncludeItemTypes: 'Movie,Series,BoxSet,Playlist,Video', Recursive: true, ...f, ...s, ...page };
+    return { Recursive: true, SearchTerm: q ?? effectiveQuery(), IncludeItemTypes: 'Movie,Series,BoxSet', ...f, ...page };
+  const p: Record<string, string | number | boolean> = { ParentId: viewId.value, IncludeItemTypes: 'Movie,Series,BoxSet,Playlist,Video', Recursive: true, ...f, ...s, ...page };
+  // A library window narrows by type through this same key, so 剧集 has to become Episode here or the ask
+  // would be for the one row kind no language can match.
+  if (langOn.value && showsWanted.value && typeof p.IncludeItemTypes === 'string') p.IncludeItemTypes = String(p.IncludeItemTypes).replace('Series', 'Episode');
+  return p;
 }
 
 /** 在看 does not read the raw list: `IsResumable=true` on these forks says the *file* can be resumed, not
  *  that anything was stopped in it — measured, 33 of the 60 rows bangumi answers that way are already
  *  Played, so the shelf filled with finished episodes wearing no 看到 time. The lobby's merged row knows
  *  where each title actually continues, and it is the same two asks the rail already makes. */
-async function askRows(startIndex: number): Promise<IpcResult<LibraryItem[]>> {
-  if (kind.value !== 'resume') return window.echoemby.emby.items(params(startIndex));
+/** A search for a language, in three parts that go out together. The films half keeps the server's own
+ *  filter, since a film owns its audio. The shows half must go without it — the server answers 0 shows for
+ *  any language — and the episodes half is only there to say which of those shows owns a matching file: its
+ *  rows never reach the grid, so 「巨人」 still means a work named 巨人 and not the eight episodes whose own
+ *  titles hold that name (the fix that made 作品名 only the rule here). Measured on the gateway:
+ *  `SearchTerm=无职转生&IncludeItemTypes=Episode` answers 61 episodes of exactly that show. */
+/** Whether either half of a split ask filled its window. The composed page holds fewer rows than the
+ *  windows it came from (shows are dropped when none of their episodes is in the language), so counting the
+ *  composed rows would hide 加载更多 while the server still had more to give. */
+let splitMore = false;
+
+async function askSearchSplit(startIndex: number, q: string): Promise<IpcResult<LibraryItem[]>> {
+  const f = filterParams(filters.value);
+  const noLang = { ...f };
+  delete noLang.AudioLanguages;
+  const page = { Recursive: true, SearchTerm: q, StartIndex: startIndex, Limit: pageSize.value };
+  const type = filters.value.type;
+  const shows = type !== 'Movie' && type !== 'BoxSet';
+  const films = type === 'Series' ? '' : type || 'Movie,BoxSet';
+  const [filmRes, seriesRes, epRes] = await Promise.all([
+    films ? window.echoemby.emby.items({ ...page, ...f, IncludeItemTypes: films }) : null,
+    shows ? window.echoemby.emby.items({ ...page, ...noLang, IncludeItemTypes: 'Series' }) : null,
+    // Its own window: this is an index of the shows that own a file in the language, not a page of cards.
+    shows ? window.echoemby.emby.items({ ...page, ...f, StartIndex: 0, Limit: 400, IncludeItemTypes: 'Episode' }) : null,
+  ]);
+  const filmRows = filmRes?.ok ? filmRes.data || [] : [];
+  splitMore = filmRows.length >= pageSize.value || (seriesRes?.ok ? (seriesRes.data || []).length : 0) >= pageSize.value;
+  const rows = [...filmRows];
+  if (seriesRes?.ok && epRes?.ok) {
+    const withLang = new Set((epRes.data || []).map(x => x.parentId || '').filter(Boolean));
+    for (const s of seriesRes.data || []) if (withLang.has(s.id)) rows.push(s);
+  }
+  if (rows.length) return { ok: true, data: rows };
+  const bad = [filmRes, seriesRes, epRes].find(x => x && !x.ok);
+  return bad ? { ok: false, data: [], error: bad.error } : { ok: true, data: rows };
+}
+
+/** A library window narrowed by language is a walk, not one ask. The episode rows that answer it arrive in
+ *  the library's own order and each show contributes a run of them: measured on 国产电视剧, the 200 newest
+ *  Chinese-audio episodes belong to 7 shows, so a single window paints seven cards and 加载更多 is the only
+ *  way forward. The walk keeps asking until the cards on hand fill a page or its budget runs out; the sort
+ *  is applied to the cards afterwards, so the order these rows arrive in never reaches the grid. */
+const LANG_CHUNK = 600;
+const LANG_BUDGET = 2400;
+let langSeek = 0;
+let langMore = false;
+/** Rows the last page walked past but did not paint. They belong to the next one: the walk stops on a whole
+ *  chunk, and asking again from the far side of it would lose whatever that chunk held past the cut. */
+let langRest: LibraryItem[] = [];
+
+async function askLibraryLang(rewind: boolean): Promise<IpcResult<LibraryItem[]>> {
+  const ask: Record<string, string | number | boolean> = {
+    ParentId: viewId.value,
+    IncludeItemTypes: 'Movie,Episode,BoxSet,Playlist,Video',
+    Recursive: true,
+    ...filterParams(filters.value),
+    ...sortParams(filters.value),
+  };
+  if (rewind) {
+    langSeek = 0;
+    langRest = [];
+  }
+  const want = pageSize.value;
+  const rows: LibraryItem[] = langRest;
+  const shows = new Set(rows.map(it => (it.type === 'Episode' ? it.parentId : it.id) || ''));
+  langRest = [];
+  let seek = langSeek;
+  const from = seek;
+  let more = false;
+  // The budget is per page, not per list: 加载更多 continues the walk from where the last one stopped.
+  while (seek - from < LANG_BUDGET && rows.length < want) {
+    const take = Math.min(LANG_CHUNK, from + LANG_BUDGET - seek);
+    const r = await window.echoemby.emby.items({ ...ask, StartIndex: seek, Limit: take });
+    if (!r.ok) return rows.length ? { ok: true, data: rows } : { ok: false, data: [], error: r.error };
+    const batch = r.data || [];
+    for (const it of batch) {
+      if (it.type !== 'Episode') {
+        rows.push(it);
+        continue;
+      }
+      const id = it.parentId || '';
+      if (!id || shows.has(id)) continue;
+      shows.add(id);
+      rows.push(it);
+    }
+    seek += batch.length;
+    // A short window is the end of the list; a full one that fills the page leaves the rest to 加载更多.
+    if (batch.length < take) break;
+    if (shows.size >= want || rows.length >= want) {
+      more = true;
+      break;
+    }
+  }
+  if (seek - from >= LANG_BUDGET) more = true;
+  langSeek = seek;
+  // A films-only window hands back every row of its chunk; the page still holds one screenful of cards,
+  // and the rest waits for the next one instead of being asked for a second time.
+  if (rows.length > want) {
+    more = true;
+    langRest = rows.slice(want);
+    rows.length = want;
+  }
+  langMore = more;
+  return { ok: true, data: rows };
+}
+async function askRows(startIndex: number, q?: string): Promise<IpcResult<LibraryItem[]>> {
+  if (kind.value !== 'resume') {
+    if (isSearch.value && langOn.value) return askSearchSplit(startIndex, q ?? effectiveQuery());
+    if (kind.value === 'view' && langOn.value && showsWanted.value) return askLibraryLang(startIndex === 0);
+    return window.echoemby.emby.items(params(startIndex, q));
+  }
   const r = await window.echoemby.emby.resumeRow(pageSize.value);
   return { ok: r.ok, data: r.ok ? r.data?.items || [] : undefined, error: r.error };
 }
@@ -216,7 +346,9 @@ const shown = computed<LibraryItem[]>(() => {
       return true;
     });
   }
-  if (!isSearch.value && kind.value !== 'favorites') return src;
+  // A library window folds only when a language is on: that is the one condition the server cannot answer
+  // on a Series row, so the page behind it is a run of episodes and its cards have to be rebuilt from them.
+  if (!isSearch.value && kind.value !== 'favorites' && !(kind.value === 'view' && langOn.value)) return src;
   const onScreen = new Set(src.filter(x => x.type !== 'Episode').map(x => x.id));
   const taken = new Set<string>();
   const once = new Set<string>();
@@ -279,6 +411,12 @@ async function loadShelves(): Promise<void> {
   if (!films?.ok && !shows?.ok) error.value = films?.error || shows?.error || '加载失败';
 }
 
+/** Which library narrows the two facet lists. A window asks for its own (the gateway honours
+ *  `/Genres?ParentId=` and `/Studios?ParentId=`), a search reaches across the account and asks for all.
+ *  The difference is what turns dead entries into answers: 27 genre labels against 华语电影's own 24 rows left
+ *  eight that emptied the page, and the company list narrows from 8,185 rows to that library's 1,386. */
+const facetScope = computed(() => (kind.value === 'view' ? viewId.value : ''));
+
 /** The /Genres facet lives in the store, so a server that was slow on the first ask gets asked again. */
 const genreOptions = computed(() => store.genres);
 /** 公司 is a facet of the library, not of the page: read from /Studios through the store, the same shape
@@ -289,8 +427,20 @@ const studioOptions = computed(() => store.studios);
 /** Prefetched as soon as the bar is on screen, so the panel is already full the first time it is opened;
  *  the ask is one per account and cached, so a page that never opens 公司 costs one request per session. */
 function prefetchStudios(): void {
-  if (showBar.value) void store.loadStudios();
+  if (showBar.value) void store.loadStudios(facetScope.value);
 }
+
+/** The types this window can actually answer with. Measured: a film library holds no Series, a television
+ *  library no Movie, and 合集 lives in a library of its own — so those entries were controls whose only
+ *  outcome was an empty page. A mixed library keeps all three. */
+const typeOptions = computed(() => {
+  const lib = store.views.find(v => v.id === viewId.value);
+  const holds = lib?.collectionType || '';
+  if (holds === 'movies') return TYPE_OPTIONS.filter(o => o.value === 'Movie');
+  if (holds === 'tvshows') return TYPE_OPTIONS.filter(o => o.value === 'Series');
+  if (holds === 'boxsets') return TYPE_OPTIONS.filter(o => o.value === 'BoxSet');
+  return TYPE_OPTIONS;
+});
 
 /** 搜索 reaches only the spelling the library filed the work under, and this is the renderer's half of the
  *  fix: TMDB knows every name of a work (through `meta.tmdbTitles`), this library does not, and
@@ -364,8 +514,10 @@ async function load(reset: boolean): Promise<void> {
     // The shapes go out together: measured on this gateway, eight of them come back in 198ms while
     // asking one at a time takes 1380ms, and a dead-end query is what usually lands here.
     if (isSearch.value && from === 0 && r.ok && !batch.length) {
-      const shapes = retryShapes(effectiveQuery());
-      const tries = await Promise.all(shapes.map(q => window.echoemby.emby.items({ ...params(0), SearchTerm: q })));
+      // The retry travels through the same branch as the ask it stands in for, or a corrected spelling would
+      // come back with films only and lose every show the language filter was meant to reach.
+      const shapes = retryShapes(effectiveQuery()).slice(0, langOn.value ? 4 : 8);
+      const tries = await Promise.all(shapes.map(q => askRows(0, q)));
       const hit = tries.findIndex(x => x.ok && (x.data || []).length > 0);
       if (hit >= 0) {
         searchQuery = shapes[hit];
@@ -389,7 +541,12 @@ async function load(reset: boolean): Promise<void> {
     // Before the rows go on screen: the fold has to be settled or the episode card would swap into a
     // show card under the user's cursor a beat after the grid paints.
     if (isSearch.value) await rememberSeries(episodeShows(batch));
-    else if (kind.value === 'favorites') {
+    else if (kind.value === 'view' && langOn.value) {
+      // Same fold as 收藏: the run of episodes has to be dressed as its show before it paints, and a Series
+      // row already in the list is its own card.
+      const onScreen = new Set([...items.value, ...batch].filter(x => x.type !== 'Episode').map(x => x.id));
+      await rememberSeries(episodeShows(batch).filter(id => !onScreen.has(id)));
+    } else if (kind.value === 'favorites') {
       // 收藏 is a list of works: an Episode row is folded into its Series before paint. A Series
       // already accumulated is its own card, so only the orphan parents are asked for.
       const onScreen = new Set([...items.value, ...batch].filter(x => x.type !== 'Episode').map(x => x.id));
@@ -397,10 +554,13 @@ async function load(reset: boolean): Promise<void> {
     }
     items.value = reset ? batch : [...items.value, ...batch];
     // Off the direct rows, not the merged ones: an alias row has no place in the server's 200-row window.
-    hasMore.value = direct === pageSize.value;
+    hasMore.value =
+      isSearch.value && langOn.value ? splitMore
+      : kind.value === 'view' && langOn.value && showsWanted.value ? langMore
+      : direct === pageSize.value;
     if (kind.value === 'resume') void askSeasons(items.value);
     // The facet is allowed to fail with the server: once rows are in, the library is answering.
-    if (batch.length) void store.loadGenres();
+    if (batch.length) void store.loadGenres(facetScope.value);
   } finally {
     busy.value = false;
     loading.value = false;
@@ -421,7 +581,7 @@ async function sync(): Promise<void> {
   if (!r.ok) return;
   const batch = r.data || [];
   items.value = batch;
-  hasMore.value = batch.length === pageSize.value;
+  hasMore.value = kind.value === 'view' && langOn.value && showsWanted.value ? langMore : batch.length === pageSize.value;
   if (kind.value === 'resume') void askSeasons(batch);
 }
 
@@ -510,6 +670,12 @@ function onFilters(next: Filters): void {
  *  element that stays. So the shelves slide as panes of this page instead, and `shelf` is what says which
  *  shelf owns the screen. A typed term and a filter chip are deliberately NOT in it — they move by
  *  `router.replace`, they re-ask the same shelf, and a slide per keystroke would be a strobe. */
+watch(facetScope, () => {
+  if (!showBar.value) return;
+  void store.loadGenres(facetScope.value);
+  void store.loadStudios(facetScope.value);
+});
+
 const shelf = computed(() => `${kind.value}|${viewId.value}`);
 /** The last shelf this page actually owned, for the way out. `kind` and `viewId` are read off
  *  `route.query`, so walking to 设置 empties them and the key changes on the way: the page then runs a pane
@@ -594,7 +760,7 @@ onMounted(async () => {
     return;
   }
   void store.loadViews();
-  void store.loadGenres();
+  void store.loadGenres(facetScope.value);
   prefetchStudios();
   await nextTick();
   fit();
@@ -643,6 +809,7 @@ onBeforeUnmount(() => {
             :studio-options="studioOptions"
             :studios-loading="store.studiosLoading"
             :is-search="isSearch"
+            :type-options="typeOptions"
             @change="onFilters"
           />
 

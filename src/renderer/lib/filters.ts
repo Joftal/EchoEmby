@@ -50,6 +50,12 @@ export const LANG_OPTIONS: Option[] = [
   'tur', 'dan', 'dut', 'ara', 'nor', 'hun', 'cze', 'fin', 'ukr', 'vie', 'gre', 'heb',
 ].map(value => ({ value, label: langName(value) }));
 
+/** A file the scraper never tagged. Measured on 600 films of 华语电影: 146 carry `und` and 65 carry no
+ *  language at all — 211 films that every other row of this picker was unable to reach, because no code you
+ *  could tick is equal to either. `AudioLanguages=und` does answer (439 films there), so the row asks a
+ *  question the server can answer; the 65 with no code stay out of reach, and the label says so. */
+LANG_OPTIONS.push({ value: 'und', label: '未定' });
+
 /** The same language under its other ISO-639-2 spelling, which one library carries both of: a scraper writes
  *  whichever table it read, so 184 files are tagged `fre` beside 5 tagged `fra`, 62 `ger` beside 3 `deu`,
  *  6 `cze` beside 1 `ces`. Filtering on one spelling hides the other, and the picker can only show one row

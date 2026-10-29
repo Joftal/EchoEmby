@@ -74,8 +74,12 @@ const valueText = computed(() => {
 });
 const engaged = computed(() => chosen.value.length > 0 && !props.neutral);
 
-/** 不限 is a chip like any other, except it answers by emptying the list instead of adding itself. */
-const chipList = computed(() => (props.multi ? [{ value: '', label: '不限' }, ...shown.value] : shown.value));
+/** 不限 is a chip like any other, except it answers by emptying the list instead of adding itself.
+ *  A single-choice list gets one too: 类型 and 公司 used to be cleared only by clicking the ticked entry a
+ *  second time, which nobody discovers, while the multi lists beside them all offered 不限. Two lists are
+ *  left alone, because there '' is a real answer rather than none: a menu's 媒体默认, and a neutral list
+ *  like 排序 whose empty state is not a choice at all. */
+const chipList = computed(() => (props.multi || !(props.menu || props.neutral) ? [{ value: '', label: '不限' }, ...shown.value] : shown.value));
 const grid = computed(() => props.cell > 0);
 /** The drawn page of a long list. Capped lists answer with their first page and the 继续显示 row that
  *  follows it; every other list is short enough to draw whole (chunk 0). */

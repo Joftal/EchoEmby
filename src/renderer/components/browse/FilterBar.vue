@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { FacetOption } from '../../../shared/types';
-import { emptyFilters, isFiltered, LANG_OPTIONS, SORT_OPTIONS, TYPE_OPTIONS, yearOptions, type Filters, type SortKey } from '../../lib/filters';
+import { emptyFilters, isFiltered, LANG_OPTIONS, SORT_OPTIONS, yearOptions, type Filters, type Option, type SortKey } from '../../lib/filters';
 import { genreFacet } from '../../lib/genres';
 import { studioLabel, studioRenamed } from '../../../shared/studio-names';
 import FilterSelect from './FilterSelect.vue';
@@ -17,12 +17,15 @@ const props = defineProps<{
    *  rather than appearing a second late and pushing 语言 along. */
   studiosLoading: boolean;
   isSearch: boolean;
+  /** The types this page can actually answer with. A film library holds no Series, so 剧集 there is a
+   *  control whose only outcome is an empty page; the same goes for 电影 inside a television library. */
+  typeOptions: Option[];
 }>();
 const emit = defineEmits<{ (e: 'change', next: Filters): void }>();
 
 const years = yearOptions().map(y => ({ value: y, label: `${y} 年` }));
 const langs = computed(() => LANG_OPTIONS);
-const types = computed(() => TYPE_OPTIONS);
+const types = computed(() => props.typeOptions);
 const sorts = computed(() => SORT_OPTIONS.filter(o => props.isSearch || !o.searchOnly));
 /** One row per name the filter should print. The server credits the same service under more than one
  *  spelling (iQIYI and iQiyi, 腾讯视频 and Tencent Video), so rows that print the same name are merged and
@@ -71,9 +74,10 @@ function setStudio(v: string | string[]): void {
 
 <template>
   <div class="bar">
-    <!-- One row, not two: the three types are the shortest list in the bar and a wrapped panel read as a
-         matrix of four slots with one dangling — the panel is as wide as its cells say it is. -->
-    <FilterSelect label="类型" :options="types" :model-value="filters.type" :cell="56" :cols="3" @update:model-value="setType" />
+    <!-- One row, not two: the types are the shortest list in the bar and a wrapped panel read as a
+         matrix of slots with one dangling — the panel is as wide as its cells say it is. The row is four
+         wide because 不限 now sits beside the three types. -->
+    <FilterSelect label="类型" :options="types" :model-value="filters.type" :cell="56" :cols="4" @update:model-value="setType" />
     <FilterSelect
       label="分类"
       :options="genres"

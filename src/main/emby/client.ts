@@ -497,8 +497,11 @@ export class EmbyClient {
    *  26 on nyamedia, and the gateway's are mixed — 23 中文, 25 English, 2 Japanese spellings of the same
    *  genres. Folding them onto one Chinese label is the renderer's job (lib/genres), so the dropdown can be
    *  filled once per account rather than shrinking to whatever the current page happens to hold. */
-  async genres(): Promise<FacetOption[]> {
-    const j = await this.get<any>(`/Genres`, { UserId: this.account.userId, Limit: 200 });
+  /** `parentId` narrows the list to one library. The gateway honours it — 华语电影 answers 24 genre rows
+   *  where the whole account answers 50 — and that is the difference between a 分类 dropdown whose entries
+   *  all lead somewhere and one where eight of twenty-seven answer nothing on this page. */
+  async genres(parentId = ''): Promise<FacetOption[]> {
+    const j = await this.get<any>(`/Genres`, { UserId: this.account.userId, Limit: 200, ...(parentId ? { ParentId: parentId } : {}) });
     return (j.Items || []).map((x: any) => ({ name: String(x.Name) }));
   }
 
@@ -508,8 +511,8 @@ export class EmbyClient {
    *  offered the twelve companies behind them. Measured: 8185 rows on the gateway (1.9 MB of JSON) and
    *  1328 on nyamedia; six ids sampled from the tail of the gateway's list each answered under
    *  `StudioIds`, so every id here is one this filter can actually be given. */
-  async studios(): Promise<FacetOption[]> {
-    const j = await this.get<any>(`/Studios`, { UserId: this.account.userId, Limit: 20000 });
+  async studios(parentId = ''): Promise<FacetOption[]> {
+    const j = await this.get<any>(`/Studios`, { UserId: this.account.userId, Limit: 20000, ...(parentId ? { ParentId: parentId } : {}) });
     return (j.Items || [])
       .filter((x: any) => x && x.Name)
       .map((x: any) => ({ name: String(x.Name), id: x.Id ? String(x.Id) : undefined }));

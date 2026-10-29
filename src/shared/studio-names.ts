@@ -403,6 +403,7 @@ function generic(s: string): boolean {
  *  爱奇艺影业有限公司, not 爱奇艺影业 有限公司 — a space in the middle defeats every suffix test below. */
 function clean(name: string): string {
   return name
+    .replace(/^[.\u00b7\u30fb\u2022\s]+/, '')
     .replace(/\[[^\]]*\]/g, '')
     .replace(/[（(](?:集团|控股)[)）]/g, '')
     .replace(/[（(][^（）()]{1,12}[)）]/g, '')

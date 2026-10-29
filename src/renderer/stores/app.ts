@@ -14,6 +14,13 @@ export const useAppStore = defineStore('app', () => {
   const rows = ref<LibraryRow[]>([]);
   const views = ref<LibraryItem[]>([]);
   const genres = ref<FacetOption[]>([]);
+  /** Which library the two facet lists on screen were narrowed to, and what each library answered. Keeping
+   *  the answer per scope means walking 华语电影 → 搜索 → 华语电影 does not re-read the list, and switching
+   *  scope paints a library's own list immediately instead of the previous library's for a second. */
+  let genreScope = '';
+  const genreCache = new Map<string, FacetOption[]>();
+  let studioScope = '';
+  const studioCache = new Map<string, FacetOption[]>();
   /** Every company the library credits, with the ids 公司 filters by. Held like `genres` because it is the
    *  same kind of answer: one per account, not one per page. */
   const studios = ref<FacetOption[]>([]);
@@ -69,9 +76,14 @@ export const useAppStore = defineStore('app', () => {
     views.value = [];
     viewsPromise = null;
     genres.value = [];
-    genresPromise = null;
+    genreFlights.clear();
+    facetEpoch += 1;
+    genreScope = '';
+    genreCache.clear();
     studios.value = [];
-    studiosPromise = null;
+    studioFlights.clear();
+    studioScope = '';
+    studioCache.clear();
     studiosLoading.value = false;
     // A server with no stops is only a promise for *this* server, so the switch hands the ask back.
     resumeAsked = false;
@@ -166,43 +178,81 @@ export const useAppStore = defineStore('app', () => {
     return viewsPromise;
   }
 
-  let studiosPromise: Promise<void> | null = null;
+  /** One in-flight ask per scope, not one per loader. A single slot ate the second library's
+   *  answer: landing on 搜索 and then on a library within a second left 公司 missing for good —
+   *  the global /Studios ask (about a second on the gateway) was still in flight, so the
+   *  library's ask was never sent, and the answer that did arrive was thrown away as another
+   *  scope's. Both are fixed by keying the flight on the scope it belongs to. */
+  const genreFlights = new Map<string, Promise<void>>();
 
-  let genresPromise: Promise<void> | null = null;
+  const studioFlights = new Map<string, Promise<void>>();
+
+  /** Answers that were in flight when the account changed belong to the old account: same id, other
+   *  server, so they may not land in this account's caches. Bumped by invalidate(). */
+  let facetEpoch = 0;
 
   /** The 分类 dropdown reads the library's own genre labels. Held here rather than in the view so a
-   *  server that was slow on the first ask gets asked again on the next page, not never again. */
-  function loadGenres(): Promise<void> {
+   *  server that was slow on the first ask gets asked again on the next page, not never again.
+   *  `scope` is a library id: the gateway answers that library's own genres, and the difference is the
+   *  point — 27 labels against 华语电影's 24 rows left eight entries that answered nothing there. */
+  function loadGenres(scope = ''): Promise<void> {
+    if (scope !== genreScope) {
+      genreScope = scope;
+      genres.value = genreCache.get(scope) || [];
+    }
     if (genres.value.length) return Promise.resolve();
-    if (!genresPromise) {
-      genresPromise = embyCached('genres', null, () => window.echoemby.emby.genres())
+    let flight = genreFlights.get(scope);
+    if (!flight) {
+      const mine = facetEpoch;
+      flight = embyCached('genres', scope, () => window.echoemby.emby.genres(scope))
         .then(r => {
-          if (r.ok) genres.value = r.data || [];
+          if (mine !== facetEpoch) return;
+          if (r.ok) {
+            genreCache.set(scope, r.data || []);
+            // A page that has already moved on keeps the answer for its own library, not this one.
+            if (scope === genreScope) genres.value = r.data || [];
+          }
         })
         .finally(() => {
-          genresPromise = null;
+          genreFlights.delete(scope);
         });
+      genreFlights.set(scope, flight);
     }
-    return genresPromise;
+    return flight;
   }
 
   /** The 公司 dropdown needs the library's whole company list, not the companies behind the rows on
    *  screen — that list is what made a fresh search page show no 公司 pill at all. One ask per account
    *  (1.9 MB on the gateway, 316 KB on nyamedia), cached by the same TTL as every other Emby answer. */
-  function loadStudios(): Promise<void> {
+  function loadStudios(scope = ''): Promise<void> {
+    if (scope !== studioScope) {
+      studioScope = scope;
+      studios.value = studioCache.get(scope) || [];
+      // A list already held for this library needs no 正在载入 row, so the bar can print the pill at once.
+      studiosLoading.value = !studios.value.length;
+    }
     if (studios.value.length) return Promise.resolve();
-    if (!studiosPromise) {
+    let flight = studioFlights.get(scope);
+    if (!flight) {
       studiosLoading.value = true;
-      studiosPromise = embyCached('studios', null, () => window.echoemby.emby.studios())
+      const mine = facetEpoch;
+      flight = embyCached('studios', scope, () => window.echoemby.emby.studios(scope))
         .then(r => {
-          if (r.ok) studios.value = r.data || [];
+          if (mine !== facetEpoch) return;
+          if (r.ok) {
+            studioCache.set(scope, r.data || []);
+            if (scope === studioScope) studios.value = r.data || [];
+          }
         })
         .finally(() => {
-          studiosPromise = null;
-          studiosLoading.value = false;
+          studioFlights.delete(scope);
+          // Only the scope on screen may retire the 正在载入 row; another library's answer
+          // must not blank the pill that is still waiting for its own list.
+          if (scope === studioScope) studiosLoading.value = false;
         });
+      studioFlights.set(scope, flight);
     }
-    return studiosPromise;
+    return flight;
   }
 
   async function loadHome(): Promise<void> {
