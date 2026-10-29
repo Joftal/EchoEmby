@@ -1,3 +1,5 @@
+import type { Anime4kLevel } from './anime4k';
+
 export interface Account {
   accountId: string;
   serverName: string;
@@ -104,7 +106,11 @@ export interface PlayerPrefs {
    *  A property of the screen rather than of a file — a 2.39:1 film on a 16:9 window leaves bars, and which
    *  of the three answers looks right is the viewer's taste, not the release's. */
   fit: FitMode;
-  /** 进度条预览图: the bar's tip shows a frame of the file, decoded ahead of time by a second mpv. On by
+  /** 画质增强: Anime4K's restoration and upscaling chain, handed to mpv as one list of GLSL shaders and
+   *  recompiled on the spot when it changes. Off by default and by far the cheapest answer — see
+   *  shared/anime4k.ts for what each level costs and why the upscalers do nothing on a large file. */
+  anime4k: Anime4kLevel;
+  /** 进度条预览图: the bar's tip shows a frame of the file, decoded ahead of time by a second mpv. Off by
    *  default; off means the tip is the clock alone and no second decoder exists. The cost is why the row
    *  exists at all — a preview is one seek every few dozen seconds of film, and a seek pulls a few MB. */
   thumbPreview: boolean;

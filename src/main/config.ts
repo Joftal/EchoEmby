@@ -2,6 +2,7 @@ import { app, safeStorage } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
+import { isAnime4kLevel } from '../shared/anime4k';
 import { isAudioLang, isSubLang } from '../shared/lang';
 import type { Account, AppConfig, DanmakuSettings, DanmakuSourceConfig, MediaCachePrefs, MetaKeys, PlayerPrefs, Settings, SettingsPatch, WindowPrefs } from '../shared/types';
 
@@ -40,6 +41,10 @@ const DEFAULT_PLAYER: PlayerPrefs = {
   // 适应屏幕, because it is what the player has always done: mpv's own default, and the one mode that
   // shows the whole frame. A setting nobody touched must not crop or distort the picture.
   fit: 'fit',
+  /* Off, because the chain is not free: measured in this app on 2026-10-29, a 720p file in a 1080p window
+     went from 2.4% of the GPU to 15% on 标准 and 14% on 高, and a 4K source reached 48% on 高. A sharper
+     picture is a choice, and the app has drawn every frame so far with mpv's own scaler. */
+  anime4k: 'off',
   // Off by default. The preview is a second decoder running beside the film: measured 608 MB resident
   // while it scans a 4K source, plus a grid of frames on disk. A switch that costs that much must be
   // something the viewer asked for, not something the first 播放 signed them up for.
@@ -98,6 +103,9 @@ const pickPlayer = (raw: Partial<PlayerPrefs> | undefined): PlayerPrefs => ({
   subLang: isSubLang(raw?.subLang) ? raw.subLang : DEFAULT_PLAYER.subLang,
   audioLang: isAudioLang(raw?.audioLang) ? raw.audioLang : DEFAULT_PLAYER.audioLang,
   fit: raw?.fit && (FITS as readonly string[]).includes(raw.fit) ? (raw.fit as PlayerPrefs['fit']) : DEFAULT_PLAYER.fit,
+  // A config written before the row existed has no key, and off is what such a file must read as: an
+  // unknown level falls back here too, so a hand-edited value never loads half a shader chain.
+  anime4k: isAnime4kLevel(raw?.anime4k) ? raw.anime4k : DEFAULT_PLAYER.anime4k,
   // A config written before this existed has no key, and off is what such a file must get: the worker is
   // a second decoder, so only an explicit `true` pays for it.
   thumbPreview: raw?.thumbPreview === true,

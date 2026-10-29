@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { MpvPipe, type MpvMessage } from './mpv-pipe';
+import { ANIME4K_SHADERS, type Anime4kLevel } from '../../shared/anime4k';
 import { cleanTrackTitle } from '../track-title';
 import {
   VOLUME_MAX,
@@ -18,7 +19,7 @@ import {
 
 export interface KernelLaunch {
   hwnd: string;
-  prefs: { hwdec: string; fit: FitMode };
+  prefs: { hwdec: string; fit: FitMode; anime4k: Anime4kLevel };
 }
 
 export function mpvExecutable(): string {
@@ -26,6 +27,14 @@ export function mpvExecutable(): string {
   const exe = path.join(dir, 'mpv.exe');
   if (existsSync(exe)) return exe;
   throw new Error(`没有找到 mpv.exe（${dir}），运行 \`npm run mpv\` 获取它`);
+}
+
+/** The bundled Anime4K chain, resolved beside mpv rather than from a URL: the shaders ship with the app
+ *  (resources/shaders/anime4k, MIT) and a level is nothing but a list of files inside it. Packaged builds
+ *  put that folder under process.resourcesPath, exactly like resources/mpv above. */
+export function shaderPaths(level: Anime4kLevel): string[] {
+  const root = path.join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'resources', 'shaders', 'anime4k');
+  return ANIME4K_SHADERS[level].map(f => path.join(root, f));
 }
 
 /** What the pipe reports, kept verbatim so a change can be diffed rather than recomputed. */
@@ -273,6 +282,11 @@ export class MpvKernel {
        fraction of a second before the runtime call landed. */
     if (l.prefs.fit === 'fill') a.push('--panscan=1.0');
     if (l.prefs.fit === 'stretch') a.push('--keepaspect=no');
+    /* 画质增强 travels the same way, and for a sharper reason: a shader list moved by a property write after
+       the file is open recompiles the chain under a frame already on screen. Appending one argument per file
+       is the spelling this build accepts on a command line — one argument holding `a;b` is read as one
+       filename and answered with 「Error parsing option glsl-shaders」. */
+    for (const f of shaderPaths(l.prefs.anime4k)) a.push(`--glsl-shaders-append=${f}`);
     return a;
   }
 
@@ -803,6 +817,15 @@ export class MpvKernel {
       }
       await new Promise(r => setTimeout(r, 250));
     }
+  }
+
+  /** 画质增强, as one property write: mpv reparses and recompiles the whole list on every change, so a shader
+   *  at a time would compile the chain again for each member of it. An empty array is 关闭 and is not the
+   *  same as leaving the property alone — it is how the chain leaves a player that is already running.
+   *  Measured 2026-10-29 on a running file: the swap happens between frames, the position does not move and
+   *  nothing is dropped. */
+  async setAnime4k(level: Anime4kLevel): Promise<void> {
+    await this.pipe.call(['set_property', 'glsl-shaders', shaderPaths(level)]);
   }
 
   async quit(): Promise<void> {

@@ -442,6 +442,7 @@ export class PlayerController {
     if (this.kernel?.running) {
       await this.kernel.setHwdec(prefs.hwdec).catch(() => undefined);
       await this.kernel.setFit(prefs.fit).catch(() => undefined);
+      await this.kernel.setAnime4k(prefs.anime4k).catch(() => undefined);
       return;
     }
     const k = new MpvKernel();
@@ -449,7 +450,7 @@ export class PlayerController {
     k.onMedia = m => this.onKernelMedia(m);
     k.onGone = message => this.onGone(message);
     this.kernel = k;
-    await k.start({ hwnd: this.windows.hostHwnd(), prefs: { hwdec: prefs.hwdec, fit: prefs.fit } });
+    await k.start({ hwnd: this.windows.hostHwnd(), prefs: { hwdec: prefs.hwdec, fit: prefs.fit, anime4k: prefs.anime4k } });
     await this.windows.raiseVideoWhenReady();
   }
 
@@ -956,6 +957,10 @@ export class PlayerController {
     if (k?.running) {
       void k.setHwdec(prefs.hwdec).catch(() => undefined);
       void k.setFit(prefs.fit).catch(() => undefined);
+      // 画质增强 is a property of the picture, not of the file: the chain is recompiled on the running player
+      // and the position does not move (measured 2026-10-29). A file opened later inherits it, because the
+      // property is mpv's own and survives loadfile.
+      void k.setAnime4k(prefs.anime4k).catch(() => undefined);
     }
     const c = this.current;
     const needSrc = c ? c.sources[c.sourceIndex]?.id : undefined;
