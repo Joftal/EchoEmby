@@ -7,6 +7,7 @@ import { usePlayerStore } from '../../stores/player';
 import { useAppStore } from '../../stores/app';
 import { decoderWord, fmtRate, fmtSize, colorSpaceWord, rangeWord } from '../../lib/format';
 import { versionNames } from '../../../shared/version-label';
+import { ANIME4K_LABELS, ANIME4K_LEVELS, ANIME4K_NOTES } from '../../../shared/anime4k';
 import { hasContent, type PlayMethod, type PlaybackSource, type PlayerPrefs } from '../../../shared/types';
 
 const player = usePlayerStore();
@@ -74,6 +75,7 @@ const playingRange = computed(() => {
   <SubRow name="sources" label="播放源" :value="`${versions.length} 个版本`" />
   <SubRow name="decode" label="解码" :value="decoderWord(media.hwdec) || '软解'" />
   <SubRow name="range" label="动态范围" :value="playingRange" />
+  <SubRow name="quality" label="Anime4K" :value="ANIME4K_LABELS[prefs.anime4k || 'off']" />
 
   <SubPopover name="sources" title="播放源">
     <div class="pl-grid">
@@ -110,5 +112,14 @@ const playingRange = computed(() => {
       <span class="track"><i></i></span>
     </div>
     <p class="pl-note">这一项管的是 Windows 自己的 HDR 开关：播放 HDR 片源时替你打开，关掉播放器或换成 SDR 片源时再还原，屏幕会黑一下。屏幕本来就不支持 HDR 时什么也不会发生，mpv 照旧把它压成 SDR。改这一项立刻生效。</p>
+  </SubPopover>
+
+  <SubPopover name="quality" title="Anime4K 画质增强">
+    <div class="pl-sect">档位</div>
+    <div class="pl-chips">
+      <button v-for="l in ANIME4K_LEVELS" :key="l" class="pl-chip" :class="{ on: prefs.anime4k === l }" @click="patch({ anime4k: l })">{{ ANIME4K_LABELS[l] }}</button>
+    </div>
+    <p class="pl-note">{{ ANIME4K_NOTES[prefs.anime4k || 'off'] }}</p>
+    <p class="pl-note">换档立刻生效，画面不会中断。修复这一步任何尺寸都跑；放大只在窗口比画面大 1.2 倍以上时才起作用，所以 1080p 片源在 1080p 窗口上开「标准」是看不出差别的，720p 片源放大到 1080p 窗口最明显。</p>
   </SubPopover>
 </template>

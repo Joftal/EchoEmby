@@ -6,6 +6,7 @@ import type { DanmakuSettings, MediaCachePrefs, MediaCacheStats, NetProbe, Playe
 import { useAppStore } from '../stores/app';
 import FilterSelect from '../components/browse/FilterSelect.vue';
 import { AUDIO_LANGS, SUB_LANGS } from '../../shared/lang';
+import { ANIME4K_LABELS, ANIME4K_LEVELS, ANIME4K_NOTES } from '../../shared/anime4k';
 
 const store = useAppStore();
 const router = useRouter();
@@ -83,6 +84,10 @@ const FITS: { value: PlayerPrefs['fit']; label: string }[] = [
   { value: 'fill', label: '填满屏幕' },
   { value: 'stretch', label: '拉伸填满' },
 ];
+
+/* 画质增强: Anime4K's four answers, named the way the player's own 画质 row names them, so the setting and
+   the panel cannot disagree about what 「标准」 means. */
+const ANIME4K_OPTIONS = ANIME4K_LEVELS.map(v => ({ value: v, label: ANIME4K_LABELS[v] }));
 
 const PROXY_MODES: { value: Settings['proxyMode']; label: string }[] = [
   { value: 'system', label: '系统代理' },
@@ -485,6 +490,26 @@ async function runProbe(): Promise<void> {
                     menu
                     neutral
                     @update:model-value="v => set({ player: { fit: v as PlayerPrefs['fit'] } })"
+                  />
+                </div>
+
+                <!-- 画质增强 sits with 画面适配 because it is the other half of the same question: that row
+                     decides how the frame meets the window, this one decides what is drawn into it. The hint
+                     is the chosen level's own line — four sentences stacked under one label would say three
+                     things the reader is not choosing. -->
+                <div class="row">
+                  <div class="k">
+                    <b>Anime4K 画质增强</b>
+                    <i>{{ ANIME4K_NOTES[player.anime4k] }}</i>
+                  </div>
+                  <FilterSelect
+                    label="Anime4K"
+                    :options="ANIME4K_OPTIONS"
+                    :model-value="player.anime4k"
+                    bare
+                    menu
+                    neutral
+                    @update:model-value="v => set({ player: { anime4k: v as PlayerPrefs['anime4k'] } })"
                   />
                 </div>
 
