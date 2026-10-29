@@ -30,12 +30,17 @@ const props = withDefaults(
      *  「第 1 季」 sits next to 「第 4 季 · 最终季」 - a matrix would need a cell wide enough for the longest
      *  and a cloud wraps into uneven columns. */
     rows?: boolean;
+    /** The list has not arrived yet: the panel says so instead of claiming nothing matches. */
+    busy?: boolean;
+    /** How many of the list's rows to lay out at a time; 0 draws all of them. Only a facet that arrives with
+     *  thousands of rows needs this — a panel that built 8000 chips on open would stall before it painted. */
+    chunk?: number;
     /** Rows drawn as a menu rather than a stack of chips: the answer carries a tick, and the row the pointer
      *  rests on fills with the accent. For a question with exactly one answer (首选语言), where a grid of
      *  filled chips reads as a set of filters that are on. */
     menu?: boolean;
   }>(),
-  { multi: false, searchable: false, bare: false, neutral: false, cell: 0, cols: 4, rows: false, menu: false },
+  { multi: false, searchable: false, bare: false, neutral: false, cell: 0, cols: 4, rows: false, menu: false, busy: false, chunk: 0 },
 );
 const emit = defineEmits<{ (e: 'update:modelValue', v: string | string[]): void }>();
 
@@ -45,6 +50,8 @@ const searchEl = ref<HTMLInputElement | null>(null);
 const listEl = ref<HTMLElement | null>(null);
 const term = ref('');
 const more = ref(false);
+/** Pages of the list the reader has asked to see past the first one. */
+const extra = ref(0);
 
 /** One panel at a time: a mouse pointer that lands on another pill closes this one on its own, but
  *  Enter on a keyboard fires no pointer, so two controls tabbed in sequence would stack two panels. */
@@ -70,8 +77,13 @@ const engaged = computed(() => chosen.value.length > 0 && !props.neutral);
 /** 不限 is a chip like any other, except it answers by emptying the list instead of adding itself. */
 const chipList = computed(() => (props.multi ? [{ value: '', label: '不限' }, ...shown.value] : shown.value));
 const grid = computed(() => props.cell > 0);
+/** The drawn page of a long list. Capped lists answer with their first page and the 继续显示 row that
+ *  follows it; every other list is short enough to draw whole (chunk 0). */
+const limit = computed(() => (props.chunk > 0 ? (extra.value + 1) * props.chunk : 0));
+const visible = computed(() => (limit.value ? chipList.value.slice(0, limit.value) : chipList.value));
+const rest = computed(() => chipList.value.length - visible.value.length);
 /** The panel and the list take these two numbers and derive the whole box from them. */
-const vars = computed(() => (grid.value ? { '--cell': `${props.cell}px`, '--cols': String(Math.min(props.cols, chipList.value.length)) } : undefined));
+const vars = computed(() => (grid.value ? { '--cell': `${props.cell}px`, '--cols': String(Math.min(props.cols, visible.value.length)) } : undefined));
 function isPicked(value: string): boolean {
   return value ? chosen.value.includes(value) : chosen.value.length === 0;
 }
@@ -148,6 +160,7 @@ watch(open, async v => {
     term.value = '';
     return;
   }
+  extra.value = 0;
   place();
   // This watcher runs before the patch, so the panel is not in the document yet: measuring here always
   // answered "nothing to scroll" and a list that opened already overflowing - a season column does - showed
@@ -158,6 +171,8 @@ watch(open, async v => {
   fit();
 });
 watch([term, () => props.options], async () => {
+  // A new search or a new list starts at its first page: 继续显示 has to be asked for again.
+  extra.value = 0;
   await nextTick();
   measure();
   fit();
@@ -213,7 +228,7 @@ onBeforeUnmount(() => {
 
         <div ref="listEl" class="list" :class="{ grid, rows, menu }" @scroll="measure">
           <button
-            v-for="o in chipList"
+            v-for="o in visible"
             :key="o.value || '*'"
             class="chip"
             :class="{ picked: isPicked(o.value) }"
@@ -238,7 +253,8 @@ onBeforeUnmount(() => {
             </svg>
             <span class="name">{{ o.label }}</span>
           </button>
-          <p v-if="!shown.length" class="none">没有匹配项</p>
+          <p v-if="!shown.length" class="none">{{ busy ? '正在载入…' : '没有匹配项' }}</p>
+          <button v-if="rest > 0" class="grow" type="button" @click="extra += 1">继续显示（还有 {{ rest }} 个）</button>
         </div>
       </div>
     </Transition>
@@ -547,6 +563,29 @@ onBeforeUnmount(() => {
 }
 .grid .none {
   grid-column: 1 / -1;
+}
+/* The tail of a capped list. It sits inside the scroll box like one more row and takes the full width, so it
+   never reads as an option the way a chip would — it is the door to the rest of them. */
+.grow {
+  flex: 1 1 100%;
+  height: 30px;
+  margin-top: 1px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: none;
+  transition: color var(--hov) var(--ease), border-color var(--hov) var(--ease), background var(--hov) var(--ease);
+}
+.grow:hover {
+  color: var(--text);
+  border-color: var(--line-strong);
+  background: var(--chip);
+}
+.grow:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 /* A menu: one answer to a row, the tick in its own column, and the row under the pointer filled with the

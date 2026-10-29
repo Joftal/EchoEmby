@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { FacetOption, StudioRef } from '../../../shared/types';
+import type { FacetOption } from '../../../shared/types';
 import { emptyFilters, isFiltered, LANG_OPTIONS, SORT_OPTIONS, TYPE_OPTIONS, yearOptions, type Filters, type SortKey } from '../../lib/filters';
 import { genreFacet } from '../../lib/genres';
 import { studioLabel, studioRenamed } from '../../../shared/studio-names';
@@ -10,8 +10,12 @@ const props = defineProps<{
   filters: Filters;
   /** The library's own genre labels, from the /Genres facet. */
   genreOptions: FacetOption[];
-  /** Companies seen on the results already loaded: the only ids this server will filter by. */
-  studioOptions: StudioRef[];
+  /** The library's whole company list, from the /Studios facet — the same kind of answer as the genres
+   *  above, so 公司 means the same thing on an empty search page as inside a library. */
+  studioOptions: FacetOption[];
+  /** The facet is still on its way (it is one 1.9 MB answer). 公司 keeps its place in the bar meanwhile,
+   *  rather than appearing a second late and pushing 语言 along. */
+  studiosLoading: boolean;
   isSearch: boolean;
 }>();
 const emit = defineEmits<{ (e: 'change', next: Filters): void }>();
@@ -33,7 +37,17 @@ const studios = computed(() => {
     if (studioRenamed(s.name)) g.hint.push(s.name);
     groups.set(label, g);
   }
-  return [...groups.entries()].map(([label, g]) => ({ value: `${g.ids.join(',')}|${label}`, label, hint: g.hint.join(' ') || undefined }));
+  // Sorted, because the facet arrives in the library's own id order, which reads as no order at all once
+  //  the list is 8185 rows long; the panel is searchable, so the sort is mainly what makes scrolling sane.
+  //  Leading punctuation is skipped when comparing, or the first screen of an alphabetical list is nothing
+  //  but 「(not) HEROINE movies」and 「. 北京国立常升」.
+  const key = (s: string): string => s.replace(/^[^0-9A-Za-z\u3400-\u9fff]+/, '');
+  // Chinese names first, then Latin, then everything else: this library is mostly Chinese after the company
+  //  renaming, and collation alone put Arabic and Korean studios above 爱奇艺 on the first screen.
+  const rank = (s: string): number => (/^[\u3400-\u9fff]/.test(s) ? 0 : /^[0-9A-Za-z]/.test(s) ? 1 : 2);
+  return [...groups.entries()]
+    .map(([label, g]) => ({ value: `${g.ids.join(',')}|${label}`, label, hint: g.hint.join(' ') || undefined }))
+    .sort((a, b) => rank(key(a.label)) - rank(key(b.label)) || key(a.label).localeCompare(key(b.label), 'zh'));
 });
 const genres = computed(() => genreFacet(props.genreOptions.map(g => g.name)));
 
@@ -87,8 +101,10 @@ function setStudio(v: string | string[]): void {
       @update:model-value="setSort"
     />
     <FilterSelect
-      v-if="studios.length"
+      v-if="studioOptions.length || studiosLoading"
       label="公司"
+      :chunk="120"
+      :busy="!studioOptions.length"
       :options="studios"
       :model-value="filters.studio?.ids.length ? `${filters.studio.ids.join(',')}|${filters.studio.name}` : ''"
       searchable

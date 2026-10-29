@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import type { IpcResult, LibraryItem, StudioRef } from '../../shared/types';
+import type { IpcResult, LibraryItem } from '../../shared/types';
 import MediaCard from '../components/home/MediaCard.vue';
 import ListCard from '../components/home/ListCard.vue';
 import RowScroller from '../components/home/RowScroller.vue';
@@ -281,14 +281,15 @@ async function loadShelves(): Promise<void> {
 
 /** The /Genres facet lives in the store, so a server that was slow on the first ask gets asked again. */
 const genreOptions = computed(() => store.genres);
-/** Companies come from the results themselves: they are the only ids the 公司 filter can be given,
- *  and remembering them only while unfiltered keeps a picked genre from emptying the dropdown. */
-const studioOptions = ref<StudioRef[]>([]);
+/** 公司 is a facet of the library, not of the page: read from /Studios through the store, the same shape
+ *  分类 takes from /Genres. Building it out of the rows on screen is what made a search page with no rows
+ *  yet show no 公司 pill at all, and a page of 48 films offer the twelve companies behind them. */
+const studioOptions = computed(() => store.studios);
 
-function rememberStudios(batch: LibraryItem[], reset: boolean): void {
-  const map = new Map<string, StudioRef>(reset ? [] : studioOptions.value.map(s => [s.id || s.name, s]));
-  for (const it of batch) for (const s of it.studios || []) if (s.id) map.set(s.id, s);
-  studioOptions.value = [...map.values()];
+/** Prefetched as soon as the bar is on screen, so the panel is already full the first time it is opened;
+ *  the ask is one per account and cached, so a page that never opens 公司 costs one request per session. */
+function prefetchStudios(): void {
+  if (showBar.value) void store.loadStudios();
 }
 
 /** 搜索 reaches only the spelling the library filed the work under, and this is the renderer's half of the
@@ -335,7 +336,6 @@ async function load(reset: boolean): Promise<void> {
   // unfiltered and dumps the library, which is what filled 搜索 with 「#活着」 before I typed a name.
   if (isSearch.value && !term.value.trim()) {
     items.value = [];
-    studioOptions.value = [];
     hasMore.value = false;
     error.value = '';
     loading.value = false;
@@ -399,7 +399,6 @@ async function load(reset: boolean): Promise<void> {
     // Off the direct rows, not the merged ones: an alias row has no place in the server's 200-row window.
     hasMore.value = direct === pageSize.value;
     if (kind.value === 'resume') void askSeasons(items.value);
-    if (!isFiltered(filters.value)) rememberStudios(batch, reset);
     // The facet is allowed to fail with the server: once rows are in, the library is answering.
     if (batch.length) void store.loadGenres();
   } finally {
@@ -596,6 +595,7 @@ onMounted(async () => {
   }
   void store.loadViews();
   void store.loadGenres();
+  prefetchStudios();
   await nextTick();
   fit();
   // The observer lives on `.panes`, the box the shelves are stacked in, not on a shelf itself: switching
@@ -641,6 +641,7 @@ onBeforeUnmount(() => {
             :filters="filters"
             :genre-options="genreOptions"
             :studio-options="studioOptions"
+            :studios-loading="store.studiosLoading"
             :is-search="isSearch"
             @change="onFilters"
           />
