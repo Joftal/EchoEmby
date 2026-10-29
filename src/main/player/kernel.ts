@@ -788,8 +788,21 @@ export class MpvKernel {
     this.mark(true);
   }
 
+  /** mpv announces `hwdec-current` only when it changes, and a switch that lands on the decoder already in
+   *  use changes nothing - so picking D3D11 while 自动 had already settled on d3d11va left the 解码 row on
+   *  「正在用 —」 until the next file (measured 2026-10-29). The value is read back because the switch itself
+   *  reports nothing; a decoder that is still tearing down answers empty for a moment, hence the retries. */
   async setHwdec(v: string): Promise<void> {
     await this.pipe.call(['set_property', 'hwdec', v]);
+    for (let i = 0; i < 4; i++) {
+      const now = await this.pipe.call(['get_property', 'hwdec-current']).catch(() => null);
+      if (typeof now === 'string' && now) {
+        this.raw.hwdec = now;
+        this.mark(true);
+        return;
+      }
+      await new Promise(r => setTimeout(r, 250));
+    }
   }
 
   async quit(): Promise<void> {
