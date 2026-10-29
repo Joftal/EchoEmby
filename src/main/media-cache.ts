@@ -38,6 +38,14 @@ const ETAG_TTL = 60_000;
 /** How much of the next episode 预取 pulls: ten minutes of it. Enough to make 下一集 feel instant, not so
  *  much that a file the viewer never reaches fills the disk. */
 const PREFETCH_SECONDS = 600;
+/** How long an upstream body may hand over nothing before the request is dropped. Measured 2026-10-28 on a
+ *  source whose server claims 50.19 GB and answers only the first 11.29 GB: the Range for the missing part
+ *  neither completed nor failed, mpv sat at seeking:true for minutes, and the only way out was killing the
+ *  app. A reading that never finishes is worse than one that fails, because nothing above it can tell slow
+ *  apart from dead. Twenty seconds is far beyond any pause a healthy server took between packets here. */
+export const UPSTREAM_IDLE_MS = 20_000;
+/** How long a chunk that just timed out is failed without asking the server again. */
+const BROKEN_TTL = 30_000;
 
 interface EntryMeta {
   key: string;
@@ -78,6 +86,12 @@ class MediaCache {
   private serving = new Map<string, number>();
   private prefetchAbort: AbortController | null = null;
   private prefetchKey = '';
+  /** Chunks the server just failed to deliver, by `key:offset`, and when. mpv retries a failed read a few
+   *  times before it gives up, and each retry would otherwise buy another full idle timeout: measured on the
+   *  truncated 2160p of 322165, the freeze repeated for every attempt. Failing the repeat at once turns a
+   *  two-minute hang into one the viewer can act on. Kept short and per offset: a stall is evidence about
+   *  the byte range that stalled, not about the rest of the film. */
+  private broken = new Map<string, number>();
 
   /** `0` is 不限制 and answers `0` here rather than `Infinity`: zero is what the sheet reads back as the word,
    *  and the two places that compare against it both guard for it before dividing. */
@@ -182,7 +196,8 @@ class MediaCache {
    *  still carries Content-Range; the body is dropped. */
   private async probe(url: string, id: { key: string; itemId: string; sourceId: string }): Promise<EntryMeta | null> {
     try {
-      const up = await net.fetch(url, { headers: { Range: 'bytes=0-0' } });
+      // `open` waits on this, so a server that never answers would hang every new item, not just one Range.
+      const up = await net.fetch(url, { headers: { Range: 'bytes=0-0' }, signal: AbortSignal.timeout(UPSTREAM_IDLE_MS) });
       const cr = up.headers.get('content-range') || '';
       const m = /bytes \d+-\d+\/(\d+)/.exec(cr);
       const size = m ? Number(m[1]) : 0;
@@ -330,6 +345,61 @@ class MediaCache {
     await new Promise<void>((resolve, reject) => res.write(buf, err => (err ? reject(err) : resolve())));
   }
 
+  /**
+   * Fetches one Range and hands its bytes to `onData` as they arrive, with a watchdog over the whole
+   * exchange: no byte for UPSTREAM_IDLE_MS and the request is aborted, which surfaces here as a thrown
+   * error. Both halves of the stall need it - a server that never answers the Range at all (measured: no
+   * headers for 20 s) and one that answers and then goes silent. Without it nothing above can tell slow
+   * apart from dead, and mpv waits on the socket until the app is killed.
+   *
+   * `onData` receives each buffer with its absolute offset, so a caller can forward the slice it was asked
+   * for while the rest of the chunk is still arriving.
+   */
+  private async pull(
+    url: string,
+    range: string,
+    signal: AbortSignal,
+    label: string,
+    onData: (buf: Buffer, base: number) => Promise<void> | void = () => undefined,
+  ): Promise<number> {
+    // The caller's signal means 「the viewer is gone」. Relaying it into a controller of our own lets the
+    // watchdog abort the very same request when the server is the one that went away.
+    const ac = new AbortController();
+    const relay = (): void => ac.abort();
+    if (signal.aborted) ac.abort();
+    else signal.addEventListener('abort', relay, { once: true });
+    let last = Date.now();
+    let got = 0;
+    const beat = setInterval(() => {
+      if (Date.now() - last < UPSTREAM_IDLE_MS) return;
+      console.log('[cache] ' + label + ' 上游 ' + UPSTREAM_IDLE_MS + 'ms 无数据，断开');
+      ac.abort();
+    }, 1000);
+    try {
+      const up = await net.fetch(url, { headers: { Range: range }, signal: ac.signal });
+      if (!up.body) throw new Error('no body ' + up.status);
+      last = Date.now();
+      const src = Readable.fromWeb(up.body as any);
+      try {
+        for await (const data of src) {
+          const buf = data as Buffer;
+          last = Date.now();
+          const base = got;
+          got += buf.length;
+          await onData(buf, base);
+        }
+      } finally {
+        // A destroyed response leaves the upstream read half-consumed: undici holds its socket until this
+        // stream is destroyed (measured as a 「file descriptor closed on garbage collection」 warning).
+        src.destroy();
+      }
+      return got;
+    } finally {
+      clearInterval(beat);
+      signal.removeEventListener('abort', relay);
+    }
+  }
+
   /** Fetches one whole chunk, hands the client the part of it that was asked for while it arrives, and puts
    *  the complete chunk on disk. Streaming rather than buffering matters: the first 4 MiB of a 4K film can
    *  take seconds, and mpv must start filling its own demuxer during them. */
@@ -344,28 +414,29 @@ class MediaCache {
     res: ServerResponse,
     signal: AbortSignal,
   ): Promise<void> {
-    const up = await net.fetch(url, { headers: { Range: 'bytes=' + cs + '-' + ce }, signal });
-    if (!up.body) throw new Error('no body ' + up.status);
     const parts: Buffer[] = [];
-    let got = 0;
     const want = ce - cs + 1;
-    const body = Readable.fromWeb(up.body as any);
+    const broken = entry.meta.key + ':' + cs;
+    const failedAt = this.broken.get(broken);
+    if (failedAt && Date.now() - failedAt < BROKEN_TTL) throw new Error('upstream still not answering');
+    let got: number;
     try {
-      for await (const data of body) {
-        const buf = data as Buffer;
-        const base = cs + got;
+      got = await this.pull(url, 'bytes=' + cs + '-' + ce, signal, 'range ' + cs + '-' + ce, async (buf, base) => {
         parts.push(buf);
-        got += buf.length;
         const a = Math.max(base, from);
         const b = Math.min(base + buf.length - 1, to);
         if (a <= b) await this.write(res, buf.subarray(a - base, b - base + 1));
-      }
-    } finally {
-      // The viewer can close the window mid-chunk, and a destroyed response leaves the upstream read
-      // half-consumed: undici holds its socket until this stream is destroyed (measured as a 「file
-      // descriptor closed on garbage collection」 warning on the way out).
-      body.destroy();
+      });
+    } catch (e) {
+      // Remember the offset, but only when the server went quiet on us. A socket the viewer closed is not
+      // evidence about the film, and an unreadable chunk should still be retried next time.
+      if (!signal.aborted) this.broken.set(broken, Date.now());
+      throw e;
     }
+    this.broken.delete(broken);
+    // An empty answer is the file ending, not a fast chunk: without this the loop below would step to the
+    // next chunk and ask again, twelve thousand times for a 50 GB film, before mpv learned anything.
+    if (got === 0 && want > 0) throw new Error('upstream ended at ' + cs);
     // A short body is not cached: writing it would leave a chunk that reads as complete and is not.
     if (got === want && !res.destroyed) {
       // A failed write is a failed cache, not a failed film. Letting it escape used to close the socket from
@@ -455,15 +526,10 @@ class MediaCache {
         if (entry.chunks.has(i)) continue;
         const cs = i * CHUNK;
         const ce = Math.min(cs + CHUNK, meta.size) - 1;
-        const up = await net.fetch(url, { headers: { Range: 'bytes=' + cs + '-' + ce }, signal: ac.signal });
-        if (!up.body) return;
         const parts: Buffer[] = [];
-        let got = 0;
-        for await (const data of Readable.fromWeb(up.body as any)) {
-          const buf = data as Buffer;
+        const got = await this.pull(url, 'bytes=' + cs + '-' + ce, ac.signal, 'prefetch ' + cs, (buf) => {
           parts.push(buf);
-          got += buf.length;
-        }
+        });
         if (got !== ce - cs + 1) return;
         await this.store(entry, i, Buffer.concat(parts));
         this.enforce(this.limitBytes);

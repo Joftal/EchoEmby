@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { net } from 'electron';
+import { UPSTREAM_IDLE_MS } from '../media-cache';
 
 /**
  * The loopback HTTP server mpv actually talks to.
@@ -138,8 +139,12 @@ export class StreamBridge {
     const headers: Record<string, string> = {};
     // ffmpeg probes with an open-ended Range; Emby needs the value verbatim.
     if (req.headers.range) headers.Range = req.headers.range;
+    // Like the cache, this path must not wait forever: a request that is accepted and then never answered
+    // leaves mpv at seeking:true with nothing to time it out (measured on a source truncated upstream).
+    let quiet = setTimeout(() => abort.abort(), UPSTREAM_IDLE_MS);
     try {
       const up = await net.fetch(upstream, { method: req.method, headers, signal: abort.signal, redirect: 'follow' });
+      clearTimeout(quiet);
       const type = up.headers.get('content-type') || '';
       // The server's own label decides, not which address was asked for: the direct-stream entry is a
       // multi-gigabyte byte range and must never be buffered to look for playlist syntax.
@@ -170,9 +175,24 @@ export class StreamBridge {
         return;
       }
       const body = Readable.fromWeb(up.body as any);
-      body.on('error', () => res.destroy());
+      let last = Date.now();
+      const beat = setInterval(() => {
+        if (Date.now() - last < UPSTREAM_IDLE_MS) return;
+        console.log('[bridge] 上游 ' + UPSTREAM_IDLE_MS + 'ms 无数据，断开');
+        body.destroy();
+        res.destroy();
+      }, 1000);
+      body.on('data', () => {
+        last = Date.now();
+      });
+      body.on('error', () => {
+        clearInterval(beat);
+        res.destroy();
+      });
+      body.on('close', () => clearInterval(beat));
       body.pipe(res);
     } catch {
+      clearTimeout(quiet);
       if (!res.headersSent) res.writeHead(502).end();
       else res.destroy();
     } finally {
