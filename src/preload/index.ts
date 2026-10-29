@@ -32,6 +32,7 @@ const api: EchoEmbyApi = {
     resumeRow: limit => invoke('emby:resumeRow', limit),
     items: params => invoke('emby:items', params),
     genres: () => invoke('emby:genres'),
+    studios: () => invoke('emby:studios'),
     item: id => invoke('emby:item', id),
     seasons: seriesId => invoke('emby:seasons', seriesId),
     episodes: params => invoke('emby:episodes', params),

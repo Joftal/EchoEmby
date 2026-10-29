@@ -502,6 +502,19 @@ export class EmbyClient {
     return (j.Items || []).map((x: any) => ({ name: String(x.Name) }));
   }
 
+  /** The library's whole company list, in one answer, instead of whichever companies the rows a page
+   *  happens to hold were credited with. That difference was visible: 公司 is the only pill built from the
+   *  results, so a search page that had loaded nothing yet had no 公司 at all, and a page holding 48 films
+   *  offered the twelve companies behind them. Measured: 8185 rows on the gateway (1.9 MB of JSON) and
+   *  1328 on nyamedia; six ids sampled from the tail of the gateway's list each answered under
+   *  `StudioIds`, so every id here is one this filter can actually be given. */
+  async studios(): Promise<FacetOption[]> {
+    const j = await this.get<any>(`/Studios`, { UserId: this.account.userId, Limit: 20000 });
+    return (j.Items || [])
+      .filter((x: any) => x && x.Name)
+      .map((x: any) => ({ name: String(x.Name), id: x.Id ? String(x.Id) : undefined }));
+  }
+
   async item(id: string): Promise<LibraryItem> {
     const j = await this.get<any>(`/Users/${this.account.userId}/Items/${id}`, { Fields: DETAIL_FIELDS });
     const it = mapItem(j);

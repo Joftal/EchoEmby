@@ -14,6 +14,12 @@ export const useAppStore = defineStore('app', () => {
   const rows = ref<LibraryRow[]>([]);
   const views = ref<LibraryItem[]>([]);
   const genres = ref<FacetOption[]>([]);
+  /** Every company the library credits, with the ids 公司 filters by. Held like `genres` because it is the
+   *  same kind of answer: one per account, not one per page. */
+  const studios = ref<FacetOption[]>([]);
+  /** True while the company facet is on its way. The bar uses it to hold 公司's place instead of letting
+   *  the pill pop in a second later and shove 语言 sideways. */
+  const studiosLoading = ref(false);
   const loading = ref(false);
   const error = ref('');
   const ready = ref(false);
@@ -64,6 +70,9 @@ export const useAppStore = defineStore('app', () => {
     viewsPromise = null;
     genres.value = [];
     genresPromise = null;
+    studios.value = [];
+    studiosPromise = null;
+    studiosLoading.value = false;
     // A server with no stops is only a promise for *this* server, so the switch hands the ask back.
     resumeAsked = false;
     resumeAwaited = null;
@@ -157,6 +166,8 @@ export const useAppStore = defineStore('app', () => {
     return viewsPromise;
   }
 
+  let studiosPromise: Promise<void> | null = null;
+
   let genresPromise: Promise<void> | null = null;
 
   /** The 分类 dropdown reads the library's own genre labels. Held here rather than in the view so a
@@ -173,6 +184,25 @@ export const useAppStore = defineStore('app', () => {
         });
     }
     return genresPromise;
+  }
+
+  /** The 公司 dropdown needs the library's whole company list, not the companies behind the rows on
+   *  screen — that list is what made a fresh search page show no 公司 pill at all. One ask per account
+   *  (1.9 MB on the gateway, 316 KB on nyamedia), cached by the same TTL as every other Emby answer. */
+  function loadStudios(): Promise<void> {
+    if (studios.value.length) return Promise.resolve();
+    if (!studiosPromise) {
+      studiosLoading.value = true;
+      studiosPromise = embyCached('studios', null, () => window.echoemby.emby.studios())
+        .then(r => {
+          if (r.ok) studios.value = r.data || [];
+        })
+        .finally(() => {
+          studiosPromise = null;
+          studiosLoading.value = false;
+        });
+    }
+    return studiosPromise;
   }
 
   async function loadHome(): Promise<void> {
@@ -433,5 +463,5 @@ export const useAppStore = defineStore('app', () => {
     offWatched = window.echoemby.player.onWatched(w => void rememberPlayback(w));
   }
 
-  return { config, account, rows, views, genres, loading, error, ready, counts, lastStop, init, login, switchTo, remove, update, saveSettings, refreshSettings, loadCounts, loadHome, loadViews, loadGenres, ensureResumeRow, imageUrl, backdropUrl, logoCandidates, workLogos, itemArt, episodeTitle, episodeOverview, setFavorite, watchPlayback };
+  return { config, account, rows, views, genres, studios, studiosLoading, loading, error, ready, counts, lastStop, init, login, switchTo, remove, update, saveSettings, refreshSettings, loadCounts, loadHome, loadViews, loadGenres, loadStudios, ensureResumeRow, imageUrl, backdropUrl, logoCandidates, workLogos, itemArt, episodeTitle, episodeOverview, setFavorite, watchPlayback };
 });

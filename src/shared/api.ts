@@ -27,6 +27,9 @@ export interface EchoEmbyApi {
     items(params: Record<string, string | number | boolean>): Promise<IpcResult<LibraryItem[]>>;
     /** The library's own genre labels, used to fill the 分类 dropdown. */
     genres(): Promise<IpcResult<FacetOption[]>>;
+    /** The library's whole company list, with ids: the only answer that makes 公司 mean the same thing on
+     *  a search page as on a library window. */
+    studios(): Promise<IpcResult<FacetOption[]>>;
     item(id: string): Promise<IpcResult<LibraryItem>>;
     seasons(seriesId: string): Promise<IpcResult<LibraryItem[]>>;
     episodes(params: { seriesId: string; seasonId: string }): Promise<IpcResult<LibraryItem[]>>;
