@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import type { FacetOption, StudioRef } from '../../../shared/types';
 import { emptyFilters, isFiltered, LANG_OPTIONS, SORT_OPTIONS, TYPE_OPTIONS, yearOptions, type Filters, type SortKey } from '../../lib/filters';
 import { genreFacet } from '../../lib/genres';
+import { studioLabel, studioRenamed } from '../../../shared/studio-names';
 import FilterSelect from './FilterSelect.vue';
 
 const props = defineProps<{
@@ -19,7 +20,21 @@ const years = yearOptions().map(y => ({ value: y, label: `${y} 年` }));
 const langs = computed(() => LANG_OPTIONS);
 const types = computed(() => TYPE_OPTIONS);
 const sorts = computed(() => SORT_OPTIONS.filter(o => props.isSearch || !o.searchOnly));
-const studios = computed(() => props.studioOptions.filter(s => s.id).map(s => ({ value: `${s.id}|${s.name}`, label: s.name })));
+/** One row per name the filter should print. The server credits the same service under more than one
+ *  spelling (iQIYI and iQiyi, 腾讯视频 and Tencent Video), so rows that print the same name are merged and
+ *  all their ids ride along: picking 爱奇艺 has to mean 爱奇艺, not whichever row happened to be first. */
+const studios = computed(() => {
+  const groups = new Map<string, { ids: string[]; hint: string[] }>();
+  for (const s of props.studioOptions) {
+    if (!s.id) continue;
+    const label = studioLabel(s.name);
+    const g = groups.get(label) || { ids: [], hint: [] };
+    g.ids.push(s.id);
+    if (studioRenamed(s.name)) g.hint.push(s.name);
+    groups.set(label, g);
+  }
+  return [...groups.entries()].map(([label, g]) => ({ value: `${g.ids.join(',')}|${label}`, label, hint: g.hint.join(' ') || undefined }));
+});
 const genres = computed(() => genreFacet(props.genreOptions.map(g => g.name)));
 
 function patch(part: Partial<Filters>): void {
@@ -36,7 +51,7 @@ function setSort(v: string | string[]): void {
 function setStudio(v: string | string[]): void {
   const raw = typeof v === 'string' ? v : '';
   const cut = raw.indexOf('|');
-  patch({ studio: cut > 0 ? { id: raw.slice(0, cut), name: raw.slice(cut + 1) } : null });
+  patch({ studio: cut > 0 ? { ids: raw.slice(0, cut).split(',').filter(Boolean), name: raw.slice(cut + 1) } : null });
 }
 </script>
 
@@ -75,7 +90,7 @@ function setStudio(v: string | string[]): void {
       v-if="studios.length"
       label="公司"
       :options="studios"
-      :model-value="filters.studio?.id ? `${filters.studio.id}|${filters.studio.name}` : ''"
+      :model-value="filters.studio?.ids.length ? `${filters.studio.ids.join(',')}|${filters.studio.name}` : ''"
       searchable
       @update:model-value="setStudio"
     />

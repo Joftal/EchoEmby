@@ -10,7 +10,8 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 const props = withDefaults(
   defineProps<{
     label: string;
-    options: { value: string; label: string }[];
+    /** `hint` is searched but never printed: the 公司 list prints 腾讯视频 and still answers to Tencent. */
+    options: { value: string; label: string; hint?: string }[];
     modelValue: string | string[];
     multi?: boolean;
     searchable?: boolean;
@@ -51,7 +52,9 @@ const self = { close: () => (open.value = false) };
 
 const chosen = computed<string[]>(() => (Array.isArray(props.modelValue) ? props.modelValue : props.modelValue ? [props.modelValue] : []));
 const shown = computed(() =>
-  term.value.trim() ? props.options.filter(o => o.label.toLowerCase().includes(term.value.trim().toLowerCase())) : props.options,
+  term.value.trim()
+    ? props.options.filter(o => `${o.label} ${o.hint || ''}`.toLowerCase().includes(term.value.trim().toLowerCase()))
+    : props.options,
 );
 
 /** The pill carries the answer, not a count of it: whatever is picked, spelled out on one line. An option
@@ -60,7 +63,7 @@ const shown = computed(() =>
 const blank = computed(() => props.options.find(o => o.value === ''));
 const valueText = computed(() => {
   if (!props.multi && props.modelValue === '' && blank.value) return blank.value.label;
-  return chosen.value.map(v => props.options.find(o => o.value === v)?.label || v).join(' · ');
+  return chosen.value.map(v => props.options.find(o => o.value === v)?.label || v.slice(v.indexOf('|') + 1)).join(' · ');
 });
 const engaged = computed(() => chosen.value.length > 0 && !props.neutral);
 
