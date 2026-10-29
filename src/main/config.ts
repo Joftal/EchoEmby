@@ -6,6 +6,7 @@ import { isAudioLang, isSubLang } from '../shared/lang';
 import type { Account, AppConfig, DanmakuSettings, DanmakuSourceConfig, MediaCachePrefs, MetaKeys, PlayerPrefs, Settings, SettingsPatch, WindowPrefs } from '../shared/types';
 
 const HWDEC = ['d3d11va', 'cuda', 'auto', 'no'] as const;
+const FITS = ['fit', 'fill', 'stretch'] as const;
 const PROXY_MODES = ['system', 'manual', 'none'] as const;
 const DANMAKU_SOURCES = ['bilibili', 'dandan'] as const;
 
@@ -24,6 +25,9 @@ const DEFAULT_PLAYER: PlayerPrefs = {
   autoNext: true,
   subLang: '',
   audioLang: '',
+  // 适应屏幕, because it is what the player has always done: mpv's own default, and the one mode that
+  // shows the whole frame. A setting nobody touched must not crop or distort the picture.
+  fit: 'fit',
 };
 
 const CLOSE_ACTIONS = ['quit', 'tray'] as const;
@@ -74,6 +78,7 @@ const pickPlayer = (raw: Partial<PlayerPrefs> | undefined): PlayerPrefs => ({
   // track will ever match, which would look like the player ignoring the setting.
   subLang: isSubLang(raw?.subLang) ? raw.subLang : DEFAULT_PLAYER.subLang,
   audioLang: isAudioLang(raw?.audioLang) ? raw.audioLang : DEFAULT_PLAYER.audioLang,
+  fit: raw?.fit && (FITS as readonly string[]).includes(raw.fit) ? (raw.fit as PlayerPrefs['fit']) : DEFAULT_PLAYER.fit,
 });
 
 /* 'minimize' is what this row used to be called; a config written before the tray existed must map onto the

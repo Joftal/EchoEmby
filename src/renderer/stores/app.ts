@@ -106,6 +106,14 @@ export const useAppStore = defineStore('app', () => {
     return true;
   }
 
+  /** The player's own panel writes 画面适配 and 硬件解码 while the sheet is not on screen, and a write in
+   *  another window is not pushed here. So a sheet that opens later re-reads the block instead of showing
+   *  the reading taken at launch — otherwise it prints a value the file no longer holds. */
+  async function refreshSettings(): Promise<void> {
+    const r = await window.echoemby.app.getConfig();
+    if (r.ok && r.data && config.value) config.value = { ...config.value, settings: r.data.settings };
+  }
+
   let viewsPromise: Promise<void> | null = null;
 
   const counts = ref<Record<string, { movies: number; series: number }>>({});
@@ -413,5 +421,5 @@ export const useAppStore = defineStore('app', () => {
     offWatched = window.echoemby.player.onWatched(w => void rememberPlayback(w));
   }
 
-  return { config, account, rows, views, genres, loading, error, ready, counts, lastStop, init, login, switchTo, remove, update, saveSettings, loadCounts, loadHome, loadViews, loadGenres, ensureResumeRow, imageUrl, backdropUrl, logoCandidates, workLogos, itemArt, episodeTitle, episodeOverview, setFavorite, watchPlayback };
+  return { config, account, rows, views, genres, loading, error, ready, counts, lastStop, init, login, switchTo, remove, update, saveSettings, refreshSettings, loadCounts, loadHome, loadViews, loadGenres, ensureResumeRow, imageUrl, backdropUrl, logoCandidates, workLogos, itemArt, episodeTitle, episodeOverview, setFavorite, watchPlayback };
 });

@@ -77,6 +77,14 @@ const DECODERS: { value: PlayerPrefs['hwdec']; label: string }[] = [
 
 const STEPS = [5000, 10000, 15000, 30000];
 
+/* The same three words the player's own 画面适配 row offers, in the same order: one question asked in two
+   places must not be answered with two vocabularies. */
+const FITS: { value: PlayerPrefs['fit']; label: string }[] = [
+  { value: 'fit', label: '适应屏幕' },
+  { value: 'fill', label: '填满屏幕' },
+  { value: 'stretch', label: '拉伸填满' },
+];
+
 const PROXY_MODES: { value: Settings['proxyMode']; label: string }[] = [
   { value: 'system', label: '系统代理' },
   { value: 'manual', label: '手动代理' },
@@ -230,7 +238,10 @@ const probeRead = computed(() => {
 });
 
 onMounted(async () => {
+  // The player panel writes 画面适配 and 硬件解码 on its own, and a write in another window is not pushed
+  // into this store: reopening the sheet re-reads the block instead of printing the launch-time reading.
   if (!store.ready) await store.init();
+  else await store.refreshSettings();
   if (!store.account) router.replace('/login');
   void readCache();
 });
@@ -457,6 +468,25 @@ async function runProbe(): Promise<void> {
                   <button type="button" class="sw" :class="{ on: player.autoNext }" @click="set({ player: { autoNext: !player.autoNext } })">
                     <span class="track"><i></i></span>
                   </button>
+                </div>
+
+                <!-- Picture fit sits with the two switches rather than with the track rows: it does not
+                     decide what opens, only how the frame meets the window. The player's own 画面适配 row
+                     writes this same setting, so a change made while watching is the change stored here. -->
+                <div class="row">
+                  <div class="k">
+                    <b>画面适配</b>
+                    <i>适应屏幕：画面完整、四周留黑边 · 填满屏幕：放大到无黑边、裁掉溢出 · 拉伸填满：拉满窗口，不管比例</i>
+                  </div>
+                  <FilterSelect
+                    label="画面"
+                    :options="FITS"
+                    :model-value="player.fit"
+                    bare
+                    menu
+                    neutral
+                    @update:model-value="v => set({ player: { fit: v as PlayerPrefs['fit'] } })"
+                  />
                 </div>
 
                 <div class="row">

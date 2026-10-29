@@ -7,6 +7,7 @@ import { MpvPipe, type MpvMessage } from './mpv-pipe';
 import { cleanTrackTitle } from '../track-title';
 import {
   VOLUME_MAX,
+  type FitMode,
   type PlayerChapter,
   type PlayerMedia,
   type PlayerState,
@@ -17,7 +18,7 @@ import {
 
 export interface KernelLaunch {
   hwnd: string;
-  prefs: { hwdec: string; hdrHint: boolean };
+  prefs: { hwdec: string; hdrHint: boolean; fit: FitMode };
 }
 
 export function mpvExecutable(): string {
@@ -60,6 +61,8 @@ interface Raw {
   subPos: number;
   aspect: TrackSelection;
   panscan: number;
+  /** False while 拉伸填满 is in force: the frame no longer keeps its own shape. */
+  keepaspect: boolean;
   fullscreen: boolean;
 }
 
@@ -84,6 +87,7 @@ const freshRaw = (): Raw => ({
   subPos: 100,
   aspect: 'no',
   panscan: 0,
+  keepaspect: true,
   fullscreen: false,
 });
 
@@ -113,6 +117,7 @@ const OBSERVED = [
   'sub-pos',
   'video-aspect-override',
   'panscan',
+  'keepaspect',
 ];
 
 const sec = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
@@ -249,6 +254,11 @@ export class MpvKernel {
     // Give the display the HDR signal instead of tone-mapping it. Off by default: on a screen that cannot
     // show it the picture washes out, which is worse than mpv's own mapping.
     if (l.prefs.hdrHint) a.push('--target-colorspace-hint=yes');
+    /* The picture fit travels the same way, and for the same reason: panscan and keepaspect are plain
+       options, and a run that started in the wrong pair would draw bars (or a squashed frame) for the
+       fraction of a second before the runtime call landed. */
+    if (l.prefs.fit === 'fill') a.push('--panscan=1.0');
+    if (l.prefs.fit === 'stretch') a.push('--keepaspect=no');
     return a;
   }
 
@@ -302,7 +312,13 @@ export class MpvKernel {
         }
         return;
       case 'start-file':
-        this.raw = { ...freshRaw(), volume: this.raw.volume, muted: this.raw.muted, speed: this.raw.speed, fullscreen: this.raw.fullscreen, loaded: true, opening: true };
+        /* A new file resets the per-file half of this state, and mpv announces that half again as it loads —
+           but the picture fit is not per-file. `--panscan` and `--keepaspect` are launch options that a
+           later `set_property` only moves: mpv keeps them across files and so pushes no event, which made
+           this wholesale reset report the defaults over the picture actually on screen (measured 2026-10-29:
+           a process started with `--keepaspect=no` showed 拉伸填满 in the 画面 panel's own reading of mpv,
+           and 适应屏幕 in the app). They ride across beside volume and speed for that reason. */
+        this.raw = { ...freshRaw(), volume: this.raw.volume, muted: this.raw.muted, speed: this.raw.speed, fullscreen: this.raw.fullscreen, aspect: this.raw.aspect, panscan: this.raw.panscan, keepaspect: this.raw.keepaspect, loaded: true, opening: true };
         this.mark(true);
         return;
       case 'file-loaded': {
@@ -429,6 +445,9 @@ export class MpvKernel {
         return;
       case 'panscan':
         r.panscan = Number(v) || 0;
+        break;
+      case 'keepaspect':
+        r.keepaspect = v === true || v === 'yes';
         return;
       default:
         return;
@@ -521,6 +540,7 @@ export class MpvKernel {
       subtitlePos: r.subPos,
       aspect: r.aspect,
       panscan: r.panscan,
+      keepaspect: r.keepaspect,
     };
   }
 
@@ -712,6 +732,14 @@ export class MpvKernel {
 
   async setPanscan(v: number): Promise<void> {
     await this.pipe.call(['set_property', 'panscan', Math.max(0, Math.min(1, v))]);
+  }
+
+  /** 适应屏幕 / 填满屏幕 / 拉伸填满, in mpv's own two words. `keepaspect` goes first: panscan only means
+   *  anything while the frame keeps its own shape, and a 1.0 left behind under a stretched frame would crop
+   *  the picture again on the next resize. */
+  async setFit(mode: FitMode): Promise<void> {
+    await this.pipe.call(['set_property', 'keepaspect', mode !== 'stretch']);
+    await this.setPanscan(mode === 'fill' ? 1 : 0);
   }
 
   /** mpv's chapter ids are indices into chapter-list. */

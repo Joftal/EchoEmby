@@ -4,12 +4,14 @@ import SubPopover from './SubPopover.vue';
 import SubRow from './SubRow.vue';
 import StepRow from './StepRow.vue';
 import { usePlayerStore } from '../../stores/player';
+import { useAppStore } from '../../stores/app';
 import { channelsWord, codecLabel, fmtRate, formatWord, langName, layoutWord, NO_LANG, openBrackets, saidLang, zhTrackWords } from '../../lib/format';
-import type { MediaStreamInfo, PlayerTrack, TrackSelection } from '../../../shared/types';
+import type { FitMode, MediaStreamInfo, PlayerTrack, TrackSelection } from '../../../shared/types';
 
 /** Body only: the card that holds this belongs to SheetLayer, and so does its title. */
 const props = defineProps<{ kind: 'subtitle' | 'audio' | 'video' }>();
 const player = usePlayerStore();
+const app = useAppStore();
 const media = computed(() => player.media);
 
 const tracks = computed(() => media.value.tracks.filter(t => t.kind === props.kind));
@@ -143,12 +145,27 @@ function setAspect(v: TrackSelection): void {
   void player.cmd({ action: 'aspect', value: v });
 }
 
-/** mpv's panscan is a 0→1 blend between fitting the frame and filling it, so the two named modes are its
- *  two ends rather than a third setting. */
-const FILLS = [
-  { label: '适应屏幕', value: 0 },
-  { label: '填满屏幕', value: 1 },
+/** 适应 / 填满 / 拉伸, named the way the 设置 row names them. This menu used to offer only mpv's two panscan
+ *  ends; 拉伸填满 is the pair (keepaspect=no, panscan=0) that leaves no black bars and no cropped edge, so the
+ *  three answers are one setting in both places rather than two in one and two-and-a-half in the other. */
+const FITS: { value: FitMode; label: string }[] = [
+  { value: 'fit', label: '适应屏幕' },
+  { value: 'fill', label: '填满屏幕' },
+  { value: 'stretch', label: '拉伸填满' },
 ];
+
+/** mpv's own pair, read back, so the row reports what the picture is doing — including a change made in 设置
+ *  while this window was open, which lands through `applyPrefs` and arrives here as a property event. */
+const fitMode = computed<FitMode>(() =>
+  media.value.keepaspect === false ? 'stretch' : media.value.panscan >= 0.99 ? 'fill' : 'fit',
+);
+
+/** The menu writes the setting, the way the 解码 row in 播放资源 does: a choice made here answers 「how should
+ *  films sit in this window」 for every file, and a session-only answer would be undone by the next episode. */
+async function setFit(mode: FitMode): Promise<void> {
+  await player.cmd({ action: 'fit', value: mode });
+  await app.saveSettings({ player: { fit: mode } });
+}
 
 const delayMs = computed(() => (props.kind === 'audio' ? media.value.audioDelayMs : media.value.subtitleDelayMs));
 function nudgeDelay(dir: number): void {
@@ -206,7 +223,7 @@ function nudgeDelay(dir: number): void {
   </template>
 
   <template v-else>
-    <SubRow name="fill" label="填充模式" :value="media.panscan >= 0.99 ? '填满屏幕' : media.panscan <= 0.01 ? '适应屏幕' : `${Math.round(media.panscan * 100)}%`" />
+    <SubRow name="fit" label="画面适配" :value="FITS.find(f => f.value === fitMode)?.label || ''" />
     <SubRow name="aspect" label="画面比例" :value="ASPECTS.find(a => isAspect(a.value))?.label || ''" />
     <template v-if="tracks.length > 1">
       <div class="pl-sect">视频轨道</div>
@@ -235,12 +252,12 @@ function nudgeDelay(dir: number): void {
   </SubPopover>
 
   <template v-else>
-    <SubPopover name="fill" title="填充模式">
-      <button v-for="f in FILLS" :key="f.label" class="pl-row" :class="{ on: Math.abs(media.panscan - f.value) < 0.01 }" @click="player.cmd({ action: 'panscan', value: f.value })">
+    <SubPopover name="fit" title="画面适配">
+      <button v-for="f in FITS" :key="f.value" class="pl-row" :class="{ on: fitMode === f.value }" @click="setFit(f.value)">
         <span class="mark"></span>
         <span class="label">{{ f.label }}</span>
       </button>
-      <p class="pl-note">填满把画面放大到没有黑边，代价是超出比例的部分被切掉。</p>
+      <p class="pl-note">填满把画面放大到没有黑边，代价是超出比例的部分被切掉；拉伸填满不管原片比例，直接把画面拉满窗口。</p>
     </SubPopover>
 
     <SubPopover name="aspect" title="画面比例">

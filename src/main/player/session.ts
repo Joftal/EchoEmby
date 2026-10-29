@@ -351,10 +351,12 @@ export class PlayerController {
 
   /** mpv only renders into a window handed to it at launch, so the handle has to be right before anything
    *  loads. The launch shape itself never changes now — one render profile, chosen in the command line — so
-   *  a process that is already up is reused and only the runtime-settable decoder is moved. */
+   *  a process that is already up is reused and only the knobs mpv can still move are set: the decoder and
+   *  the picture fit. */
   private async ensureKernel(prefs: PlayerPrefs): Promise<void> {
     if (this.kernel?.running) {
       await this.kernel.setHwdec(prefs.hwdec).catch(() => undefined);
+      await this.kernel.setFit(prefs.fit).catch(() => undefined);
       return;
     }
     const k = new MpvKernel();
@@ -362,7 +364,7 @@ export class PlayerController {
     k.onMedia = m => this.onKernelMedia(m);
     k.onGone = message => this.onGone(message);
     this.kernel = k;
-    await k.start({ hwnd: this.windows.hostHwnd(), prefs: { hwdec: prefs.hwdec, hdrHint: prefs.hdrHint } });
+    await k.start({ hwnd: this.windows.hostHwnd(), prefs: { hwdec: prefs.hwdec, hdrHint: prefs.hdrHint, fit: prefs.fit } });
     await this.windows.raiseVideoWhenReady();
   }
 
@@ -633,8 +635,8 @@ export class PlayerController {
       case 'aspect':
         await k.setAspect(cmd.value);
         return;
-      case 'panscan':
-        await k.setPanscan(cmd.value);
+      case 'fit':
+        await k.setFit(cmd.value);
         return;
       case 'chapter':
         await k.jumpChapter(cmd.value);
@@ -825,13 +827,14 @@ export class PlayerController {
     // viewing. The stopped report on the way out carries the source this stream actually ended on.
   }
 
-  /** The decoder is the only knob that can move while something is playing. There is nothing else to do
-   *  here: the render shape is fixed at launch and the version is chosen before the stream opens, so no
-   *  setting can still ask for a reload or a new process. */
+  /** The knobs mpv can still move while something is playing: the decoder and the picture fit. There is
+   *  nothing else to do here — the render profile is fixed at launch, HDR passthrough needs a new process,
+   *  and the version is chosen before the stream opens — so no setting can ask for a reload. */
   applyPrefs(prefs: PlayerPrefs): void {
     const k = this.kernel;
     if (!k?.running) return;
     void k.setHwdec(prefs.hwdec).catch(() => undefined);
+    void k.setFit(prefs.fit).catch(() => undefined);
   }
 
   /** The fetched sidecars are a copy of something the server still holds, so they live only as long as the

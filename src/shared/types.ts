@@ -93,7 +93,17 @@ export interface PlayerPrefs {
   /** The same question for audio. Only `''` or a language: there is no 关闭音轨, and a film played silently
    *  is never what a default setting should mean. */
   audioLang: string;
+  /** How the picture is fitted into the player window before anything is touched in the player itself.
+   *  A property of the screen rather than of a file — a 2.39:1 film on a 16:9 window leaves bars, and which
+   *  of the three answers looks right is the viewer's taste, not the release's. */
+  fit: FitMode;
 }
+
+/** 适应屏幕 keeps the frame whole and leaves bars where the window is a different shape; 填满屏幕 scales it
+ *  until the bars are gone and crops the overflow; 拉伸填满 ignores the frame's own shape and stretches it
+ *  onto the window, distortion and all. The three are mpv's own `keepaspect`/`panscan` pair, folded into
+ *  one question because the player only ever offers them as one. */
+export type FitMode = 'fit' | 'fill' | 'stretch';
 
 export interface DanmakuSourceConfig {
   /** 'bilibili' needs no key but only knows titles that aired there; 'dandan' is any
@@ -643,6 +653,10 @@ export interface PlayerMedia {
   /** 'no' means fit to the window; a number is a forced display aspect. */
   aspect: TrackSelection;
   panscan: number;
+  /** mpv's own `keepaspect`, read back rather than assumed: false is the stretch half of 拉伸填满. The
+   *  panel answers 「which of the three」 from this pair instead of from the setting, because a choice made
+   *  inside the player moves the picture without waiting for the config file to be rewritten. */
+  keepaspect: boolean;
   /** The sidecar subtitle this viewing has handed to mpv, if one is loaded: mpv's track id for it and the
    *  server's stream index it came from. The menu needs both — the id to mark the row 正在用, the index
    *  because that is how a row in the 外挂字幕 list is addressed. */
@@ -769,7 +783,7 @@ export type PlayerCommand =
   | { action: 'audioDelay'; value: number }
   | { action: 'subtitleStyle'; value: { scale?: number; pos?: number } }
   | { action: 'aspect'; value: TrackSelection }
-  | { action: 'panscan'; value: number }
+  | { action: 'fit'; value: FitMode }
   | { action: 'chapter'; value: number }
   | { action: 'frameStep'; value: number }
   | { action: 'restart' }
@@ -818,4 +832,5 @@ export const emptyPlayerMedia = (): PlayerMedia => ({
   subtitlePos: 100,
   aspect: 'no',
   panscan: 0,
+  keepaspect: true,
 });
