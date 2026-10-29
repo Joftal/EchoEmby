@@ -219,6 +219,35 @@ function askTmdb(item: LibraryItem): void {
   put(item.id, 'tmdb', () => window.echoemby.meta.tmdb({ kind: tmdbKind(item)!, tmdbId: item.providers!.tmdb! }));
 }
 
+/** The number a card's badge prints: TMDB's average, once TMDB has answered for that work. Null while the
+ *  answer is still owed, and for every row TMDB cannot be asked about at all. */
+export function voteOf(item: LibraryItem | null | undefined): number | null {
+  const v = item ? cache[item.id]?.tmdb?.voteAverage : undefined;
+  return typeof v === 'number' && v > 0 ? v : null;
+}
+
+/** Fills the votes of a whole window of rows, so 评分优先 can order by the number the badges show.
+ *  The server's CommunityRating is a different scale, and this gateway leaves a batch of titles on a
+ *  placeholder 10 — sorting on it puts ★6.6 above ★8.4, which reads as 「排序没生效」 no matter how
+ *  correct the comparison was. Concurrency is capped because the gateway starts refusing a burst, and
+ *  the main process answers out of its own disk cache for a title the page has already shown.
+ *  Resolves once every row has an answer or was skipped: the caller re-sorts once, not per reply. */
+export async function prefetchVotes(items: LibraryItem[], concurrency = 6): Promise<void> {
+  const want = items.filter(it => tmdbAskable(it) && !voteOf(it));
+  if (!want.length) return;
+  let next = 0;
+  const run = async (): Promise<void> => {
+    while (next < want.length) {
+      const it = want[next];
+      next += 1;
+      const r = await window.echoemby.meta.tmdb({ kind: tmdbKind(it)!, tmdbId: it.providers!.tmdb! });
+      const hit = r.ok ? r.data : null;
+      if (hit && (hit.voteAverage || 0) > 0 && !slot(it.id).tmdb) slot(it.id).tmdb = hit;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, want.length) }, run));
+}
+
 /** The work a row's outside data lives on. An Episode's own provider ids point at the episode and no source
  *  here has an episode page, so the row is answered from the Series above it — one ask per show, because
  *  `embyCached` folds the twenty-four episode rows of 名侦探柯南 into the one series id they all name. */

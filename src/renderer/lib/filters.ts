@@ -90,6 +90,12 @@ export const SORT_OPTIONS: SortOption[] = [
   {
     value: 'rating',
     label: '评分优先',
+    // 搜索 only. A library window is sorted by the server, and the only score it can sort on is
+    // CommunityRating — which this gateway leaves on a placeholder 10 for a batch of titles, so the
+    // order it answers cannot be checked against the ★ the cards print. Re-sorting the window here
+    // instead would sort one page at a time and interleave them on 加载更多, which reads worse than
+    // no option at all; 搜索 holds every row it will ever show, so it can sort them by the badge.
+    searchOnly: true,
     server: { SortBy: 'CommunityRating', SortOrder: 'Descending' },
     local: (a, b) => (b.communityRating ?? -1) - (a.communityRating ?? -1),
   },
@@ -142,8 +148,15 @@ export function sortParams(f: Filters): Record<string, string> {
   return s ? { SortBy: s.SortBy, SortOrder: s.SortOrder } : {};
 }
 
-/** Reorders the page we already hold. The default order is untouched, which is what 相关度 promises. */
-export function localSort(items: LibraryItem[], key: SortKey): LibraryItem[] {
+/** Reorders the page we already hold. The default order is untouched, which is what 相关度 promises.
+ *  `vote` is the number the card's badge prints (TMDB's average); 评分优先 prefers it over the server's
+ *  CommunityRating, which this gateway leaves on a placeholder 10 for a batch of titles — an order the
+ *  reader cannot check against the stars on screen. A row with neither falls to the bottom. */
+export function localSort(items: LibraryItem[], key: SortKey, vote?: (it: LibraryItem) => number | null): LibraryItem[] {
+  if (key === 'rating' && vote) {
+    const score = (it: LibraryItem): number => vote(it) ?? it.communityRating ?? -1;
+    return [...items].sort((a, b) => score(b) - score(a));
+  }
   const cmp = SORT_OPTIONS.find(x => x.value === key)?.local;
   return cmp ? [...items].sort(cmp) : items;
 }

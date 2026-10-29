@@ -8,6 +8,7 @@ import RowScroller from '../components/home/RowScroller.vue';
 import FilterBar from '../components/browse/FilterBar.vue';
 import { defaultSort, emptyFilters, filterParams, fromQuery, isFiltered, localSort, sortParams, toQuery, TYPE_OPTIONS, type Filters } from '../lib/filters';
 import { embyCached } from '../lib/embycache';
+import { prefetchVotes, voteOf } from '../lib/scores';
 import { resetPageScroll } from '../lib/scroll';
 import { PLAYABLE, applyStop } from '../lib/resume';
 import { useAppStore } from '../stores/app';
@@ -40,8 +41,13 @@ const pageSize = computed(() => (isSearch.value ? SEARCH_PAGE : kind.value === '
 /** 收藏 wears no filter bar, so it must not read the URL's filter keys either: an address left over from
  *  a filtered 搜索 or a library window would quietly narrow the list, with nothing on screen saying so and
  *  no 清空筛选 left to undo it. The sort stays the default one, which is what the page already wore. */
-const readFilters = (): Filters =>
-  kind.value === 'favorites' ? emptyFilters(defaultSort(isSearch.value)) : fromQuery(route.query, defaultSort(isSearch.value));
+const readFilters = (): Filters => {
+  const f = kind.value === 'favorites' ? emptyFilters(defaultSort(isSearch.value)) : fromQuery(route.query, defaultSort(isSearch.value));
+  // An address from when 资源库 also offered 评分优先 still carries `sort=rating`; that option is gone here,
+  // so the pill would have nothing to show and the page would wear a choice no menu can name.
+  if (f.sort === 'rating' && !isSearch.value) f.sort = defaultSort(false);
+  return f;
+};
 const filters = ref<Filters>(readFilters());
 const term = ref(String(route.query.q || ''));
 
@@ -368,7 +374,23 @@ const shown = computed<LibraryItem[]>(() => {
   }
   // 收藏 already arrived in the server's DateCreated order; folding must not move the works that
   // were not touched, so the raw order stands rather than a re-sort of the Series rows' own dates.
-  return kind.value === 'favorites' ? cards : localSort(cards, filters.value.sort);
+  // Sorting by 评分 reads TMDB's number rather than the server's CommunityRating, because that is the
+  // number on the badge; reading the tick makes this recompute once the window's votes have landed.
+  if (filters.value.sort === 'rating') void voteTick.value;
+  return kind.value === 'favorites' ? cards : localSort(cards, filters.value.sort, voteOf);
+});
+
+/** 评分优先 needs the badge's number for the whole window, and TMDB answers one row at a time. Sorting
+ *  again on every reply would shuffle the grid under the reader's eyes, so the page reorders once, when
+ *  the window has settled; until then it keeps the server's own order. */
+const voteTick = ref(0);
+let voteSeq = 0;
+watch([items, () => filters.value.sort], ([rows]) => {
+  if (filters.value.sort !== 'rating' || !rows.length) return;
+  const seq = (voteSeq += 1);
+  void prefetchVotes(rows).then(() => {
+    if (seq === voteSeq) voteTick.value += 1;
+  });
 });
 
 /** The empty search page is a shop window, not a blank one. Two asks fill it: the films, and the
