@@ -6,6 +6,9 @@ import { applyStop } from '../lib/resume';
 import { stoppedAtMs } from '../lib/format';
 import { tmdbKind } from '../lib/scores';
 
+/** One subscription per window, made the first time a window reads the block. */
+let listening = false;
+
 export const useAppStore = defineStore('app', () => {
   const config = ref<AppConfig | null>(null);
   const rows = ref<LibraryRow[]>([]);
@@ -26,6 +29,15 @@ export const useAppStore = defineStore('app', () => {
   async function init(): Promise<void> {
     const r = await window.echoemby.app.getConfig();
     if (r.ok && r.data) config.value = r.data;
+    // Every 设置 row has a twin in another surface: the player's panel writes 硬件解码, 画面适配 and 动态范围 while
+    // the sheet is closed, and the sheet writes the same three while the player runs. The main process now
+    // pushes the merged block, so both surfaces answer for the file rather than for the read at launch.
+    if (!listening) {
+      listening = true;
+      window.echoemby.app.onSettings(s => {
+        if (config.value) config.value = { ...config.value, settings: s };
+      });
+    }
     // Every Emby answer on file is keyed by account, so the cache follows the same pointer.
     rescope(account.value?.accountId || '');
     ready.value = true;

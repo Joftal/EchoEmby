@@ -18,7 +18,7 @@ import {
 
 export interface KernelLaunch {
   hwnd: string;
-  prefs: { hwdec: string; hdrHint: boolean; fit: FitMode };
+  prefs: { hwdec: string; fit: FitMode };
 }
 
 export function mpvExecutable(): string {
@@ -169,6 +169,10 @@ export class MpvKernel {
   private pipe = new MpvPipe();
   private raw: Raw = freshRaw();
   private startAt = 0;
+  /** Paused at the moment the file was replaced, re-applied once the new file is loaded: mpv discards a
+   *  pause set between the loadfile command and the demuxer opening the next file, so the reload behind a
+   *  HDR switch used to start a film the viewer had left on a frame (measured 2026-10-29). */
+  private pausedAtLoad = false;
   private timer: NodeJS.Timeout | null = null;
   /** A process we asked to quit is not a crash, so neither its exit nor the socket that goes down with it
    *  may reach `onGone` - that is the session's last-resort write of the position, and a socket with no
@@ -214,7 +218,11 @@ export class MpvKernel {
       // bar move on it anyway.
       '--force-seekable=yes',
       `--hwdec=${l.prefs.hwdec}`,
-      '--vo=gpu',
+      // gpu-next, not gpu: measured on this machine 2026-10-29 against the same frames — libplacebo's renderer
+      // lands 19% darker-shadow detail and 5 points more saturation on HDR10, and 12 points more on Dolby
+      // Vision, which the legacy path does not reshape at all. It costs ~40% more of one core (0.96 s vs
+      // 0.69 s of CPU per 12 s of 4K HDR), which the machine has to spare.
+      '--vo=gpu-next',
       '--gpu-api=d3d11',
       // One launch shape for every file. `gpu-hq` is a bundle of settings mpv cannot un-set at runtime, so
       // it can only be chosen here — and with no knob to move, the choice is the one this machine has been
@@ -251,9 +259,10 @@ export class MpvKernel {
       // while Chromium retries the real server behind it.
       `--demuxer-lavf-o=${['reconnect=1', 'reconnect_streamed=1', 'reconnect_delay_max=5'].join(',')}`,
     ];
-    // Give the display the HDR signal instead of tone-mapping it. Off by default: on a screen that cannot
-    // show it the picture washes out, which is worse than mpv's own mapping.
-    if (l.prefs.hdrHint) a.push('--target-colorspace-hint=yes');
+    /* No --target-colorspace-hint: what that flag did was tell mpv to describe the display instead of asking
+       it, and on a desktop already in HDR mpv reads the mode back on its own (measured 2026-10-29: the same
+       PQ swapchain with and without it). Whether the desktop is in HDR at all is now decided before launch,
+       by the window HDR switch in session.ts — see player/hdr.ts. */
     /* The picture fit travels the same way, and for the same reason: panscan and keepaspect are plain
        options, and a run that started in the wrong pair would draw bars (or a squashed frame) for the
        fraction of a second before the runtime call landed. */
@@ -330,6 +339,14 @@ export class MpvKernel {
           this.startAt = 0;
         }
         this.applyWanted();
+        if (this.pausedAtLoad) {
+          this.pausedAtLoad = false;
+          // mpv already held the film still, so this write changes nothing on its side and it announces
+          // nothing back; the start-file reset above had cleared the only local record of it (measured
+          // 2026-10-29: mpv answered pause=true while the app still drew 播放中).
+          this.raw.paused = true;
+          void this.pipe.call(['set_property', 'pause', true]).catch(() => undefined);
+        }
         this.mark(true);
         return;
       }
@@ -591,6 +608,7 @@ export class MpvKernel {
 
   async load(url: string, opts: { startMs?: number } = {}): Promise<void> {
     this.startAt = Math.max(0, (opts.startMs || 0) / 1000);
+    this.pausedAtLoad = this.raw.paused === true;
     await this.pipe.call(['loadfile', url, 'replace']);
   }
 

@@ -143,7 +143,12 @@ export class AppServices {
       const next = config.saveSettings(patch);
       // A player knob has to reach the running stream, not wait for the next 播放.
       if (patch.player) this.player.applyPrefs(next.player);
-      return config.publicSettings();
+      const settings = config.publicSettings();
+      // 播放器面板 has its own 硬件解码 / 画面适配 / 动态范围 switches, and the sheet has the same rows: a write
+      // in one window used to leave the other printing the value from launch, so a switch could read 开 while
+      // the desktop it controls was already SDR. Every window is told what the file now holds.
+      this.broadcast('app:settings', settings);
+      return settings;
     }));
 
     ipcMain.handle('net:probe', () => wrap('net:probe', () => probeNetwork(this.identity())));

@@ -7,6 +7,7 @@ import { startNetMeter } from './netmeter';
 import { AppServices } from './ipc';
 import { createTray, revealWindow } from './tray';
 import { mediaCache } from './media-cache';
+import { reclaimAbandonedHdr } from './player/hdr';
 
 const DEV_URL = process.env.VITE_DEV_URL || '';
 const rendererRoot = path.join(app.getAppPath(), 'dist', 'renderer');
@@ -89,6 +90,9 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(async () => {
     startNetMeter();
+    // A run that was killed while it held the desktop's HDR switch left it on: the claim file it wrote is the
+    // only witness, and this is the first moment the display can be asked about it.
+    reclaimAbandonedHdr();
     const s = config.load().settings;
     // A saved address that no longer parses must not leave the app without a route, and must not stay in
     // the file either. Measured 2026-10-14 by hand-poisoning config.json: the fallback kept traffic

@@ -106,10 +106,10 @@ const playingRange = computed(() => {
   <SubPopover name="range" title="动态范围">
     <div class="pl-line"><span class="label">这条片源</span><span class="pl-text">{{ playingRange }}</span></div>
     <div class="pl-line"><span class="label">色彩空间</span><span class="pl-text">{{ colorSpaceWord(media.colorSpace) || '—' }}</span></div>
-    <div class="pl-switch" role="switch" tabindex="0" :aria-checked="!!prefs.hdrHint" :class="{ on: prefs.hdrHint }" @click="patch({ hdrHint: !prefs.hdrHint })">
-      <span class="label">把 HDR 信号交给显示器</span>
+    <div class="pl-switch" role="switch" tabindex="0" :aria-checked="!!prefs.hdr" :class="{ on: prefs.hdr }" @click="patch({ hdr: !prefs.hdr })">
+      <span class="label">播放时打开 Windows 的 HDR</span>
       <span class="track"><i></i></span>
     </div>
-    <p class="pl-note">关掉时 mpv 把 HDR 压成 SDR 显示；打开后如果屏幕不支持 HDR，画面会发灰。这一项写在播放器的启动参数里，要合上播放器再打开才换过来。</p>
+    <p class="pl-note">这一项管的是 Windows 自己的 HDR 开关：播放 HDR 片源时替你打开，关掉播放器或换成 SDR 片源时再还原，屏幕会黑一下。屏幕本来就不支持 HDR 时什么也不会发生，mpv 照旧把它压成 SDR。改这一项立刻生效。</p>
   </SubPopover>
 </template>

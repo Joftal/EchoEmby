@@ -435,7 +435,11 @@ onBeforeUnmount(() => {
   color: var(--text);
 }
 .list {
-  flex: 1;
+  /* `flex: 1` is a zero basis, and a flex column sizes its own max-content off its items' contributions:
+     with the basis at 0 a three-chip 类型 panel measured the pill's width and wrapped 合集 onto a second
+     line (measured 2026-10-29). `auto` lets the chips state the width they need; the 340px cap above
+     still folds a long genre list into rows. */
+  flex: 1 1 auto;
   display: flex;
   flex-wrap: wrap;
   align-content: flex-start;

@@ -21,6 +21,7 @@ const api: EchoEmbyApi = {
     accountCounts: accountId => invoke('app:accountCounts', accountId),
     switchAccount: accountId => invoke('app:switchAccount', accountId),
     setSettings: patch => invoke('app:setSettings', patch),
+    onSettings: cb => on('app:settings', cb),
   },
   net: {
     probe: () => invoke('net:probe'),

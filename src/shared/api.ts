@@ -10,6 +10,8 @@ export interface EchoEmbyApi {
     accountCounts(accountId: string): Promise<IpcResult<{ movies: number; series: number }>>;
     switchAccount(accountId: string): Promise<IpcResult<boolean>>;
     setSettings(patch: SettingsPatch): Promise<IpcResult<Settings>>;
+    /** The block after any write, from whichever window made it. */
+    onSettings(cb: (s: Settings) => void): () => void;
   };
   net: {
     /** One round trip to the gateway and one to an address echo, through the route that is live now. */

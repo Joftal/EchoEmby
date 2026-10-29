@@ -489,12 +489,14 @@ async function runProbe(): Promise<void> {
                   />
                 </div>
 
+                <!-- The switch below drives Windows' own HDR setting, not an mpv flag: the row is on and a
+                     HDR file plays, the app puts the display into HDR and takes it back out afterwards. -->
                 <div class="row">
                   <div class="k">
-                    <b>HDR 直通</b>
-                    <i>屏幕不支持 HDR 时画面会发灰；合上播放器再打开才换过来</i>
+                    <b>HDR</b>
+                    <i>播放 HDR 片源时打开 Windows 的 HDR，看完还原；SDR 片源不动显示器</i>
                   </div>
-                  <button type="button" class="sw" :class="{ on: player.hdrHint }" @click="set({ player: { hdrHint: !player.hdrHint } })">
+                  <button type="button" class="sw" :class="{ on: player.hdr }" @click="set({ player: { hdr: !player.hdr } })">
                     <span class="track"><i></i></span>
                   </button>
                 </div>

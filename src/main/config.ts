@@ -21,7 +21,9 @@ export const SECRET_MASK = '<set>';
 const DEFAULT_PLAYER: PlayerPrefs = {
   hwdec: 'd3d11va',
   seekStepMs: 10_000,
-  hdrHint: false,
+  // Off by default: switching a display's mode blanks the screen for a moment, and that is not something to
+  // do to someone who only asked to watch a film. A row that starts off is a promise that nothing moved.
+  hdr: false,
   autoNext: true,
   subLang: '',
   audioLang: '',
@@ -72,7 +74,10 @@ const str = (v: unknown, max = 160): string => (typeof v === 'string' ? v.trim()
 const pickPlayer = (raw: Partial<PlayerPrefs> | undefined): PlayerPrefs => ({
   hwdec: raw?.hwdec && HWDEC.includes(raw.hwdec) ? raw.hwdec : DEFAULT_PLAYER.hwdec,
   seekStepMs: num(raw?.seekStepMs, 1000, 120_000, DEFAULT_PLAYER.seekStepMs),
-  hdrHint: raw?.hdrHint === true,
+  // 'hdrHint' is what this row was called while it only forwarded mpv's colour-space hint; a config written
+  // then must keep whatever the viewer had chosen, because the switch now decides whether the screen goes
+  // into HDR at all — reading it as false would have silently turned the feature off for everyone.
+  hdr: raw?.hdr === true || (raw as { hdrHint?: boolean } | undefined)?.hdrHint === true,
   autoNext: raw?.autoNext !== false,
   // Only a value the dialog can still print: a hand-edited `yuee` reads as 自动 instead of as a language no
   // track will ever match, which would look like the player ignoring the setting.

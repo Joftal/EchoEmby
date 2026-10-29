@@ -80,9 +80,11 @@ export interface PlayerPrefs {
   hwdec: 'd3d11va' | 'cuda' | 'auto' | 'no';
   /** ← / →, and the two skip buttons either side of the play button. */
   seekStepMs: number;
-  /** Hand the HDR signal to the display instead of letting mpv tone-map it to SDR. Off by default: a
-   *  screen that cannot show it renders the picture washed out. */
-  hdrHint: boolean;
+  /** Put Windows' own HDR switch on while an HDR file plays, and put it back the way it was afterwards.
+   *  A desktop that is already in HDR is left alone, an SDR file never touches the display, and a panel
+   *  that cannot switch simply stays SDR — mpv then tone-maps the file down to it, which is what happened
+   *  before this existed. */
+  hdr: boolean;
   /** Move to the next episode when the file reaches its end. */
   autoNext: boolean;
   /** Which subtitle track a file with several opens on: a value from `SUB_LANGS` (`chi`, `chi-hant`, `eng`…),

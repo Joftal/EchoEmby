@@ -27,6 +27,7 @@ import { MpvKernel } from './kernel';
 import { StreamBridge } from './bridge';
 import { mediaCache } from '../media-cache';
 import { PlayerWindows } from './windows';
+import { WindowsHdr } from './hdr';
 
 /** What the renderer is told, and when. The controller never touches ipc itself, so the same object can
  *  be driven from a test with three arrays to collect into. */
@@ -99,6 +100,9 @@ export class PlayerController {
   private kernel: MpvKernel | null = null;
   private bridge = new StreamBridge();
   private current: Current | null = null;
+  /** This viewing's claim on the desktop's own HDR switch: on for a file that has HDR, back off when the
+   *  film leaves, and only ever for a switch this app made itself. */
+  private screen = new WindowsHdr();
   private state: PlayerState = emptyPlayerState();
   private media: PlayerMedia = emptyPlayerMedia();
   /** A deliberate close must not be reported as a crash by the process's exit handler. */
@@ -255,6 +259,12 @@ export class PlayerController {
     // leaves mpv's own order in charge, which is what every file got before this row existed.
     const pick = pickTracks(neg.sources[neg.sourceIndex], prefs);
 
+    // HDR has to be decided before mpv exists. A process started into an SDR swapchain stays mapped to SDR
+    // until it opens the next file (measured 2026-10-29: its log keeps saying RGB_FULL_G22_NONE_P709 on a
+    // desktop that has since switched), and the switch itself blanks the screen for about a second — so it
+    // is asked for here, while there is still nothing to look at, rather than in front of a first frame.
+    await this.hdrFor(prefs, neg.hdr);
+
     // The windows only open once the server has agreed to serve something: a refused negotiation should
     // fail on the page 播放 was pressed from, not on a black screen with no controls.
     if (!this.windows.isOpen) this.windows.open(this.rendererUrl('#/player'));
@@ -349,6 +359,19 @@ export class PlayerController {
     return { next: at(eps[i + 1]), prev: at(eps[i - 1]) };
   }
 
+  /** Puts the desktop into HDR for a file that has it, and takes it back out for one that does not.
+   *
+   *  Only asked when the row is on: the switch blanks the screen for a moment and nothing should do that to
+   *  someone who never asked for it. A panel that cannot switch, a driver that refuses, a desktop already
+   *  in HDR — all three end here with no picture changing, and mpv tone-maps the file as it always did. */
+  private async hdrFor(prefs: PlayerPrefs, isHdr: boolean): Promise<void> {
+    if (!prefs.hdr || !isHdr) {
+      this.screen.restore();
+      return;
+    }
+    if (await this.screen.on()) console.log('[hdr] Windows 已切到 HDR');
+  }
+
   /** mpv only renders into a window handed to it at launch, so the handle has to be right before anything
    *  loads. The launch shape itself never changes now — one render profile, chosen in the command line — so
    *  a process that is already up is reused and only the knobs mpv can still move are set: the decoder and
@@ -364,7 +387,7 @@ export class PlayerController {
     k.onMedia = m => this.onKernelMedia(m);
     k.onGone = message => this.onGone(message);
     this.kernel = k;
-    await k.start({ hwnd: this.windows.hostHwnd(), prefs: { hwdec: prefs.hwdec, hdrHint: prefs.hdrHint, fit: prefs.fit } });
+    await k.start({ hwnd: this.windows.hostHwnd(), prefs: { hwdec: prefs.hwdec, fit: prefs.fit } });
     await this.windows.raiseVideoWhenReady();
   }
 
@@ -385,6 +408,12 @@ export class PlayerController {
         if (w) this.out.watched(w);
       })
       .catch(() => undefined);
+    /* The picture died with the process, so the screen must not stay in HDR behind an error line: the only
+       thing left on it is 「播放器断开了连接」, and every other window on the machine would sit washed out
+       until this one is closed. Measured 2026-10-29 by killing a playing mpv: the desktop stayed 0x3 for as
+       long as the overlay was open. A restore only undoes a switch this app made, so a viewer who runs HDR
+       all day keeps it, and a retry goes back through hdrFor like any other start. */
+    this.screen.restore();
     this.state = { ...this.state, status: 'error', error: message || '播放器退出了' };
     this.out.state(this.state);
   }
@@ -796,9 +825,16 @@ export class PlayerController {
     const itemId = c.itemId;
     const wasAt = await k.positionMs();
     const speed = this.state.speed;
+    // A paused film stays paused: this reload exists to make the picture agree with the desktop, and a viewer
+    // who left it on a frame did not ask for it to start running again. Measured 2026-10-29: pausing at
+    // 20:58 and switching the HDR row off put the film back at 20:58 and playing.
+    const wasPaused = this.state.paused === true;
     const neg = await this.client().negotiate(itemId, opts);
     const pick = pickTracks(neg.sources[neg.sourceIndex], config.get().settings.player);
     if (this.current !== c) return;
+    // A version change can move the file between HDR and SDR (the 2160p cut of a film and its 1080p copy
+    // are not always both HDR), so the desk is asked again: mpv re-reads the display for every new file.
+    await this.hdrFor(config.get().settings.player, neg.hdr);
     const url = await this.bridge.mount(neg.url);
     c.sourceIndex = neg.sourceIndex;
     c.sources = neg.sources;
@@ -820,6 +856,7 @@ export class PlayerController {
       throw e;
     }
     await k.setSpeed(speed).catch(() => undefined);
+    if (wasPaused) await k.setPaused(true).catch(() => undefined);
     void this.openPickedSidecar(pick);
     // No second 开场 here. This is the same item inside the same session, and FirstPlay is the event that
     // stamps PlayCount and LastPlayedDate — measured 2026-10-24, one open of 小鬼当家 answers PlayCount 1 —
@@ -827,14 +864,41 @@ export class PlayerController {
     // viewing. The stopped report on the way out carries the source this stream actually ended on.
   }
 
-  /** The knobs mpv can still move while something is playing: the decoder and the picture fit. There is
-   *  nothing else to do here — the render profile is fixed at launch, HDR passthrough needs a new process,
-   *  and the version is chosen before the stream opens — so no setting can ask for a reload. */
+  /** The knobs mpv can still move while something is playing: the decoder, the picture fit, and, for a file
+   *  that has HDR, the desktop's own switch. Nothing here reloads the file: the render profile is fixed at
+   *  launch and the version is chosen before the stream opens.
+   *
+   *  The screen is never touched for an SDR file, and a switch this app did not make is never undone:
+   *  pressing 关 means 「不要替我把屏幕切到 HDR」, not 「把我的屏幕从 HDR 里切出来」. */
   applyPrefs(prefs: PlayerPrefs): void {
     const k = this.kernel;
-    if (!k?.running) return;
-    void k.setHwdec(prefs.hwdec).catch(() => undefined);
-    void k.setFit(prefs.fit).catch(() => undefined);
+    if (k?.running) {
+      void k.setHwdec(prefs.hwdec).catch(() => undefined);
+      void k.setFit(prefs.fit).catch(() => undefined);
+    }
+    const c = this.current;
+    const needSrc = c ? c.sources[c.sourceIndex]?.id : undefined;
+    const want = prefs.hdr && c?.hdr === true;
+    const was = this.screen.state()?.enabled === true;
+    // Even with nothing playing a 关 still has to hand the screen back: that is the only way to undo a HDR
+    // left on by a player closed from the taskbar rather than from its own button.
+    if (!want) {
+      this.screen.restore();
+      // Nothing was handed back, so there is nothing below to make the picture agree with.
+      if (!k?.running || !c || !was) return;
+    }
+    void (async () => {
+      if (want) await this.screen.on();
+      const now = this.screen.state()?.enabled === true;
+      // mpv only re-creates its swapchain when it opens a file, so a switch made under a running one leaves
+      // the picture describing the mode that just went away — a PQ frame into an SDR desktop is a washed grey
+      // picture (measured 2026-10-29: saturation 13.8% → 2.0% with the frame otherwise unchanged). Reloading
+      // the same stream at the same position is what makes this switch honest; without it the row would have
+      // to say 「合上播放器再打开」, which is the thing it was added to avoid.
+      if (now !== was && this.current === c && this.kernel?.running) {
+        await this.replay({ sourceId: needSrc }).catch(() => undefined);
+      }
+    })().catch(() => undefined);
   }
 
   /** The fetched sidecars are a copy of something the server still holds, so they live only as long as the
@@ -854,6 +918,9 @@ export class PlayerController {
     // the lobby is handed must be the one the server just took.
     const w = await this.flushStop(undefined, 'close');
     this.current = null;
+    // The film left the screen, so the screen goes back to what it was before this viewing. `restore` only
+    // undoes a switch this app made, which is what keeps a viewer who runs HDR all day untouched.
+    this.screen.restore();
     await this.kernel?.quit().catch(() => undefined);
     this.kernel = null;
     this.bridge.close();
@@ -874,6 +941,10 @@ export class PlayerController {
   async shutdown(): Promise<void> {
     this.hidMain = false;
     mediaCache.cancelPrefetch();
+    /* The screen comes back before the one POST that can wait: the exit budget is five seconds and a stop
+       written onto a cold connection has taken seven, so a desktop left in HDR must not be what the race
+       above charges for a write it may cut anyway. */
+    this.screen.restore();
     await this.flushStop(undefined, 'quit');
     this.current = null;
     await this.kernel?.quit().catch(() => undefined);
