@@ -26,6 +26,7 @@ import { pickTracks, type TrackPick } from '../../shared/track-pick';
 import { MpvKernel } from './kernel';
 import { StreamBridge } from './bridge';
 import { mediaCache } from '../media-cache';
+import { Thumbnails, type ThumbAnswer, type ThumbOpen } from './thumbs';
 import { PlayerWindows } from './windows';
 import { WindowsHdr } from './hdr';
 
@@ -73,6 +74,10 @@ interface Current {
   danmaku: DanmakuQuery | null;
   /** Completing the same item twice must not POST 已播放 twice. */
   reported: boolean;
+  /** The end of this item has already been handled. Kept apart from `reported`, which a re-watch starts
+   *  with true (the server already marks the film 已播放) — sharing one flag made 自动下一集 dead on every
+   *  episode the viewer had watched before. */
+  ended: boolean;
   /** The length this item has according to the server, in ms. mpv's own number is preferred while it is on
    *  screen, but the stop write used to have only that one source: a file whose duration never arrived left
    *  no stop at all, even though 开场 two functions away had already used the server's length for the same item. */
@@ -99,6 +104,12 @@ const navLabel = (it: LibraryItem): string => (it.indexNumber != null ? `第 ${i
 export class PlayerController {
   private kernel: MpvKernel | null = null;
   private bridge = new StreamBridge();
+  /** The bridge address of the file that is playing, kept so a preview worker can still be started after the
+   *  fact — a setting turned on mid-film, or one turned off and back on. Empty when nothing is loaded. */
+  private thumbUrl = '';
+  /** 进度条预览图: a second, unwatched mpv that decodes a frame every few dozen seconds of the file on
+   *  screen. It follows the viewing — opened after a load, closed with the session. */
+  private thumbs = new Thumbnails();
   private current: Current | null = null;
   /** This viewing's claim on the desktop's own HDR switch: on for a file that has HDR, back off when the
    *  film leaves, and only ever for a switch this app made itself. */
@@ -156,6 +167,50 @@ export class PlayerController {
 
   getMedia(): PlayerMedia {
     return this.media;
+  }
+
+  /** One frame of the file that is playing, as a data URL, for the bar's tip. 空 while the worker has
+   *  not got there yet — asking is what moves that part of the file to the front of its queue. `precise`
+   *  asks for the exact second under the pointer instead of the grid cell that covers it. */
+  thumbAt(ms: number, precise = true): ThumbAnswer {
+    // The setting is read here rather than only at play time: a viewer who turns 进度条预览图 on while
+    // something is playing expects the tip to fill in, and one who turns it off expects the worker to go.
+    const on = config.get().settings.player.thumbPreview;
+    if (!on) {
+      if (this.thumbs.running) this.thumbs.close();
+      return { url: null, exact: false };
+    }
+    // `active`, not `running`: during the worker's quiet period there is no process yet, but the grid is
+    // already open and filling. Re-opening here on every pointer move threw away each frame as it arrived.
+    if (this.thumbUrl && !this.thumbs.active) {
+      this.thumbs.open(this.thumbUrl, this.current?.runtimeMs || 0, this.thumbOpen());
+    }
+    return this.thumbs.at(ms, precise);
+  }
+
+  /** What the preview worker needs from the session: which file the grid belongs to, where the playhead is
+   *  so it fills that part first, and whether the film is starving. */
+  private thumbOpen(): ThumbOpen {
+    return {
+      key: this.thumbKey(),
+      now: () => this.state.positionMs,
+      starving: () => this.starving(),
+    };
+  }
+
+  /** Which file a preview grid belongs to. The item alone is not enough: 2160p and 1080p of one episode are
+   *  two files with two different pictures, and a grid cut from one must never answer for the other. */
+  private thumbKey(): string {
+    const c = this.current;
+    if (!c) return '';
+    return c.itemId + '|' + (c.sources[c.sourceIndex]?.id || '');
+  }
+
+  /** 清理全部缓存 also drops the preview grids: one button called 全部 must not leave a second cache of the
+   *  same film behind on disk. The frames already in memory stay for this viewing; the folder is rebuilt on
+   *  the next cell that gets decoded. */
+  async clearThumbs(): Promise<void> {
+    await this.thumbs.clearCache();
   }
 
   getSession(): PlayerSession | null {
@@ -271,6 +326,7 @@ export class PlayerController {
     await this.ensureKernel(prefs);
 
     const url = await this.bridge.mount(neg.url);
+    this.thumbUrl = url;
 
     this.current = {
       itemId,
@@ -289,6 +345,7 @@ export class PlayerController {
       prev: nav.prev,
       danmaku: this.danmakuOf(item),
       reported: resume.played,
+      ended: false,
       flushedMs: -1,
       runtimeMs: Math.round((item.runTimeTicks || 0) / 1e4),
       startMs: resume.startMs,
@@ -298,17 +355,22 @@ export class PlayerController {
 
     this.kernel!.setNextTracks(this.trackWanted(pick));
     try {
-      await this.kernel!.load(url, { startMs: fromStart ? 0 : resume.startMs });
+      await this.kernel!.load(url, { startMs: fromStart ? 0 : resume.startMs, paused: false });
     } catch (e) {
       this.fail(e);
       throw e;
     }
+
     void this.openPickedSidecar(pick);
     // The start report carries the offset the *server* holds, never the 0 a 「播放」 button loaded at:
     // measured on bangumi, an open that reports 0 rewrites the item to 0 about a minute later while the
     // session is live, so a hard-killed app left 187396 sitting at nothing and the next 看到 had no number
     // to print. An open that reports the stored offset leaves that offset standing.
     void this.announceStart(resume.startMs, Math.round((item.runTimeTicks || 0) / 1e4)).catch(() => undefined);
+    // 进度条预览图. Started here rather than at mount so the worker's first seek cannot land while the
+    // film itself is still opening its file; it reads through the same bridge, so the preview pays for no
+    // second TLS handshake and no second proxy route.
+    if (prefs.thumbPreview) this.thumbs.open(url, this.current?.runtimeMs || 0, this.thumbOpen());
     // 追剧时预取下一集: only after this one is actually up, so the film being watched never waits behind a
     // speculative fetch. `nav.next` is the neighbour inside the season - the same row 下一集 would take.
     const next = this.current?.next;
@@ -423,6 +485,13 @@ export class PlayerController {
     this.out.state(this.state);
   }
 
+  /** Whether playback is short of data right now. The preview sweep asks this before every cell: on a slow
+   * link the worker and the film compete for the same bytes, and a stutter costs more than a preview gives. */
+  private starving(): boolean {
+    const s = this.state;
+    return s.status === 'playing' && s.bufferedMs > 0 && s.bufferedMs - s.positionMs < 5_000;
+  }
+
   private onKernelState(s: PlayerState): void {
     // The read-out answers "what is this app pulling right now", and the posters on screen belong to that
     // answer even though they never pass through the player. mpv's own counter is the video; this is
@@ -456,14 +525,19 @@ export class PlayerController {
    *  that is why the old `status === 'ended'` branch, and with it markPlayed, never ran. */
   private async onEnded(): Promise<void> {
     const c = this.current;
-    if (!c || c.reported) return;
+    if (!c || c.ended) return;
+    c.ended = true;
+    // A re-watch opens with `reported` already true: the server holds 已播放 for it, so there is no stop to
+    // publish and nothing to mark. The next episode still has to play — measured 2026-10-29: the flag that
+    // stops a second POST also stopped 自动下一集 on any episode already in 看过.
+    const fresh = !c.reported;
     c.reported = true;
-    const w = await this.flushStop(this.state.durationMs, 'ended');
+    const w = fresh ? await this.flushStop(this.state.durationMs, 'ended') : null;
     // Reaching the end is what earns the 已播放 mark, and it does not depend on the position write having
     // landed. These were chained: a stopped report the server refused used to leave a finished film
     // unmarked as well as unfindable.
     // Same answer as the position write: no 已播放 mark is left on a machine that never served the file.
-    const played = this.serverGone() ? false : await this.client().markPlayed(c.itemId);
+    const played = fresh && !this.serverGone() ? await this.client().markPlayed(c.itemId) : false;
     if (w) {
       w.played = played;
       this.out.watched(w);
@@ -836,6 +910,7 @@ export class PlayerController {
     // are not always both HDR), so the desk is asked again: mpv re-reads the display for every new file.
     await this.hdrFor(config.get().settings.player, neg.hdr);
     const url = await this.bridge.mount(neg.url);
+    this.thumbUrl = url;
     c.sourceIndex = neg.sourceIndex;
     c.sources = neg.sources;
     this.rememberVersion(itemId, c.seriesId, neg.sources[neg.sourceIndex]);
@@ -850,7 +925,7 @@ export class PlayerController {
     this.sidecar = null;
     this.kernel!.setNextTracks(this.trackWanted(pick));
     try {
-      await k.load(url, { startMs: wasAt });
+      await k.load(url, { startMs: wasAt, paused: wasPaused });
     } catch (e) {
       this.fail(e);
       throw e;
@@ -858,6 +933,9 @@ export class PlayerController {
     await k.setSpeed(speed).catch(() => undefined);
     if (wasPaused) await k.setPaused(true).catch(() => undefined);
     void this.openPickedSidecar(pick);
+    // The frames belonged to the version that was playing; this one is a different file, so the grid is
+    // rebuilt from scratch against it.
+    if (config.get().settings.player.thumbPreview) this.thumbs.open(url, c.runtimeMs, this.thumbOpen());
     // No second 开场 here. This is the same item inside the same session, and FirstPlay is the event that
     // stamps PlayCount and LastPlayedDate — measured 2026-10-24, one open of 小鬼当家 answers PlayCount 1 —
     // so re-announcing on every knob move would publish another 收看过 for something that was never a new
@@ -871,6 +949,9 @@ export class PlayerController {
    *  The screen is never touched for an SDR file, and a switch this app did not make is never undone:
    *  pressing 关 means 「不要替我把屏幕切到 HDR」, not 「把我的屏幕从 HDR 里切出来」. */
   applyPrefs(prefs: PlayerPrefs): void {
+    // 进度条预览图 is a switch over a second decoder (measured 608 MB resident while it scans a 4K source),
+    // so 关 puts that process away on the spot rather than waiting for the next pointer move over the bar.
+    if (!prefs.thumbPreview) this.thumbs.close();
     const k = this.kernel;
     if (k?.running) {
       void k.setHwdec(prefs.hwdec).catch(() => undefined);
@@ -914,6 +995,8 @@ export class PlayerController {
     this.tearing = true;
     this.hidMain = false;
     mediaCache.cancelPrefetch();
+    this.thumbs.close();
+    this.thumbUrl = '';
     // The stop is written before anything is torn down: mpv still holds the real position, and the number
     // the lobby is handed must be the one the server just took.
     const w = await this.flushStop(undefined, 'close');
@@ -945,6 +1028,8 @@ export class PlayerController {
        written onto a cold connection has taken seven, so a desktop left in HDR must not be what the race
        above charges for a write it may cut anyway. */
     this.screen.restore();
+    this.thumbs.close();
+    this.thumbUrl = '';
     await this.flushStop(undefined, 'quit');
     this.current = null;
     await this.kernel?.quit().catch(() => undefined);

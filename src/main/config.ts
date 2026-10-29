@@ -30,6 +30,10 @@ const DEFAULT_PLAYER: PlayerPrefs = {
   // 适应屏幕, because it is what the player has always done: mpv's own default, and the one mode that
   // shows the whole frame. A setting nobody touched must not crop or distort the picture.
   fit: 'fit',
+  // Off by default. The preview is a second decoder running beside the film: measured 608 MB resident
+  // while it scans a 4K source, plus a grid of frames on disk. A switch that costs that much must be
+  // something the viewer asked for, not something the first 播放 signed them up for.
+  thumbPreview: false,
 };
 
 const CLOSE_ACTIONS = ['quit', 'tray'] as const;
@@ -84,6 +88,9 @@ const pickPlayer = (raw: Partial<PlayerPrefs> | undefined): PlayerPrefs => ({
   subLang: isSubLang(raw?.subLang) ? raw.subLang : DEFAULT_PLAYER.subLang,
   audioLang: isAudioLang(raw?.audioLang) ? raw.audioLang : DEFAULT_PLAYER.audioLang,
   fit: raw?.fit && (FITS as readonly string[]).includes(raw.fit) ? (raw.fit as PlayerPrefs['fit']) : DEFAULT_PLAYER.fit,
+  // A config written before this existed has no key, and off is what such a file must get: the worker is
+  // a second decoder, so only an explicit `true` pays for it.
+  thumbPreview: raw?.thumbPreview === true,
 });
 
 /* 'minimize' is what this row used to be called; a config written before the tray existed must map onto the

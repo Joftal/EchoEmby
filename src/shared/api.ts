@@ -1,4 +1,4 @@
-import type { Account, AppConfig, BangumiScore, CalendarResult, CsmGuide, DanmakuQuery, DanmakuTrack, DanmakuTrackInfo, FacetOption, ImdbRating, IpcResult, LibraryItem, LibraryRow, MediaCacheStats, MetaKeys, NetProbe, PlayerCommand, PlayerMedia, PlayerSession, PlayerState, RtScores, Settings, SettingsPatch, TmdbCredits, TmdbMeta, TmdbRelated, TmdbStills, TraktScores, WatchedRecord } from './types';
+import type { Account, AppConfig, BangumiScore, CalendarResult, CsmGuide, DanmakuQuery, DanmakuTrack, DanmakuTrackInfo, FacetOption, ImdbRating, IpcResult, LibraryItem, LibraryRow, MediaCacheStats, MetaKeys, NetProbe, PlayerCommand, PlayerMedia, PlayerSession, PlayerState, PlayerThumb, RtScores, Settings, SettingsPatch, TmdbCredits, TmdbMeta, TmdbRelated, TmdbStills, TraktScores, WatchedRecord } from './types';
 
 export interface EchoEmbyApi {
   app: {
@@ -74,6 +74,12 @@ export interface EchoEmbyApi {
     state(): Promise<PlayerState>;
     session(): Promise<IpcResult<PlayerSession | null>>;
     media(): Promise<IpcResult<PlayerMedia>>;
+    /** A preview frame of the file playing, as a JPEG data URL, for one position of the bar. `precise`
+     *  asks for the frame *of that second* - the grid's cells are 5 to 35 s apart, so a cell alone answers
+     *  with a picture of somewhere near the pointer; a pointer that has stopped asks precisely, a pointer
+     *  passing over the bar takes the grid. `exact: false` means the picture is a neighbour's while the
+     *  asked-for one is being decoded, and the renderer keeps polling until it is exact or final. */
+    thumb(timeMs: number, precise?: boolean): Promise<IpcResult<PlayerThumb>>;
     onState(cb: (s: PlayerState) => void): () => void;
     /** null is the player being closed: the session identity only exists while something is loaded. */
     onSession(cb: (s: PlayerSession | null) => void): () => void;

@@ -219,12 +219,26 @@ export class AppServices {
     ipcMain.handle('player:state', () => this.player.getState());
     ipcMain.handle('player:session', () => wrap('player:session', () => this.player.getSession()));
     ipcMain.handle('player:media', () => wrap('player:media', () => this.player.getMedia()));
+    // The bar's preview frame. A null url is a normal answer — nothing of the file has been decoded yet —
+    // and exact:false means the picture is the nearest one that exists while the second under the pointer is
+    // still being made. The renderer keeps asking while the pointer stays, so the wait reads as a tip that
+    // sharpens rather than as a blocked pointer. precise:false is a pointer on its way somewhere: it takes
+    // the pre-rendered grid cell, and only a pointer that has stopped pays for a seek to its own second.
+    ipcMain.handle('player:thumb', (_e, timeMs: number, precise?: boolean) =>
+      wrap('player:thumb', async () => this.player.thumbAt(Number(timeMs) || 0, precise !== false)),
+    );
 
     // 媒体缓存: the numbers the settings sheet prints come from the index the bridge already keeps, so this
     // is not a second accounting of the same bytes. Clearing runs while nothing is playing; a viewing that
     // is already on screen keeps its open file handles and simply stops adding to a folder that is gone.
     ipcMain.handle('mediaCache:stats', () => wrap('mediaCache:stats', async () => (await mediaCache.init(), mediaCache.stats())));
-    ipcMain.handle('mediaCache:clear', () => wrap('mediaCache:clear', async () => (await mediaCache.clear(), mediaCache.stats())));
+    ipcMain.handle('mediaCache:clear', () => wrap('mediaCache:clear', async () => {
+      await mediaCache.clear();
+      // The preview grids are the second thing this app writes to disk for a viewing, so 清理全部缓存 has to
+      // reach them too - otherwise the button leaves hundreds of megabytes of the same film behind.
+      await this.player.clearThumbs().catch(() => undefined);
+      return mediaCache.stats();
+    }));
 
     // 弹幕 asks two services that are not the media server, so both handlers answer nothing at all while
     // the switch in 设置 is off.

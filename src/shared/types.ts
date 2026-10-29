@@ -99,6 +99,10 @@ export interface PlayerPrefs {
    *  A property of the screen rather than of a file — a 2.39:1 film on a 16:9 window leaves bars, and which
    *  of the three answers looks right is the viewer's taste, not the release's. */
   fit: FitMode;
+  /** 进度条预览图: the bar's tip shows a frame of the file, decoded ahead of time by a second mpv. On by
+   *  default; off means the tip is the clock alone and no second decoder exists. The cost is why the row
+   *  exists at all — a preview is one seek every few dozen seconds of film, and a seek pulls a few MB. */
+  thumbPreview: boolean;
 }
 
 /** 适应屏幕 keeps the frame whole and leaves bars where the window is a different shape; 填满屏幕 scales it
@@ -766,6 +770,17 @@ export interface PlayerState {
   speed: number;
   fullscreen: boolean;
   error?: string;
+}
+
+/** One preview frame for the progress bar's tip: the picture, and whether it is really the frame of the
+ *  moment that was asked for. While that second is still being decoded the nearest picture that exists is
+ *  sent instead, so the tip is never an empty box, and `exact` turns the tip from "around here" to "this
+ *  shot". `final` means the decoder will not produce a better answer for this position at all - the second
+ *  could not be read out of the file - so the asking stops there instead of running out its own timeout. */
+export interface PlayerThumb {
+  url: string | null;
+  exact: boolean;
+  final?: boolean;
 }
 
 /** One control the overlay can ask for. A closed union so a typo is a type error rather than an

@@ -173,6 +173,11 @@ export class MpvKernel {
    *  pause set between the loadfile command and the demuxer opening the next file, so the reload behind a
    *  HDR switch used to start a film the viewer had left on a frame (measured 2026-10-29). */
   private pausedAtLoad = false;
+  /** What the caller asked the file being loaded to do about pause, when it said anything. mpv carries its
+   *  own `pause` across `loadfile`, so a film that ended (keep-open leaves the process paused) used to hand
+   *  that pause to whatever opened next — 自动下一集 opened the next episode frozen at 0:00 (measured
+   *  2026-10-29). `null` keeps the inherit-what-was-playing rule the HDR switch depends on. */
+  private pausedWanted: boolean | null = null;
   private timer: NodeJS.Timeout | null = null;
   /** A process we asked to quit is not a crash, so neither its exit nor the socket that goes down with it
    *  may reach `onGone` - that is the session's last-resort write of the position, and a socket with no
@@ -339,7 +344,13 @@ export class MpvKernel {
           this.startAt = 0;
         }
         this.applyWanted();
-        if (this.pausedAtLoad) {
+        if (this.pausedWanted !== null) {
+          const want = this.pausedWanted;
+          this.pausedWanted = null;
+          this.pausedAtLoad = false;
+          this.raw.paused = want;
+          void this.pipe.call(['set_property', 'pause', want]).catch(() => undefined);
+        } else if (this.pausedAtLoad) {
           this.pausedAtLoad = false;
           // mpv already held the film still, so this write changes nothing on its side and it announces
           // nothing back; the start-file reset above had cleared the only local record of it (measured
@@ -606,9 +617,10 @@ export class MpvKernel {
     return Math.round(s * 1000);
   }
 
-  async load(url: string, opts: { startMs?: number } = {}): Promise<void> {
+  async load(url: string, opts: { startMs?: number; paused?: boolean } = {}): Promise<void> {
     this.startAt = Math.max(0, (opts.startMs || 0) / 1000);
     this.pausedAtLoad = this.raw.paused === true;
+    this.pausedWanted = typeof opts.paused === 'boolean' ? opts.paused : null;
     await this.pipe.call(['loadfile', url, 'replace']);
   }
 

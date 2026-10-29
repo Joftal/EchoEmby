@@ -46,14 +46,40 @@ const HIDE_AFTER_MS = 1000;
 const visible = ref(true);
 const dragging = ref(false);
 const hover = ref<{ ratio: number; x: number } | null>(null);
+/** The preview frame for the spot under the pointer. Asking for one is also what tells the decoder to make
+ *  that part of the file next, and the answer is null until it exists — so the pointer polls while it
+ *  stays put rather than waiting for a push. Nothing here blocks: a tip without a picture is the state
+ *  this had before previews existed. */
+const shot = ref<string | null>(null);
+const shotFor = ref(-1);
+/** Whether the decoder is still being asked for this spot. The placeholder box is exactly this: a wait that
+ *  ends - with the picture, or with nothing if the second never comes. */
+const fetching = ref(false);
+let shotTimer: number | null = null;
+/** Polls spent on the second under the pointer. A second the worker cannot decode must not be asked for
+ *  forever: after this many turns the nearest picture stays and the asking stops. The cap has to outlast
+ *  the main process's own deadline for one ask (8 s on a long film, where a seek reads from the server),
+ *  or a slow-but-working seek would be dropped halfway. */
+let shotTries = 0;
+const SHOT_TRIES_MAX = 60;
+/** A hand on the move takes the grid's pre-rendered cell; only a hand that has stopped pays for a seek to
+ *  its own second. This is the line between the two: a drag across a two hour film must not become a
+ *  hundred seeks, and a pointer that rests must not be left with the picture of another scene. */
+let movedAt = 0;
+const STILL_MS = 160;
+const SHOT_POLL_MS = 220;
+/** When the grid was last asked for, so a hand moving across the bar costs one call per tenth of a second
+ *  rather than one per pointer event. */
+let coarseAt = 0;
 const rail = ref<HTMLElement | null>(null);
+const overRail = ref(false);
 let timer: ReturnType<typeof setTimeout> | null = null;
 
 /** The one way the chrome goes away, so the timer and the pointer leaving the window cannot disagree about
  *  when it is allowed to go: a bar that vanishes while a menu is open takes the way out of it with it, a bar
  *  that vanishes mid-drag drops the seek, and a paused film is being looked at, not watched past. */
 function hide(): void {
-  if (dragging.value || player.panel || s.value.paused || s.value.status === 'error') return;
+  if (dragging.value || overRail.value || player.panel || s.value.paused || s.value.status === 'error') return;
   visible.value = false;
 }
 
@@ -150,12 +176,15 @@ function onDown(e: PointerEvent): void {
   if (!s.value.durationMs) return;
   dragging.value = true;
   shown.value = ratioAt(e);
+  startPoll();
   rail.value?.setPointerCapture(e.pointerId);
   void seekTo(shown.value);
 }
 function onRailMove(e: PointerEvent): void {
   if (!s.value.durationMs) return;
   hover.value = { ratio: ratioAt(e), x: e.clientX };
+  movedAt = Date.now();
+  startPoll();
   if (!dragging.value) return;
   shown.value = ratioAt(e);
   void seekTo(shown.value);
@@ -174,6 +203,91 @@ async function seekTo(ratio: number): Promise<void> {
 }
 
 const hoverTime = computed(() => (hover.value ? fmtClock(hover.value.ratio * s.value.durationMs) : ''));
+/** Where the pointer is, in the units the preview grid is cut in. */
+const hoverMs = computed(() => (hover.value && s.value.durationMs ? Math.round(hover.value.ratio * s.value.durationMs) : 0));
+/** 进度条预览图 is a setting, off unless the file says on. With it off the tooltip is the clock alone — as it
+ *  was before the feature existed — and a pointer that cannot produce a picture does not ask the main process
+ *  twelve times a second. */
+const previewOn = computed(() => app.config?.settings.player.thumbPreview === true);
+
+async function pullShot(precise: boolean): Promise<void> {
+  if (!previewOn.value || !hover.value) return;
+  // 0 is the first frame of the film, not "no pointer": the left end of the bar gets a picture like
+  // every other place on it. Asking for 0 used to be skipped, so that end never had one (2026-10-29).
+  const ms = Math.max(0, Math.min(hoverMs.value, Math.max(0, s.value.durationMs - 1)));
+  const r = await window.echoemby.player.thumb(ms, precise);
+  // The pointer may have moved while the answer was being made; that picture is about another spot.
+  if (!hover.value || hoverMs.value !== ms) return;
+  if (r.ok && r.data && r.data.url) {
+    shot.value = r.data.url;
+    shotFor.value = ms;
+    // 精确 means the decoder has made this very second. A picture of the neighbourhood is still shown -
+    // it is the same part of the film - but the asking goes on until the second under the pointer is real.
+    // `final` is the worker saying it will not produce that second at all.
+    if (r.data.exact || r.data.final) {
+      stopPoll();
+      return;
+    }
+  } else if (shotFor.value !== ms) {
+    shot.value = null;
+  }
+  // Every precise attempt counts, not only the ones answered with a neighbour's picture: a file that
+  // cannot make that second at all (starving stream, dead worker) answers with no url, and that used to
+  // leave the skeleton breathing on screen - and the IPC on the wire - for as long as the pointer rested.
+  if (precise && ++shotTries > SHOT_TRIES_MAX) stopPoll();
+}
+function startPoll(): void {
+  if (!previewOn.value) {
+    // No picture will be made, so any picture still in the tip is about a moment the viewer is not
+    // asking about any more: 关 has to leave the clock alone, the way it was before the feature existed.
+    shot.value = null;
+    shotFor.value = -1;
+    return;
+  }
+  fetching.value = true;
+  if (shotTimer == null) {
+    shotTries = 0;
+    shotTimer = window.setInterval(() => void pullShot(Date.now() - movedAt >= STILL_MS), SHOT_POLL_MS);
+  }
+  if (Date.now() - coarseAt < 100) return;
+  coarseAt = Date.now();
+  void pullShot(false);
+}
+function stopPoll(): void {
+  fetching.value = false;
+  if (shotTimer == null) return;
+  window.clearInterval(shotTimer);
+  shotTimer = null;
+}
+/** The bar is being read, not passed over: a preview that disappears one second after the pointer stops is
+ *  a preview of a frame nobody got to look at. While the pointer rests on the rail the chrome stays. */
+/** 关掉 进度条预览图 while the pointer is on the bar, or while a tip is up: the switch has to reach the tip
+ *  the viewer is looking at, not only the next time the pointer enters the rail. */
+watch(previewOn, on => {
+  if (on) {
+    // A pointer already resting on the bar has to fill in without being moved again, or 开 would look
+    // like it needed a second gesture.
+    if (hover.value) startPoll();
+    return;
+  }
+  stopPoll();
+  shot.value = null;
+  shotFor.value = -1;
+});
+function onRailEnter(): void {
+  overRail.value = true;
+  show();
+}
+function onRailLeave(): void {
+  overRail.value = false;
+  show();
+}
+function onLeave(): void {
+  hover.value = null;
+  shot.value = null;
+  shotFor.value = -1;
+  stopPoll();
+}
 
 const speedIndex = computed(() => SPEED_STEPS.indexOf(s.value.speed));
 function nudgeSpeed(dir: number): void {
@@ -282,7 +396,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="stage" :class="{ hidden: !visible }" @pointermove="show" @pointerleave="hover = null">
+  <div class="stage" :class="{ hidden: !visible }" @pointermove="show" @pointerleave="onLeave">
     <div class="surface" @click="onSurfaceClick" @dblclick="dblclick"></div>
     <DanmakuLayer />
 
@@ -303,14 +417,29 @@ onUnmounted(() => {
     <SheetLayer />
 
     <div class="pl-bar">
-      <div class="seek" ref="rail" @pointerdown="onDown" @pointerup="onUp" @pointermove="onRailMove">
+      <div
+        class="seek"
+        ref="rail"
+        @pointerdown="onDown"
+        @pointerup="onUp"
+        @pointermove="onRailMove"
+        @pointerenter="onRailEnter"
+        @pointerleave="onRailLeave"
+      >
         <div class="rail">
           <div class="buf" :style="{ width: buffered }"></div>
           <div class="fill" :style="{ width: shownPosition }"></div>
           <span v-for="(t, i) in ticks" :key="i" class="tick" :style="{ left: t }"></span>
           <div class="thumb" :style="{ left: shownPosition }"></div>
         </div>
-        <span v-if="hover" class="tip" :style="{ left: `${hover.ratio * 100}%` }">{{ hoverTime }}</span>
+        <span v-if="hover" class="tip" :style="{ '--at': `${hover.ratio * 100}%` }">
+          <img v-if="shot" class="frame" :src="shot" alt="" />
+          <!-- The box the picture lands in. A long film needs seconds to read the spot under the
+               pointer, and a tip that changes size when the frame finally arrives is worse than one
+               that says it is fetching. -->
+          <span v-else-if="previewOn && fetching" class="hold"></span>
+          <span class="when">{{ hoverTime }}</span>
+        </span>
       </div>
 
       <div class="pl-badges">
@@ -571,9 +700,13 @@ onUnmounted(() => {
 .seek:active .thumb {
   transform: translate(-50%, -50%) scale(1);
 }
+/* The tip is the time, and once the decoder has caught up, the picture at that time. It is held inside
+   the bar's own width: a preview is ~170 px wide, so half of it is the margin a `left` of 0% or 100% would
+   otherwise spend outside the window. */
 .tip {
   position: absolute;
   bottom: 100%;
+  left: clamp(88px, var(--at), calc(100% - 88px));
   transform: translate(-50%, -6px);
   padding: 4px 9px;
   border-radius: var(--r-badge);
@@ -582,6 +715,42 @@ onUnmounted(() => {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-items: center;
+}
+.tip:has(.frame),
+.tip:has(.hold) {
+  padding: 5px 5px 3px;
+  border-radius: 10px;
+}
+/* The frame is being decoded: the same box it will occupy, sweeping so the wait is visible. */
+.hold {
+  display: block;
+  width: 168px;
+  height: 95px;
+  border-radius: 6px;
+  background: linear-gradient(100deg, rgba(255, 255, 255, 0.05) 20%, rgba(255, 255, 255, 0.14) 40%, rgba(255, 255, 255, 0.05) 60%);
+  background-size: 240% 100%;
+  animation: hold-sweep 1.1s linear infinite;
+}
+@keyframes hold-sweep {
+  from { background-position: 140% 0; }
+  to { background-position: -40% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hold { animation: none; }
+}
+.frame {
+  display: block;
+  width: 168px;
+  height: 95px;
+  object-fit: cover;
+  border-radius: 6px;
+}
+.when {
+  line-height: 1.2;
 }
 .pl-time {
   padding-left: 6px;

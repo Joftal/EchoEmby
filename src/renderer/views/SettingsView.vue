@@ -500,6 +500,16 @@ async function runProbe(): Promise<void> {
                     <span class="track"><i></i></span>
                   </button>
                 </div>
+
+                <div class="row">
+                  <div class="k">
+                    <b>进度条预览图</b>
+                    <i>鼠标停在进度条上显示那一刻的画面；为抓帧要多开一个解码进程，约占 600 MB 内存</i>
+                  </div>
+                  <button type="button" class="sw" :class="{ on: player.thumbPreview }" @click="set({ player: { thumbPreview: !player.thumbPreview } })">
+                    <span class="track"><i></i></span>
+                  </button>
+                </div>
               </div>
             </section>
 
