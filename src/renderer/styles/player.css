@@ -356,6 +356,13 @@
   border-radius: var(--pl-r-sheet);
   box-shadow: var(--pl-sheet-shadow);
 }
+/* A sheet whose rows are short would hand the fit-content card a narrow width (弹幕样式 measured 236 against the
+   438 its three siblings take), and the panel would snap 200px sideways going in and back out. 438 is that
+   sibling width; the ceiling wins on a window too narrow for it, because max-width beats min-width. */
+.pl-sub.wide {
+  min-width: 438px;
+  max-width: calc(100vw - 26px);
+}
 .pl-sub .pl-body {
   flex: 1 1 auto;
   min-height: 0;

@@ -785,6 +785,9 @@ export interface DanmakuTrackInfo {
   /** 类型: 电影 / TV动画 / 三次元 … */
   type?: string;
   year?: number;
+  /** The work this episode row belongs to. The title search answers one work per row and never repeats the
+   *  id, so this is how the year (which the rows themselves leave out) is filled back in. */
+  animeId?: string;
   poster?: string;
   /** The service's answer for how far this copy runs from the copy the comments were timed against. */
   shift?: number;
@@ -792,6 +795,11 @@ export interface DanmakuTrackInfo {
   exact?: boolean;
   /** The viewer linked this show by hand, so this row outranks every guess. */
   linked?: boolean;
+  /** How many comments this episode holds. Absent when the endpoint stayed silent: the panel prints nothing
+   *  rather than 「0 条」, which would be a claim about the work instead of about the request. */
+  count?: number;
+  /** The endpoint that offered this row, so the count goes back to the same one instead of guessing. */
+  api?: string;
 }
 
 /** What one lookup answers with: the rows to show, the link the viewer made (if any), the row that should

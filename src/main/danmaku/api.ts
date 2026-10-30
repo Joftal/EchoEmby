@@ -144,7 +144,7 @@ const callHeaders = (base: string, path: string, json: boolean): Record<string, 
   ...signed(base, path),
 });
 
-const timeoutOf = (src: ApiSource): number => (src.timeoutMs && src.timeoutMs > 0 ? src.timeoutMs : 12_000);
+const timeoutOf = (src: ApiSource): number => (src.timeoutMs && src.timeoutMs > 0 ? src.timeoutMs : 20_000);
 
 /** One signed round trip. A 200 carrying `success:false` is a refusal, not an answer, and reads as null. */
 async function call<T>(src: ApiSource, path: string, query: Record<string, string | number | undefined> = {}, init?: { method: string; body?: unknown }): Promise<T | null> {
@@ -256,14 +256,33 @@ export interface ApiCommentRow {
   m?: string;
 }
 
-/** One episode's comments. 2,300 rows is 178KB and about 800ms, which is why the parsed list is cached. */
-export async function comments(src: ApiSource, episodeId: string): Promise<ApiCommentRow[] | null> {
+export interface ApiCommentPage {
+  rows: ApiCommentRow[];
+  /** The service's own total for this episode.
+   *
+   *  There is no count-only form: the number sits in the same reply as the rows (measured 2026-10-31 on the
+   *  mirror — `/api/v2/comment/10005` answers 200 with 208,196 bytes and `count` at the root), so asking for a
+   *  number costs exactly one download. That is why the number is cached per episode on its own: the row is
+   *  worth showing next to every candidate, and asking again for each open would re-download a whole track. */
+  count: number;
+}
+
+/** One episode's comments, with the count the drawer prints. 2,300 rows is 178KB and about 800ms, which is why
+ *  the parsed list is cached. */
+export async function commentPage(src: ApiSource, episodeId: string): Promise<ApiCommentPage | null> {
   const j = await call<{ count?: number; comments?: ApiCommentRow[] }>(src, `/api/v2/comment/${encodeURIComponent(episodeId)}`, {
     withRelated: 'true',
     chConvert: 0,
   });
   if (!j) return null;
-  return Array.isArray(j.comments) ? j.comments : [];
+  const rows = Array.isArray(j.comments) ? j.comments : [];
+  const count = typeof j.count === 'number' && Number.isFinite(j.count) ? j.count : rows.length;
+  return { rows, count };
+}
+
+export async function comments(src: ApiSource, episodeId: string): Promise<ApiCommentRow[] | null> {
+  const page = await commentPage(src, episodeId);
+  return page ? page.rows : null;
 }
 
 /* ------------------------------------------------------------------ 设置里的「测试」 */

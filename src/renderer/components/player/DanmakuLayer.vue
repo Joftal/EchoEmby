@@ -47,6 +47,20 @@ let geo = { w: 0, h: 0, dpr: 1 };
 
 /** Half a second is how long the extrapolation is allowed to stay ahead of a corrected sample. */
 const CORRECT_S = 0.6;
+/** The most a single sample is allowed to nudge the picture without it reading as a jump. */
+const MAX_LEAD = 0.25;
+
+/**
+ * How long the extrapolation may keep running past the last sample.
+ *
+ * This is the whole defence against a file that stops advancing. While the picture is really playing the main
+ * process pushes a changed position every 200–250ms (measured 2026-10-31 over 18 pushes: 198ms–251ms, and its
+ * 300ms ceiling is only reached on a slow tick), but a buffer stall moves no position, so nothing is pushed and
+ * a clock left counting would walk the comments off the screen before the picture came back — the reported
+ * 「卡住之后弹幕一直往前跑」. Stopping half a second after the last sample is far behind the slowest ordinary
+ * cadence, so it never bites during normal playback and always bites during a stall.
+ */
+const STALL_S = 0.5;
 
 /** The playback position as a continuous function: the last sample plus the wall clock since it arrived. */
 const clock = { pos: 0, at: 0, rate: 1, paused: false, lead: 0 };
@@ -55,7 +69,8 @@ const cfg = computed<DanmakuSettings>(() => player.prefs);
 
 function showAt(now: number): number {
   if (clock.paused) return clock.pos;
-  const t = (now - clock.at) / 1000;
+  // Capped, not free-running: no sample for half a second means the picture is not advancing either.
+  const t = Math.min((now - clock.at) / 1000, STALL_S);
   // Whatever the run-ahead was is handed back over the next frames rather than in one jump, so a buffer
   // stall that froze the position slides the picture's comments instead of snapping them left.
   return clock.pos + t * clock.rate + clock.lead * Math.max(0, 1 - t / CORRECT_S);
@@ -65,24 +80,28 @@ function shown(): number {
   return showAt(performance.now());
 }
 
-/** Called for every `player:state` push. The slope comes from the two samples either side of it, not from
- *  the nominal rate, so a paused or stalled file reads as 0 and the glyphs stop with the picture. */
+/** Called for every `player:state` push.
+ *
+ *  The slope is the file's own speed, not a measurement of it. mpv plays at exactly that rate, and the two
+ *  samples around a push only differ by which frames had been reported — measured increments of 208ms and 250ms
+ *  at 23.976fps, i.e. five or six frames — so a slope measured push by push wobbles by ±10% and made the whole
+ *  screen pulse with it. What the samples are needed for is the anchor: the position they name is the truth.
+ *  A paused file stops sending them altogether, which is what STALL_S handles. */
 function resync(): void {
   const s = player.state;
   const pos = s.positionMs / 1000;
   const now = performance.now();
-  const ahead = showAt(now);
-  const nominal = s.speed || 1;
-  const dt = (now - clock.at) / 1000;
-  const measured = dt > 0.02 && dt < 2 ? Math.min(nominal * 3, Math.max(0, (pos - clock.pos) / dt)) : nominal;
-  const gap = ahead - pos;
+  // Read before the anchor moves: this is how far the drawn comments had run ahead of the sample that just
+  // arrived, and it is the one correction this layer needs.
+  const gap = showAt(now) - pos;
   clock.pos = pos;
   clock.at = now;
-  clock.rate = measured;
+  clock.rate = s.paused ? 0 : s.speed || 1;
   clock.paused = s.paused;
   // A seek is not drift: folding a minutes-long gap into the correction would fling every glyph across the
-  // screen, so it is dropped and the frame reset in `frame` takes it instead.
-  clock.lead = Math.abs(gap) < 1.5 ? gap : 0;
+  // screen, so it is dropped and the frame reset in `frame` takes it instead. An ordinary sample is a few
+  // milliseconds out; a quarter second is corrected by sliding over CORRECT_S, never by jumping.
+  clock.lead = Math.abs(gap) >= 1.5 ? 0 : Math.max(-MAX_LEAD, Math.min(MAX_LEAD, gap));
 }
 
 function prime(): void {
@@ -299,7 +318,11 @@ function frame(): void {
 
   if (Math.abs(pos - lastPos) > 1.5) {
     reset(pos);
-    seed(pos);
+    // A jump while the file is running is a seek or a fresh file: the screen starts clean and the comments
+    // arrive on their own timeline. Seeding there was what dumped eight seconds of glyphs on screen at once
+    // and let them fly off together — the reported 「一大片弹幕瞬间走完了」. A frozen file is the other case:
+    // there the cancelled comments are exactly what the viewer should still be looking at, so it is re-seeded.
+    if (clock.paused) seed(pos);
   }
   lastPos = pos;
 
@@ -336,7 +359,7 @@ function start(): void {
   if (raf) return;
   prime();
   reset(shown());
-  seed(shown());
+  if (clock.paused) seed(shown());
   lastPos = shown();
   raf = requestAnimationFrame(draw);
 }
@@ -364,7 +387,7 @@ watch(
   () => {
     if (!active.value) return;
     reset(shown());
-    seed(shown());
+    if (clock.paused) seed(shown());
     lastPos = shown();
     start();
   },

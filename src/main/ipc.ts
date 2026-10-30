@@ -255,7 +255,11 @@ export class AppServices {
       wrap('danmaku:episodes', () => danmaku.episodes(animeTitle, animeId)));
     ipcMain.handle('danmaku:episodeAt', (_e, { animeTitle, animeId, episode }: { animeTitle: string; animeId: string; episode: number }) =>
       wrap('danmaku:episodeAt', () => danmaku.episodeAt(animeTitle, animeId, episode)));
-    ipcMain.handle('danmaku:test', (_e, { source, keyword }: { source: DanmakuSource; keyword: string }) =>
+    ipcMain.handle('danmaku:countFor', (_e, { animeTitle, animeId, episode }: { animeTitle: string; animeId: string; episode: number }) =>
+      wrap('danmaku:countFor', () => danmaku.countFor(animeTitle, animeId, episode || 0)));
+    ipcMain.handle('danmaku:countOne', (_e, { id, api }: { id: string; api?: string }) =>
+      wrap('danmaku:countOne', () => danmaku.countOne(id, api)))
+  ipcMain.handle('danmaku:test', (_e, { source, keyword }: { source: DanmakuSource; keyword: string }) =>
       wrap('danmaku:test', () => danmaku.test(source, keyword)));
     ipcMain.handle('danmaku:debug', (_e, { base, path, method, body }: { base: string; path: string; method?: 'GET' | 'POST'; body?: unknown }) =>
       wrap('danmaku:debug', () => danmaku.debug(base, path, method, body)));

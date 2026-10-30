@@ -79,6 +79,8 @@ const api: EchoEmbyApi = {
     search: word => invoke('danmaku:search', word),
     episodes: (animeTitle, animeId) => invoke('danmaku:episodes', { animeTitle, animeId }),
     episodeAt: (animeTitle, animeId, episode) => invoke('danmaku:episodeAt', { animeTitle, animeId, episode }),
+    countFor: (animeTitle, animeId, episode) => invoke('danmaku:countFor', { animeTitle, animeId, episode }),
+    countOne: (id: string, api?: string) => invoke('danmaku:countOne', { id, api }),
     test: (source, keyword) => invoke('danmaku:test', { source, keyword }),
     debug: a => invoke('danmaku:debug', a),
   },

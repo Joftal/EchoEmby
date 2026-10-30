@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, nextTick, ref } from 'vue';
 import SubPopover from './SubPopover.vue';
 import SubRow from './SubRow.vue';
 import StepRow from './StepRow.vue';
@@ -24,7 +24,10 @@ const trackValue = computed(() => {
   const t = player.dmCandidates.find(c => c.id === player.dmTrackId);
   if (!t) return player.dmCandidates.length ? '' : '没匹配到';
   return player.dmLink ? '手动链接' : t.exact ? '自动匹配' : '自动链接';
-});
+})
+
+/** 「5931 条」 reads as a number; 「208000 条」 does not, so the ten-thousands get their own unit. */
+const countText = (n: number): string => (n >= 10_000 ? `${(n / 10_000).toFixed(1).replace(/\.0$/, '')} 万条` : `${n} 条`);
 
 const words = computed(() => cfg.value.blockedWords.split(/[,，\n]/).map(w => w.trim()).filter(Boolean));
 
@@ -46,66 +49,47 @@ async function addWord(): Promise<void> {
 
 // ---- 手动链接 -----------------------------------------------------------------
 
-const word = ref('');
-const results = ref<DanmakuAnime[]>([]);
-const searched = ref(false);
-const searchBusy = ref(false);
-const picking = ref(false);
-const linkNote = ref('');
+/** The row that opens the search page says whether this episode already has a link, so the drill-in can be
+ *  skipped by anyone who does not need it — and cannot be mistaken for an unlinked one. */
+const manualValue = computed(() => (player.dmLink ? cleanTitle(player.dmLink.animeTitle) : '未链接'));
 
+/** The word, the rows, the numbers and the pick all live in the store: they are the viewer's own comparison and
+ *  must outlive the drawer closing or a link being made, while still belonging to this sitting only. */
 async function runSearch(): Promise<void> {
-  const q = word.value.trim();
-  if (q.length < 2) {
-    linkNote.value = '至少输入两个字';
-    return;
-  }
-  searchBusy.value = true;
-  linkNote.value = '';
-  results.value = await player.searchDanmaku(q);
-  searchBusy.value = false;
-  searched.value = true;
+  await player.runDmSearch();
+  // The body keeps the scroll it had, so an answer used to open in the middle of the old list. Land its first
+  // row where the eye already is.
+  await nextTick();
+  mhead.value?.closest('.pl-body')?.scrollTo({ top: 0 });
 }
 
 /** Picking a work links the *episode that is playing* to the row at the same position inside that work: the
  *  service lists a show's episodes in order, so the number the library gives is the index to take. A film has
  *  one row and takes it. */
-async function pick(anime: DanmakuAnime): Promise<void> {
-  picking.value = true;
-  linkNote.value = '';
-  const eps = await player.danmakuEpisodes(anime.title, anime.id);
-  const ep = player.dmEpisode;
-  // A long runner's list comes back cut short (死神 lists 128 of its 366), so 第 131 集 cannot be indexed out of
-  // it. Ask the service for that number directly; the auto match resolves the same way.
-  const hit =
-    (ep ? eps.find(e => e.title.includes(String(ep))) || eps[ep - 1] : eps[0]) ||
-    (ep ? await player.danmakuEpisodeAt(anime.title, anime.id, ep) : null);
-  picking.value = false;
-  if (!hit) {
-    linkNote.value = ep ? `这部作品里没有第 ${ep} 集` : '这部作品没有可用的分集';
-    return;
+
+
+/** A mirror dresses a title for its own index — 「葬送的芙莉莲(2023)【TV动画】from dandan」 — while the year, the
+ *  kind and the mirror itself are printed on the line under it. Showing the dressed string cost the name its
+ *  room: every row of 银魂 ended in 「from dandan」 and the words that tell two seasons apart were the ones cut
+ *  off. This is display only — 手动链接 hands main the exact string it matched on. */
+const MIRROR = /\s*from\s+(\S+)\s*$/i;
+const mirrorOf = (title: string): string => (MIRROR.exec(String(title || '')) || [])[1] || '';
+function cleanTitle(title: string): string {
+  let out = String(title || '').replace(MIRROR, '').trim();
+  // Peeled in rounds the way main's plainTitle is, because the dressing nests: 【TV动画】 sits inside the year.
+  for (let round = 0; round < 3; round += 1) {
+    const before = out;
+    out = out.replace(/\s*【[^】]*】\s*$/, '').replace(/\s*[（(]\s*(?:19|20)\d{2}\s*[)）]\s*$/, '').trim();
+    if (out === before) break;
   }
-  await player.linkDanmaku({
-    animeId: anime.id,
-    animeTitle: anime.title,
-    type: anime.type,
-    episodeId: hit.id,
-    episodeTitle: hit.title,
-  });
-  results.value = [];
-  word.value = '';
-  searched.value = false;
+  return out;
 }
 
-async function unlink(): Promise<void> {
-  linkNote.value = '';
-  results.value = [];
-  word.value = '';
-  searched.value = false;
-  await player.linkDanmaku(null);
-}
+/** The line under a result's name: year, kind, and which mirror answered. */
+const subOf = (a: DanmakuAnime): string =>
+  [a.year ? String(a.year) : '', a.type || '', mirrorOf(a.title)].filter(Boolean).join(' · ');
 
-const epLabel = (t: { title: string; episode?: string; year?: number; type?: string; exact?: boolean; linked?: boolean }): string =>
-  [t.year ? String(t.year) : '', t.type || ''].filter(Boolean).join(' · ');
+const mhead = ref<HTMLElement | null>(null);
 </script>
 
 <template>
@@ -123,43 +107,67 @@ const epLabel = (t: { title: string; episode?: string; year?: number; type?: str
     <SubRow name="words" label="弹幕过滤" :value="words.length ? `${words.length} 个` : ''" />
   </template>
 
-  <SubPopover name="tracks" title="弹幕轨道">
-    <div class="pl-sect">手动链接</div>
-    <div class="dm-row">
-      <input v-model="word" class="dm-input" placeholder="搜索番剧名" @keyup.enter="runSearch" />
-      <button class="pl-chip" :disabled="searchBusy || picking" @click="runSearch">{{ searchBusy ? '搜索中…' : '搜索' }}</button>
+  <SubPopover name="tracks" title="弹幕轨道" wide>
+    <!-- Above the list, not under it: the sheet is capped by the player's height and the entry sat below the
+         fold on 720p, so the one way out of a wrong auto link was the one thing you had to scroll for. -->
+    <SubRow name="manual" label="手动搜索" :value="manualValue" />
+    <p class="pl-note">按作品名搜镜像、一集一集地挑；条数在那一页里看，不会挤动下面这份列表。</p>
+    <div class="pl-sep"></div>
+    <div class="pl-sect dm-candhead">
+      <span>匹配到的弹幕</span>
+      <button class="pl-chip dm-again" :disabled="player.dmLoading" @click="player.loadDanmaku(true)">重新匹配</button>
     </div>
-    <button v-for="a in results" :key="a.id" class="pl-row" :disabled="picking" @click="pick(a)">
-      <span class="mark"></span>
-      <span class="label">
-        {{ a.title }}
-        <span v-if="a.year" class="sub">{{ epLabel(a) }}</span>
-      </span>
-      <span class="meta">{{ a.episodes ? `${a.episodes} 集` : '' }}</span>
-    </button>
-    <p v-if="searched && !results.length" class="pl-empty">没有找到，换个名字试试</p>
-    <div v-if="player.dmLink" class="dm-linked">
-      <span class="label">已链接 {{ player.dmLink.animeTitle }}</span>
-      <button class="pl-chip" @click="unlink">解除</button>
-    </div>
-    <p v-if="linkNote" class="pl-note">{{ linkNote }}</p>
-
-    <div class="pl-sect">匹配到的弹幕</div>
     <p v-if="player.dmLoading" class="pl-empty">载入中…</p>
     <button v-for="t in player.dmCandidates" :key="t.id" class="pl-row" :class="{ on: player.dmTrackId === t.id }" @click="player.selectDanmaku(t.id, t.shift || 0)">
       <span class="mark"></span>
       <span class="label">
-        {{ t.title }}
-        <span v-if="t.episode" class="sub">{{ t.episode }}</span>
+        {{ cleanTitle(t.title) }}
+        <span v-if="t.year || t.episode" class="sub">{{ t.year ?? '' }}{{ t.year && t.episode ? ' · ' : '' }}{{ t.episode || '' }}</span>
       </span>
+      <span v-if="t.count != null" class="dm-ct">{{ countText(t.count) }}</span>
       <span class="meta">{{ t.linked ? '手动链接' : t.exact ? '自动匹配' : '自动链接' }}</span>
     </button>
     <p v-if="!player.dmLoading && !player.dmCandidates.length" class="pl-empty">{{ player.dmRefusal || '这一条没有匹配到弹幕' }}</p>
-    <p v-if="player.dmCandidates.length" class="pl-note">自动链接是按 TMDB 编号或标题猜的；猜错了就在上面搜到正确的作品手动链接，之后每一集都按它取。</p>
+    <p v-if="!player.dmLoading && !player.dmCandidates.length && !player.dmRefusal" class="pl-note">可以在下面的「手动搜索」里搜作品名链接，选对了之后每一集都按它取。</p>
+    <p v-if="player.dmCandidates.length" class="pl-note">自动链接是按 TMDB 编号或标题猜的；猜错了就去「手动搜索」里找到正确的作品，之后每一集都按它取。</p>
     <p v-if="player.dmSource" class="pl-note">这一条来自「{{ player.dmSource }}」；设置里可以加别的接口，按顺序回退。</p>
   </SubPopover>
 
-  <SubPopover name="style" title="弹幕样式">
+  <SubPopover name="manual" title="手动搜索" wide back="tracks">
+    <div ref="mhead" class="pl-sect">在镜像里搜作品</div>
+    <div class="dm-row">
+      <input v-model="player.dmWord" class="dm-input" placeholder="搜索番剧名" @keyup.enter="runSearch" />
+      <button class="pl-chip" :disabled="player.dmSearchBusy || player.dmPicking" @click="runSearch">{{ player.dmSearchBusy ? '搜索中…' : '搜索' }}</button>
+    </div>
+    <!-- Above the results, not under them: 66 rows of a common name buried the one sentence that said the pick
+         did not take, and buried 已链接 and 解除 with it. -->
+    <p v-if="player.dmNote" class="pl-note">{{ player.dmNote }}</p>
+    <div v-if="player.dmLink" class="dm-linked">
+      <span class="label">已链接 {{ cleanTitle(player.dmLink.animeTitle) }}</span>
+      <button class="pl-chip" @click="player.unlinkDm">解除</button>
+    </div>
+    <div v-if="player.dmSearched" class="dm-resbar">
+      <span class="label">{{ player.dmResults.length ? `找到 ${player.dmResults.length} 部` : '没有找到，换个名字试试' }}</span>
+      <button class="pl-chip" @click="player.dropDmSearch()">取消搜索</button>
+    </div>
+    <!-- Its own scroller: the search box and 已链接 stay put while a 42-row answer scrolls, instead of the whole
+         page sliding away from the field that made it. -->
+    <div v-if="player.dmResults.length" class="dm-list">
+      <button v-for="a in player.dmResults" :key="a.id" class="pl-row" :disabled="player.dmPicking" @click="player.pickDmAnime(a)">
+        <span class="mark"></span>
+        <span class="label">
+          {{ cleanTitle(a.title) }}
+          <span v-if="subOf(a)" class="sub">{{ subOf(a) }}</span>
+        </span>
+        <span v-if="player.dmCounts[a.id] != null" class="dm-ct">{{ countText(player.dmCounts[a.id] || 0) }}</span>
+        <span class="meta">{{ a.episodes ? `${a.episodes} 集` : '' }}</span>
+      </button>
+    </div>
+    <p v-if="player.dmResults.length" class="pl-note">条数是这一集在这一部作品里的数量，每一部都数，先到的先显示，接口没回数的先空着。挑数字大的那条，它才是最全的；换了集只重算数字，名单留着。</p>
+    <p v-else class="pl-note">选中一部作品就把它和正在播的这一集绑起来：条数取自同一集，换集不用重选。</p>
+  </SubPopover>
+
+  <SubPopover name="style" title="弹幕样式" wide>
     <StepRow label="字号大小" :text="`${cfg.fontSize}`" :can-down="cfg.fontSize > 10" :can-up="cfg.fontSize < 40" @down="set({ fontSize: clamp(cfg.fontSize - 1, 10, 40) })" @up="set({ fontSize: clamp(cfg.fontSize + 1, 10, 40) })" />
     <div class="pl-switch" role="switch" tabindex="0" :aria-checked="cfg.bold" :class="{ on: cfg.bold }" @click="set({ bold: !cfg.bold })">
       <span class="label">粗体</span>
@@ -191,7 +199,7 @@ const epLabel = (t: { title: string; episode?: string; year?: number; type?: str
     </div>
   </SubPopover>
 
-  <SubPopover name="tune" title="微调">
+  <SubPopover name="tune" title="微调" wide>
     <div class="pl-switch" role="switch" tabindex="0" :aria-checked="cfg.scrollPinned" :class="{ on: cfg.scrollPinned }" @click="set({ scrollPinned: !cfg.scrollPinned })">
       <span class="label">固定弹幕转为滚动弹幕</span>
       <span class="track"><i></i></span>
@@ -215,7 +223,7 @@ const epLabel = (t: { title: string; episode?: string; year?: number; type?: str
     </div>
   </SubPopover>
 
-  <SubPopover name="words" title="弹幕过滤">
+  <SubPopover name="words" title="弹幕过滤" wide>
     <div class="dm-row">
       <input v-model="newWord" class="dm-input" placeholder="输入要过滤的关键词" @keyup.enter="addWord" />
       <button class="pl-chip" @click="addWord">添加</button>
@@ -235,6 +243,7 @@ const epLabel = (t: { title: string; episode?: string; year?: number; type?: str
 </template>
 
 <style scoped>
+
 .dm-row {
   display: flex;
   align-items: center;
@@ -260,6 +269,34 @@ const epLabel = (t: { title: string; episode?: string; year?: number; type?: str
   outline: 2px solid var(--pl-accent, #7fb2ff);
   outline-offset: 1px;
 }
+/* How many works the search found, and the way back to the candidates. The number is the point: nine rows fit
+   the card, 银魂 answers with 66, and without a count the list looked like it ended there. */
+.dm-resbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px 2px;
+  font-size: 13px;
+  color: var(--pl-faint);
+}
+.dm-resbar .label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The answer scrolls inside this box rather than the whole sheet: a 42-row search would otherwise push the
+   field that made it off the top, and the numbers are read while typing the next name. */
+.dm-list {
+  max-height: 40vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.dm-list::-webkit-scrollbar {
+  width: 0;
+}
 .dm-linked {
   display: flex;
   align-items: center;
@@ -277,6 +314,26 @@ const epLabel = (t: { title: string; episode?: string; year?: number; type?: str
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Sits in the section header rather than under the list: a wrong auto link is what brings the viewer here, and
+   the list it would have sat under is long enough to push the one control that fixes it below the fold. */
+.dm-candhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.dm-again {
+  margin: 0 6px 0 0;
+}
+/* The count sits where a thumb would be on a list row: before the word that says how the row was found, in the
+   same muted tone, so the numbers line up in a column of their own instead of shoving the labels about. */
+.dm-ct {
+  flex: none;
+  margin-left: auto;
+  color: var(--pl-dim);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
 }
 /* The swatch is a colour input drawn as the circle the reference uses; the native control is what opens the
    picker, so it stays in the DOM and only loses its own chrome. */

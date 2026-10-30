@@ -107,6 +107,10 @@ export interface EchoEmbyApi {
     episodes(animeTitle: string, animeId: string): Promise<IpcResult<DanmakuEpisode[] | null>>;
     /** One episode row by number, for works whose list comes back cut short. */
     episodeAt(animeTitle: string, animeId: string, episode: number): Promise<IpcResult<DanmakuEpisode | null>>;
+  /** How many comments one search hit holds for the episode being played; resolved by number, because a work's
+   *  own episode list is cut short. `count: null` means the mirror did not answer with a number. */
+  countFor(animeTitle: string, animeId: string, episode: number): Promise<IpcResult<{ episodeId: string; count: number | null } | null>>;
+  countOne(id: string, api?: string): Promise<IpcResult<number | null>>;
     /** 设置 → 弹幕 → 测试: probe one endpoint without touching the cache or the order it sits in. */
     test(source: DanmakuSource, keyword: string): Promise<IpcResult<DanmakuTestResult>>;
     /** 弹幕调试 › 接口调试: one verbatim request, answered from the network and never from the cache. */
