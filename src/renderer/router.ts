@@ -9,6 +9,7 @@ import BrowseView from './views/BrowseView.vue';
 import CalendarView from './views/CalendarView.vue';
 import ServersView from './views/ServersView.vue';
 import SettingsView from './views/SettingsView.vue';
+import DanmakuDebugView from './views/DanmakuDebugView.vue';
 
 /** Which way the arriving page travels, and the answer is the stack rather than the map: a page you go
  *  into comes from the right and the page you came from leaves to the left, and a page you come back to
@@ -42,6 +43,9 @@ export const router = createRouter({
     { path: '/calendar', name: 'calendar', component: CalendarView, meta: { rank: 1 } },
     { path: '/servers', name: 'servers', component: ServersView, meta: { rank: 2 } },
     { path: '/settings', name: 'settings', component: SettingsView, meta: { rank: 3 } },
+    // 弹幕调试 is opened from 设置 and, like it, is a page you leave back onto the shelves: one rank deeper than
+    // 设置 so going in travels forward and coming back travels home.
+    { path: '/danmaku', name: 'danmaku', component: DanmakuDebugView, meta: { rank: 4 } },
     { path: '/detail/:id', name: 'detail', component: DetailView, props: true, meta: { rank: 10 } },
     // A work keyed by its TMDB id rather than by a row this server holds, so the two pages sit at the same
     // depth: neither one is inside the other, so the move between them is the plain sideways one a rank
@@ -52,33 +56,43 @@ export const router = createRouter({
 
 export default router;
 
+/** The `position` vue-router stamped on the history entry the app is standing on, refreshed in
+ *  `afterEach`.
+ *  It is the one fact that separates a traversal from a push, and the move needs it because a rank cannot
+ *  see a traversal and a URL can lie. A push runs its guards while the browser still stands on the page
+ *  being left — the URL only moves once they pass — so the state read in the guard is that page's own and
+ *  its position is still this one. A back or forward has already landed the browser on the destination's
+ *  entry before the guard runs, so its position is a different number. */
+let herePos = 0;
+
 router.beforeEach((to, from) => {
-  // vue-router keeps the entry behind the current one on the history state, so a navigation whose target is
-  // the page we came from is a return — the only honest reading of 「哪里来哪里去」, and one no rank can give:
-  // 在看 -> 收藏 -> 在看 walks the rail back onto the shelf behind us, and it arrives from the left even
-  // though both shelves sit at rank 1. Measured here: that click reads `back=/browse?kind=favorites` at the
-  // guard and lands as a pop, while the click ahead of it reads `back=/` and lands as a push.
-  // A navigation the browser produced (Alt+←, a page's own 返回) is the case where the guard already runs
-  // with the *destination's* state, whose `back` names the entry one further along. That state does carry one
-  // true fact: its `forward` is the entry the browser just left. So `forward === from` reads a return too —
-  // measured on 详情 2735 -> 2493 by 返回, where the destination's state is `back=/browse?kind=favorites`
-  // (useless) and `forward=/detail/2735` (exactly the page being left). This is what puts the equal-rank
-  // pairs the rank cannot separate — 在看 <-> 追剧日历, 详情 <-> 作品页, and now 详情 <-> 详情 — on the
-  // right side on the way back. A programmatic push can never satisfy it: the source's `forward` is the
-  // entry ahead of it, never itself.
-  const h = window.history.state as { back?: string | null; forward?: string | null } | null;
-  const back = h?.back === to.fullPath || h?.forward === from.fullPath;
-  paneDir.value = back ? 'pop' : 'push';
+  const h = window.history.state as { back?: string | null; forward?: string | null; position?: number } | null;
+  // Read a traversal off the position rather than off the URLs. The URL pair cannot tell 「回到我来时的
+  // 那页」 from 「再进一次刚离开的那页」: 设置 -> 弹幕调试 -> 管理 -> 弹幕调试 walks a push whose target
+  // happens to be the entry behind, and `back === to.fullPath` read that as a return and slid the page in
+  // from the left twice in a row (measured: the second 打开调试 played `pop` at position 6, forward=null).
+  const pos = typeof h?.position === 'number' ? h.position : herePos;
+  const moved: 'back' | 'forward' | null = pos === herePos ? null : pos < herePos ? 'back' : 'forward';
+  // The pane layer keeps the URL test: the shelves are one component answering a query, so a rail click
+  // onto the shelf behind us (在看 -> 收藏 -> 在看) is a *push* whose target is that shelf — the position
+  // cannot see it, and the shelf must still slide in from the left the way it left. Measured before this
+  // split: that click reads `back=/browse?kind=favorites` at the guard, the click ahead of it `back=/`.
+  // A traversal into such a shelf is a return for both layers, which is what the `moved` term adds.
+  const behind = moved === 'back' || h?.back === to.fullPath || h?.forward === from.fullPath;
+  paneDir.value = behind ? 'pop' : 'push';
   // The overlay is the one exception the rank cannot see through: the player window is transparent over
   // mpv's picture, so it must neither travel nor be travelled to.
   if (to.meta.overlay === true || from.meta.overlay === true) pageDir.value = 'flat';
-  else if (back) pageDir.value = 'pop';
-  else if (h?.forward === to.fullPath) pageDir.value = 'push';
+  else if (moved === 'back') pageDir.value = 'pop';
+  else if (moved === 'forward') pageDir.value = 'push';
   else pageDir.value = Number(to.meta.rank ?? 0) >= Number(from.meta.rank ?? 0) ? 'push' : 'pop';
 });
 
 // The player route renders into a transparent window stacked on mpv's native
 // surface; an opaque page background there hides the picture entirely.
-router.afterEach(to => {
+router.afterEach((to, _from, failure) => {
+  // The move is over; the entry the app now stands on is the one the next guard measures against. A
+  // cancelled navigation never got there, so it leaves the number alone.
+  if (!failure) herePos = (window.history.state as { position?: number } | null)?.position ?? herePos;
   document.documentElement.classList.toggle('overlay', !!to.meta.overlay);
 });

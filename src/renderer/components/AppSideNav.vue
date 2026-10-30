@@ -50,7 +50,10 @@ const mine: NavItem[] = [
 
 const activeKey = computed(() => {
   if (route.name === 'home') return 'home';
-  if (route.name === 'settings') return 'set';
+  // 弹幕调试 is a child of the 设置 sheet, not a place of its own: it is opened from 弹幕 and comes back
+  // there, so the rail keeps 设置 lit while you are in it (otherwise the glider vanishes and the page
+  // reads as if it belonged to no section at all).
+  if (route.name === 'settings' || route.name === 'danmaku') return 'set';
   if (route.name === 'calendar') return 'calendar';
   if (route.name === 'browse') return route.query.view ? `v${route.query.view}` : `k${route.query.kind || ''}`;
   return '';
