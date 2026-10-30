@@ -15,7 +15,7 @@ import { PlayerController, type PlayerOut } from './player/session';
 import { mediaCache } from './media-cache';
 import * as danmaku from './danmaku';
 import { applyProxy, probeNetwork } from './net';
-import { type Account, type DanmakuQuery, type IpcResult, type PlayerCommand, type SettingsPatch } from '../shared/types';
+import { type Account, type DanmakuLink, type DanmakuQuery, type DanmakuSource, type IpcResult, type PlayerCommand, type SettingsPatch } from '../shared/types';
 
 /** Every renderer-facing failure crosses here, so this is the one line that has to say which channel asked.
  *  Without it a gateway error in the log — 服务器出错了, a Guid parse, a null reference — is a pile of twelve
@@ -243,10 +243,22 @@ export class AppServices {
       return mediaCache.stats();
     }));
 
-    // 弹幕 asks two services that are not the media server, so both handlers answer nothing at all while
-    // the switch in 设置 is off.
-    ipcMain.handle('danmaku:search', (_e, q: DanmakuQuery) => wrap('danmaku:search', () => danmaku.search(q)));
-    ipcMain.handle('danmaku:track', (_e, { q, trackId }: { q: DanmakuQuery; trackId: string }) => wrap('danmaku:track', () => danmaku.fetchTrack(q, trackId)));
+    // 弹幕 talks to a service that is not the media server, and every handler answers nothing at all while
+    // the switch in 设置 is off — the module checks that itself, so no row here has to.
+    ipcMain.handle('danmaku:lookup', (_e, q: DanmakuQuery) => wrap('danmaku:lookup', () => danmaku.lookup(q)));
+    ipcMain.handle('danmaku:track', (_e, { q, trackId, shift }: { q: DanmakuQuery; trackId: string; shift: number }) =>
+      wrap('danmaku:track', () => danmaku.fetchTrack(q, trackId, shift || 0)));
+    ipcMain.handle('danmaku:link', (_e, { q, link }: { q: DanmakuQuery; link: DanmakuLink | null }) =>
+      wrap('danmaku:link', () => danmaku.setLink(q, link)));
+    ipcMain.handle('danmaku:search', (_e, word: string) => wrap('danmaku:search', () => danmaku.search(word)));
+    ipcMain.handle('danmaku:episodes', (_e, { animeTitle, animeId }: { animeTitle: string; animeId: string }) =>
+      wrap('danmaku:episodes', () => danmaku.episodes(animeTitle, animeId)));
+    ipcMain.handle('danmaku:episodeAt', (_e, { animeTitle, animeId, episode }: { animeTitle: string; animeId: string; episode: number }) =>
+      wrap('danmaku:episodeAt', () => danmaku.episodeAt(animeTitle, animeId, episode)));
+    ipcMain.handle('danmaku:test', (_e, { source, keyword }: { source: DanmakuSource; keyword: string }) =>
+      wrap('danmaku:test', () => danmaku.test(source, keyword)));
+    ipcMain.handle('danmaku:debug', (_e, { base, path, method, body }: { base: string; path: string; method?: 'GET' | 'POST'; body?: unknown }) =>
+      wrap('danmaku:debug', () => danmaku.debug(base, path, method, body)));
 
     ipcMain.on('ui:window', (e, { action }: { action: string }) => {
       const w = BrowserWindow.fromWebContents(e.sender);

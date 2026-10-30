@@ -395,13 +395,21 @@ export class PlayerController {
   }
 
   /** What a danmaku service is asked about. An episode called 「第 3 集」 matches nothing, so the series
-   *  name travels with it and the layer keys the track to this item. */
+   *  name travels with it; the series id lets one hand-made link cover a whole show, and the TMDB id — when
+   *  the library carries one — is the single answer the service resolves without reading a title at all.
+   *  Episodes rarely carry providers of their own, so the id is simply absent there and the ladder guesses
+   *  from the name as it did before. */
   private danmakuOf(item: LibraryItem): DanmakuQuery {
     return {
       itemId: item.id,
       title: item.name,
       seriesName: item.type === 'Episode' ? item.seriesName || item.name : item.name,
       episode: item.indexNumber,
+      seriesId: item.seriesId,
+      season: item.parentIndexNumber,
+      year: item.productionYear,
+      tmdbId: item.providers?.tmdb,
+      originalTitle: item.type === 'Episode' ? undefined : item.originalTitle,
     };
   }
 

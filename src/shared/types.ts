@@ -71,7 +71,7 @@ export type SettingsPatch = Omit<Partial<Settings>, 'player' | 'danmaku' | 'wind
   player?: Partial<PlayerPrefs>;
   window?: Partial<WindowPrefs>;
   mediaCache?: Partial<MediaCachePrefs>;
-  danmaku?: Omit<Partial<DanmakuSettings>, 'source'> & { source?: Partial<DanmakuSourceConfig> };
+  danmaku?: Partial<DanmakuSettings>;
 };
 
 /** Knobs that belong to the player itself. `hwdec` is read when mpv is launched and again at runtime, so
@@ -122,26 +122,48 @@ export interface PlayerPrefs {
  *  one question because the player only ever offers them as one. */
 export type FitMode = 'fit' | 'fill' | 'stretch';
 
-export interface DanmakuSourceConfig {
-  /** 'bilibili' needs no key but only knows titles that aired there; 'dandan' is any
-   *  dandanplay-compatible service, self-hosted or not, and carries its own address and token. */
-  type: 'bilibili' | 'dandan';
+/** One endpoint in 设置 → 弹幕. The list is ordered and additive: a lookup walks it top to bottom and keeps
+ *  the first answer, so the official service keeps working when a mirror the viewer added is down.
+ *  `name` is only ever a label — it is what the settings row and the track panel print. */
+export interface DanmakuSource {
+  /** Stable across renames, because the row is keyed by it in the list. */
+  id: string;
+  name: string;
+  /** Endpoint root, no trailing slash and no path: `https://api.dandanplay.net`. */
   url: string;
-  token: string;
+  /** A row that is switched off is kept but never asked. */
+  enabled: boolean;
 }
 
+/** 弹幕 is one protocol (弹弹play's `/api/v2`) reached at one or more endpoints. The knobs below are about
+ *  what the layer looks like; `sources` is where the comments come from — and whether there are any, which
+ *  is the one switch that decides if 弹幕 exists at all: no usable endpoint, no request, no layer. */
 export interface DanmakuSettings {
-  /** Off by default: with this off the app never asks a danmaku service about what you watch. */
-  enabled: boolean;
-  source: DanmakuSourceConfig;
-  /** 0 asks the source with whatever the library calls the show, 1 only accepts an exact title. */
-  matchMode: 0 | 1;
-  /** Fraction of the picture height the scrolling lanes may use. */
+  /** Endpoints in the order they are tried. Always at least one row; the list is never empty. */
+  sources: DanmakuSource[];
+  /** 固定弹幕转为滚动弹幕: a pinned comment that covers the picture is the one thing worse than a busy one. */
+  scrollPinned: boolean;
+  /** 延迟显示 in ms: positive shows every comment later, which is how a rip with a long studio logo in front
+   *  of it is brought back in step. Per-track `shift` from the service is applied on top of this. */
+  delayMs: number;
+  /** 弹幕行数: 0 asks the layer to fit as many lanes as the area holds. */
+  lanes: number;
+  /** 行间距 in px between the bottom of one lane's glyphs and the top of the next. */
+  laneGap: number;
+  /** 基础速度: 1 crosses in 8s, 2 in 4s. */
+  speed: number;
+  fontFamily: string;
+  fontSize: number;
+  bold: boolean;
+  /** Fraction of the picture height the comments may use. */
   displayArea: number;
   opacity: number;
-  fontScale: number;
-  /** How long one comment takes to cross. */
-  durationMs: number;
+  strokeWidth: number;
+  strokeColor: string;
+  /** 阴影位置 (px, down and to the right) and 阴影大小 (blur radius in px). 0 turns the shadow off. */
+  shadowOffset: number;
+  shadowBlur: number;
+  shadowColor: string;
   /** The wall: a dense timeline past this count drops comments rather than frames. */
   maxOnScreen: number;
   /** Commas or newlines. Filtered on the way in, so the cached track is already clean. */
@@ -732,6 +754,17 @@ export interface DanmakuQuery {
   title: string;
   seriesName?: string;
   episode?: number;
+  /** The show's own id, so a link made for one episode is remembered for the whole season. */
+  seriesId?: string;
+  season?: number;
+  /** The library's year, used to tell two works with one name apart when the ladder had to guess. */
+  year?: number;
+  /** The library's TMDB id — the one answer the service resolves without reading a title at all. */
+  tmdbId?: string;
+  /** A film's own title in its production language. The ladder asks the Chinese names first, and a Chinese
+   *  name is exactly what the service answers with another decade's film of the same name, so this is the
+   *  third spelling worth one ask. Films only: an episode's own originalTitle is the episode, not the show. */
+  originalTitle?: string;
 }
 
 export interface DanmakuComment {
@@ -741,12 +774,96 @@ export interface DanmakuComment {
   mode: 'scroll' | 'top' | 'bottom';
 }
 
-/** One candidate track the source offered for an item. */
+/** One candidate track the service offered for an item: a work plus the episode row inside it. */
 export interface DanmakuTrackInfo {
+  /** The service's episode id, which is what a track is fetched by. */
+  id: string;
+  /** The work's title, e.g. 「葬送的芙莉莲」. */
+  title: string;
+  /** The episode's own title, e.g. 「第1话 冒险结束」. */
+  episode?: string;
+  /** 类型: 电影 / TV动画 / 三次元 … */
+  type?: string;
+  year?: number;
+  poster?: string;
+  /** The service's answer for how far this copy runs from the copy the comments were timed against. */
+  shift?: number;
+  /** Resolved through the library's TMDB id, which is the only path that is not a guess. */
+  exact?: boolean;
+  /** The viewer linked this show by hand, so this row outranks every guess. */
+  linked?: boolean;
+}
+
+/** What one lookup answers with: the rows to show, the link the viewer made (if any), the row that should
+ *  start playing, and whether that row was resolved from the TMDB id rather than guessed from a title. */
+export interface DanmakuLookup {
+  list: DanmakuTrackInfo[];
+  link: DanmakuLink | null;
+  pick: string;
+  auto: boolean;
+  /** The row that answered, by name, so the panel can say which endpoint the comments came from. */
+  source?: string;
+  /** Why an empty answer came back empty: the endpoint refused rather than said 「none」. The panel says
+   *  this out loud, because 「no comments for this episode」 and 「the key ran out of calls」 are not the
+   *  same fact, and only one of them is worth waiting on. */
+  reason?: 'quota' | 'auth' | 'net' | 'http';
+  /** With reason 'quota': what the service's Retry-After asked for, in ms. */
+  retryAfterMs?: number;
+}
+
+/** One line of 设置 → 弹幕 → 测试. `ms` is that step's own time, not the whole run's. */
+export interface DanmakuTestStep {
+  key: string;
+  label: string;
+  ok: boolean;
+  ms: number;
+  detail: string;
+}
+
+/** 弹幕调试 › 接口调试: one verbatim request and the exact bytes that came back. */
+export interface DanmakuDebugReply {
+  status: number;
+  ms: number;
+  bytes: number;
+  text: string;
+  error?: string;
+}
+
+/** What one endpoint test answers with: the four steps, in the order a viewer would ask them. */
+export interface DanmakuTestResult {
+  id: string;
+  name: string;
+  url: string;
+  ok: boolean;
+  ms: number;
+  steps: DanmakuTestStep[];
+}
+
+/** 手动链接: the viewer pointing one show in the library at one work on the other side. */
+export interface DanmakuLink {
+  animeId: string;
+  animeTitle: string;
+  type?: string;
+  /** The episode row this link resolved for the item it was made on. */
+  episodeId: string;
+  episodeTitle?: string;
+  shift?: number;
+}
+
+/** 手动链接's search results: works, not episodes, because that is the level a link is made at. */
+export interface DanmakuAnime {
   id: string;
   title: string;
-  /** Only a source that counts comments can fill this; 0 is rendered as 未知. */
-  count?: number;
+  type?: string;
+  year?: number;
+  episodes?: number;
+  poster?: string;
+  rating?: number;
+}
+
+export interface DanmakuEpisode {
+  id: string;
+  title: string;
 }
 
 export interface DanmakuTrack {

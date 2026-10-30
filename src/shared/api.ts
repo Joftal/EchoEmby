@@ -1,4 +1,4 @@
-import type { Account, AppConfig, BangumiScore, CalendarResult, CsmGuide, DanmakuQuery, DanmakuTrack, DanmakuTrackInfo, FacetOption, ImdbRating, IpcResult, LibraryItem, LibraryRow, MediaCacheStats, MetaKeys, NetProbe, PlayerCommand, PlayerMedia, PlayerSession, PlayerState, PlayerThumb, RtScores, Settings, SettingsPatch, TmdbCredits, TmdbMeta, TmdbRelated, TmdbStills, TraktScores, WatchedRecord } from './types';
+import type { Account, AppConfig, BangumiScore, CalendarResult, CsmGuide, DanmakuAnime, DanmakuDebugReply, DanmakuEpisode, DanmakuLink, DanmakuLookup, DanmakuQuery, DanmakuSource, DanmakuTestResult, DanmakuTrack, FacetOption, ImdbRating, IpcResult, LibraryItem, LibraryRow, MediaCacheStats, MetaKeys, NetProbe, PlayerCommand, PlayerMedia, PlayerSession, PlayerState, PlayerThumb, RtScores, Settings, SettingsPatch, TmdbCredits, TmdbMeta, TmdbRelated, TmdbStills, TraktScores, WatchedRecord } from './types';
 
 export interface EchoEmbyApi {
   app: {
@@ -93,12 +93,24 @@ export interface EchoEmbyApi {
     onWatched(cb: (w: WatchedRecord) => void): () => void;
   };
   danmaku: {
-    /** The candidate tracks for one item, from whichever source the settings name. An empty list is a
-     *  normal answer, and nothing leaves the machine unless 弹幕 is switched on. Null is the source not
-     *  answering at all, which is a different sentence to show the user. */
-    search(q: DanmakuQuery): Promise<IpcResult<DanmakuTrackInfo[] | null>>;
-    /** One candidate's comments, filtered and sorted; null when the source has nothing for it. */
-    track(q: DanmakuQuery, trackId: string): Promise<IpcResult<DanmakuTrack | null>>;
+    /** Every candidate for one item, plus the link this show already has and the row that should start
+     *  playing. Nothing leaves the machine unless 弹幕 is switched on. Null is the service not answering at
+     *  all, which is a different sentence to show than 「这条没有弹幕」. */
+    lookup(q: DanmakuQuery): Promise<IpcResult<DanmakuLookup | null>>;
+    /** One candidate's comments, filtered, shifted and sorted; null when the service has nothing for it. */
+    track(q: DanmakuQuery, trackId: string, shift: number): Promise<IpcResult<DanmakuTrack | null>>;
+    /** 手动链接: point this show at one work, or pass null to forget it and fall back to the guesses. */
+    link(q: DanmakuQuery, link: DanmakuLink | null): Promise<IpcResult<DanmakuLink | null>>;
+    /** The works a keyword finds, for the 手动链接 search box. */
+    search(word: string): Promise<IpcResult<DanmakuAnime[] | null>>;
+    /** The episodes of one work, so a link can name the exact row. */
+    episodes(animeTitle: string, animeId: string): Promise<IpcResult<DanmakuEpisode[] | null>>;
+    /** One episode row by number, for works whose list comes back cut short. */
+    episodeAt(animeTitle: string, animeId: string, episode: number): Promise<IpcResult<DanmakuEpisode | null>>;
+    /** 设置 → 弹幕 → 测试: probe one endpoint without touching the cache or the order it sits in. */
+    test(source: DanmakuSource, keyword: string): Promise<IpcResult<DanmakuTestResult>>;
+    /** 弹幕调试 › 接口调试: one verbatim request, answered from the network and never from the cache. */
+    debug(a: { base: string; path: string; method?: 'GET' | 'POST'; body?: unknown }): Promise<IpcResult<DanmakuDebugReply>>;
   };
   /** 媒体缓存: the numbers are what is on disk right now, cleared down to nothing by `clear`. */
   mediaCache: {

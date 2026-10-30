@@ -73,8 +73,14 @@ const api: EchoEmbyApi = {
     onWatched: cb => on('player:watched', cb),
   },
   danmaku: {
-    search: q => invoke('danmaku:search', q),
-    track: (q, trackId) => invoke('danmaku:track', { q, trackId }),
+    lookup: q => invoke('danmaku:lookup', q),
+    track: (q, trackId, shift) => invoke('danmaku:track', { q, trackId, shift }),
+    link: (q, link) => invoke('danmaku:link', { q, link }),
+    search: word => invoke('danmaku:search', word),
+    episodes: (animeTitle, animeId) => invoke('danmaku:episodes', { animeTitle, animeId }),
+    episodeAt: (animeTitle, animeId, episode) => invoke('danmaku:episodeAt', { animeTitle, animeId, episode }),
+    test: (source, keyword) => invoke('danmaku:test', { source, keyword }),
+    debug: a => invoke('danmaku:debug', a),
   },
   mediaCache: {
     stats: () => invoke('mediaCache:stats'),
