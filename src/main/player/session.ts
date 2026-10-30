@@ -94,6 +94,12 @@ interface Current {
 
 const navLabel = (it: LibraryItem): string => (it.indexNumber != null ? `第 ${it.indexNumber} 集` : it.name);
 
+/** The year an Emby date says, or nothing. Emby writes them 「2013-04-07T00:00:00.0000000Z」. */
+const yearOfDate = (s?: string): number | undefined => {
+  const year = Number((s || '').slice(0, 4));
+  return Number.isFinite(year) && year > 1900 ? year : undefined;
+};
+
 /**
  * The player's whole lifecycle: the mpv process, the two windows, the negotiation behind the stream and
  * the session reports that keep the server's copy of "where you are" true.
@@ -140,6 +146,13 @@ export class PlayerController {
    *  an older click on the page. Every negotiation writes it too, so the version that actually played is
    *  the one the next 播放 takes. */
   private itemVersion = new Map<string, string>();
+  /** The year a season first aired, asked for only when the episode has none, and kept per season.
+   *  弹幕's ranking needs a year to tell 第一季 from 完结篇 THE LAST ATTACK, and Emby leaves it off the episode
+   *  row: measured 2026-10-30, 進撃の巨人 S01E01 and 银魂 S01E01-E02 both answer null to ProductionYear *and*
+   *  PremiereDate, while the season — and, for season 1, the series — carries a date. The season's own date
+   *  is the right one; the series' is only borrowed by season 1, because a long show's later seasons are not
+   *  the year it began. */
+  private seasonYear = new Map<string, number | undefined>();
 
   constructor(
     private windows: PlayerWindows,
@@ -328,6 +341,10 @@ export class PlayerController {
     const url = await this.bridge.mount(neg.url);
     this.thumbUrl = url;
 
+    // 弹幕 asks by name and year, and the year is the only thing that separates 进击的巨人 (2013) from
+    // 完结篇 THE LAST ATTACK (2024) — an episode row carries no year of its own, so the season supplies one.
+    const dmYear = await this.yearFor(c, item);
+
     this.current = {
       itemId,
       accountId: acc.accountId,
@@ -343,7 +360,7 @@ export class PlayerController {
       hdr: neg.hdr,
       next: nav.next,
       prev: nav.prev,
-      danmaku: this.danmakuOf(item),
+      danmaku: this.danmakuOf(item, dmYear),
       reported: resume.played,
       ended: false,
       flushedMs: -1,
@@ -394,12 +411,40 @@ export class PlayerController {
     })().catch(() => undefined);
   }
 
+  /** Which year the thing being played belongs to, for 弹幕's ranking.
+   *
+   *  The item's own year wins. An episode usually has none, so the season is asked — one request per season,
+   *  remembered, and skipped entirely for films and for seasons that carry their own year. Season 1 may fall
+   *  back to the series date, which is the year the show began; later seasons may not, because a show that
+   *  has run for a decade did not start in its third season's year, and borrowing it would rank every season
+   *  against the first one's rows. */
+  private async yearFor(c: EmbyClient, item: LibraryItem): Promise<number | undefined> {
+    const own = item.productionYear || yearOfDate(item.premiereDate);
+    if (own || item.type !== 'Episode') return own;
+    const seasonId = item.seasonId || item.parentId || '';
+    const key = seasonId || `${item.seriesId || item.id}#${item.parentIndexNumber ?? 1}`;
+    if (this.seasonYear.has(key)) return this.seasonYear.get(key);
+    let year: number | undefined;
+    try {
+      const season = seasonId ? await c.item(seasonId) : null;
+      year = season?.productionYear || yearOfDate(season?.premiereDate);
+      if (!year && (item.parentIndexNumber ?? 1) <= 1 && item.seriesId) {
+        const series = await c.item(item.seriesId);
+        year = series?.productionYear || yearOfDate(series?.premiereDate);
+      }
+    } catch {
+      year = undefined;
+    }
+    this.seasonYear.set(key, year);
+    return year;
+  }
+
   /** What a danmaku service is asked about. An episode called 「第 3 集」 matches nothing, so the series
    *  name travels with it; the series id lets one hand-made link cover a whole show, and the TMDB id — when
    *  the library carries one — is the single answer the service resolves without reading a title at all.
    *  Episodes rarely carry providers of their own, so the id is simply absent there and the ladder guesses
    *  from the name as it did before. */
-  private danmakuOf(item: LibraryItem): DanmakuQuery {
+  private danmakuOf(item: LibraryItem, year?: number): DanmakuQuery {
     return {
       itemId: item.id,
       title: item.name,
@@ -407,7 +452,7 @@ export class PlayerController {
       episode: item.indexNumber,
       seriesId: item.seriesId,
       season: item.parentIndexNumber,
-      year: item.productionYear,
+      year: item.productionYear || year,
       tmdbId: item.providers?.tmdb,
       originalTitle: item.type === 'Episode' ? undefined : item.originalTitle,
     };
@@ -563,8 +608,7 @@ export class PlayerController {
    *  track the server has no row for — a cover, a sidecar subtitle the file never carries — sends nothing,
    *  which `progressBody` omits rather than guessing: the gateway writes what it is told into the item, and
    *  the next client then resumes on a track the viewer never picked. */
-  private serverStreamIndex(kind: 'video' | 'audio' | 'subtitle'): number | undefined {
-    const c = this.current;
+  private serverStreamIndex(kind: 'video' | 'audio' | 'subtitle', c: Current | null = this.current): number | undefined {
     const src = c ? c.sources[c.sourceIndex] : undefined;
     if (!src) return undefined;
     const picked = this.media.tracks.find(t => t.kind === kind && t.selected && !t.external);
@@ -573,8 +617,11 @@ export class PlayerController {
     return rows.some(r => r.index === picked.ffIndex) ? picked.ffIndex : undefined;
   }
 
-  private progressInput(paused: boolean, atMs: number, durationMs = this.state.durationMs): ProgressInput {
-    const c = this.current!;
+  /** The session is passed in rather than read from `this.current`: a close and an end-of-file can race, and
+   *  the loser used to dereference a session the other one had already cleared (logged 2026-10-30 as
+   *  「[ipc] player:close TypeError: Cannot read properties of null (reading 'itemId')」). */
+  private progressInput(c: Current | null, paused: boolean, atMs: number, durationMs = this.state.durationMs): ProgressInput {
+    if (!c) throw new Error('没有在播放任何东西');
     return {
       itemId: c.itemId,
       sourceId: c.sources[c.sourceIndex]?.id || '',
@@ -584,9 +631,9 @@ export class PlayerController {
       paused,
       rate: this.state.speed,
       volume: this.state.muted ? 0 : this.state.volume,
-      videoIndex: this.serverStreamIndex('video'),
-      audioIndex: this.serverStreamIndex('audio'),
-      subtitleIndex: this.serverStreamIndex('subtitle'),
+      videoIndex: this.serverStreamIndex('video', c),
+      audioIndex: this.serverStreamIndex('audio', c),
+      subtitleIndex: this.serverStreamIndex('subtitle', c),
     };
   }
 
@@ -607,7 +654,7 @@ export class PlayerController {
     // record of it is worth one line: 2026-10-24 a 小鬼当家 open printed nothing at all, and only the
     // server's own PlayCount 1→2 proved the start had gone out.
     console.log('[player] 开场', c.itemId, `pos=${Math.round(at)}`, `len=${Math.round(durationMs ?? this.state.durationMs)}`, `mpv=${k?.running ? '在' : '没'}`);
-    await this.client().session(this.progressInput(false, at, durationMs ?? this.state.durationMs), 'start');
+    await this.client().session(this.progressInput(c, false, at, durationMs ?? this.state.durationMs), 'start');
   }
 
   /** Say once, at the moment the item is left, where it actually stopped — the only write that decides
@@ -653,9 +700,14 @@ export class PlayerController {
       return null;
     }
     const client = this.client();
-    let ok = await client.session(this.progressInput(true, at, durationMs), 'stopped');
-    if (!ok) ok = await client.session(this.progressInput(true, at, durationMs), 'stopped');
+    // The number is claimed before the request, not after it: an end-of-file and the close that follows it
+    // both read a free slot and both posted the same stop (2026-10-30, two 「停止没写出去」 lines for one
+    // exit). A failure frees the slot again, because a report that never landed is worth another try.
+    c.flushedMs = at;
+    let ok = await client.session(this.progressInput(c, true, at, durationMs), 'stopped');
+    if (!ok) ok = await client.session(this.progressInput(c, true, at, durationMs), 'stopped');
     if (!ok) {
+      c.flushedMs = -1;
       console.warn('[player] 停止没写出去', reason, c.itemId, `pos=${Math.round(at)}`, `len=${durationMs}`, `start=${Math.round(c.startMs)}`);
       return null;
     }
@@ -663,7 +715,6 @@ export class PlayerController {
     // tellable apart from a write that never went out by having the number on the record.
     console.log('[player] 停止已写', reason, c.itemId, `pos=${Math.round(at)}`, `len=${durationMs}`);
     const held = await this.confirmHeld(client, c.itemId, at, durationMs, reason);
-    c.flushedMs = at;
     // The server's number, not ours: publishing the sent one is how a button came to read 「看到 1:07」
     // over a film the gateway had just zeroed (measured 2026-10-28, 240037).
     return { itemId: c.itemId, positionMs: held ?? at, durationMs };
