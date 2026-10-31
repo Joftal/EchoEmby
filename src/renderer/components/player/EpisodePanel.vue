@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { X } from 'lucide-vue-next';
 import { usePlayerStore } from '../../stores/player';
 import { useAppStore } from '../../stores/app';
-import { episodeName, episodePosition, fmtRuntime, seasonTitle } from '../../lib/format';
+import { episodeName, seasonTitle } from '../../lib/format';
 import { trustSeason } from '../../lib/scores';
 import { embyCached } from '../../lib/embycache';
 import { createLoopRail, type LoopRail } from '../../lib/looprail';
@@ -93,6 +94,11 @@ async function askTmdbNames(): Promise<void> {
 const chipLabel = (s: LibraryItem): string =>
   seasonTitle(s.indexNumber, s.name, trustSeason(tmdbSeasons.value, s.indexNumber, s.childCount)?.name);
 
+/* The season the episode on screen belongs to, which is not always the season being browsed: the chips are
+   tabs, and 「the one that is playing」 is a fact about the session rather than about the click. The strip
+   already marks its own cell, so this only has to answer for the row of chips above it. */
+const playingSeason = computed<number | null>(() => player.session?.seasonNumber ?? null);
+
 async function loadEpisodes(sid: string): Promise<void> {
   if (!seriesId.value || !sid) return;
   active.value = sid;
@@ -129,25 +135,132 @@ function onArtFail(ep: LibraryItem): void {
  *  stayed at 第 1 集. Callers run it after the loading flag is cleared. */
 async function centerOnPlaying(): Promise<void> {
   await nextTick();
-  const el = strip.value;
   // Among the strip's own cells: a looping strip keeps copies of its first and last episodes at either
   // end, and the one wearing 「on」 has to be the real row, not the picture of it.
-  const cells: HTMLElement[] = rail ? rail.originals() : Array.from(el?.children ?? []) as HTMLElement[];
+  const cells = rail ? rail.originals() : Array.from(strip.value?.children ?? []) as HTMLElement[];
   const cell = cells.find(c => c.classList.contains('on'));
-  if (!el || !cell) return;
+  // A season picked from the chips has nothing wearing 「on」, and the strip still holds the offset of the
+  // one just left: it would open on 第 18 集 because that is what used to be in the middle. Start it over.
+  if (!cell) {
+    // Not glideTo(cells[0]): centring the first card asks for a place inside the leading copies, and the
+    // seam walk then adds a whole list-length. `home` is the offset that puts it on the left edge instead.
+    if (rail) rail.glideTo(rail.home);
+    else strip.value?.scrollTo({ left: 0 });
+    return;
+  }
+  glideTo(cell);
+}
+
+/** Walk the strip to a cell, centred, without touching anything outside it. A looping strip keeps copies on
+ *  both sides, so the same cell is also a whole list-length away: take the shorter walk, or stepping past
+ *  the last episode of a season slides through all of it. */
+function glideTo(cell: HTMLElement): void {
+  const el = strip.value;
+  if (!el) return;
   const b = el.getBoundingClientRect(), c = cell.getBoundingClientRect();
-  // A jump of eight screens' worth of cells read as the panel being replaced rather than scrolled; this is
-  // the same move a wheel over the strip makes.
-  const to = el.scrollLeft + c.left + c.width / 2 - (b.left + b.width / 2);
+  let to = el.scrollLeft + c.left + c.width / 2 - (b.left + b.width / 2);
+  if (rail?.looped && rail.period > 0) {
+    const d = to - el.scrollLeft;
+    to = el.scrollLeft + d - Math.round(d / rail.period) * rail.period;
+  }
   // Asked of the rail, because centring the last cells of a long season asks for a place past its copies.
   if (rail) rail.glideTo(rail.place(to, false));
   else el.scrollTo({ left: to, behavior: 'smooth' });
 }
 
+/** Opening the strip on the cell under the playhead is also where a keyboard wants to be: 第 1 集 focused
+ *  while 第 16 集 plays means two dozen presses to reach the neighbours of the episode on screen. Only on
+ *  the first load - a season the reader asked for has to leave the cursor on the chip they pressed.
+ *  `preventScroll` because the centring owns the offset, and a native scroll-into-view also drags every
+ *  ancestor, which here is the overlay itself. */
+function focusPlaying(): void {
+  const cells = rail ? rail.originals() : Array.from(strip.value?.children ?? []) as HTMLElement[];
+  cells.find(c => c.classList.contains('on'))?.focus({ preventScroll: true });
+}
+
+/** A wheel over the strip pushes it sideways, the way it does over the rails on the detail page. One target
+ *  and one follow loop rather than a `scrollBy({ behavior: 'smooth' })` per event: a streamed gesture
+ *  restarts that ease-in every ~16 ms, which crawls instead of running. */
+let wheelWant = 0;
+let wheelRun = false;
+let wheelFrame = 0;
+function stopWheel(): void {
+  wheelRun = false;
+  if (wheelFrame) cancelAnimationFrame(wheelFrame);
+  wheelFrame = 0;
+}
+function followWheel(): void {
+  wheelFrame = 0;
+  const el = strip.value;
+  if (!el) {
+    wheelRun = false;
+    return;
+  }
+  // A loop moves the row by a whole list-length when it crosses a seam, and the target comes along with it.
+  wheelWant += rail?.normalize(true) ?? 0;
+  const want = rail ? rail.place(wheelWant, false) : Math.max(0, Math.min(el.scrollWidth - el.clientWidth, wheelWant));
+  const before = el.scrollLeft;
+  const gap = want - before;
+  if (Math.abs(gap) < 0.7) {
+    el.scrollLeft = want;
+    wheelRun = false;
+    return;
+  }
+  // At least a whole pixel: the offset comes back rounded, so a step that is a fraction of one is written and
+  // read as the same number, and the loop stops a few pixels short of every notch it was asked for.
+  el.scrollLeft = before + Math.sign(gap) * Math.max(1, Math.abs(gap) * 0.24);
+  // A strip that cannot go further, or one whose offset rounds every nudge away, must not spin.
+  if (el.scrollLeft === want || el.scrollLeft === before) wheelRun = false;
+  else wheelFrame = requestAnimationFrame(followWheel);
+}
+function onWheel(e: WheelEvent): void {
+  const el = strip.value;
+  if (!el || e.ctrlKey) return;
+  const raw = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+  const d = raw * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? el.clientWidth : 1);
+  if (!d) return;
+  // At the end of a season too short to loop, what is left of the gesture belongs to the card around it.
+  const max = el.scrollWidth - el.clientWidth;
+  if (!rail?.looped && !wheelRun && ((d < 0 && el.scrollLeft <= 0) || (d > 0 && el.scrollLeft >= max - 1))) return;
+  e.preventDefault();
+  if (!wheelRun) {
+    // Wherever a glide left the strip is where the gesture starts, and writing the offset back is also
+    // what cancels that glide, so the two hands never pull the strip against each other.
+    const live = el.scrollLeft;
+    el.scrollLeft = live;
+    wheelWant = live;
+  }
+  wheelWant += d;
+  wheelRun = true;
+  if (!wheelFrame) wheelFrame = requestAnimationFrame(followWheel);
+}
+
+/** Left and right walk along the strip. The card reads those keys as 「back」, which is right for a row of
+ *  settings and wrong for a row of episodes - a strip is what a reader points at when they expect the
+ *  arrows to move along it. Escape still leaves, and a season short enough not to loop stops at its ends. */
+function onStripKey(e: KeyboardEvent): void {
+  if ((e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || e.ctrlKey || e.metaKey || e.altKey) return;
+  const el = strip.value;
+  const here = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>('.pl-cell');
+  if (!el || !here) return;
+  const cells = rail ? rail.originals() : (Array.from(el.children) as HTMLElement[]);
+  const i = cells.indexOf(here);
+  if (i < 0) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const step = e.key === 'ArrowRight' ? 1 : -1;
+  const n = rail?.looped ? (i + step + cells.length) % cells.length : Math.max(0, Math.min(cells.length - 1, i + step));
+  cells[n].focus({ preventScroll: true });
+  glideTo(cells[n]);
+}
+
+onBeforeUnmount(stopWheel);
+
 /** immediate: the session is already loaded by the time this menu mounts, so a watcher that only fires on
  *  a change never runs and the panel sits empty with 104 episodes on the server. 载入中… covers both round
  *  trips: with the flag set only around the second one, the panel had a window where nothing had arrived yet
  *  and 这一季没有返回条目 was already on screen as a lie. */
+let opened = false;
 watch([seriesId, seasonId], async () => {
   if (!seriesId.value) return;
   loading.value = true;
@@ -158,13 +271,24 @@ watch([seriesId, seasonId], async () => {
     loading.value = false;
   }
   await centerOnPlaying();
+  // The panel is remounted for every open, so this is the first list of one visit: the cursor starts on the
+  // episode on screen. A later change of season is a click on a chip, and that chip keeps the cursor.
+  if (!opened) {
+    opened = true;
+    focusPlaying();
+  }
 }, { immediate: true });
 
+/** Picking an episode is the end of the question the strip asked, so the card gets out of the way: it
+ *  floats over the bottom of the frame it was opened to cover, and leaving it up hides the episode the
+ *  click just started. A failed play leaves it open, since that pick is still the user's next attempt. */
 async function choose(id: string): Promise<void> {
   if (id === currentCell.value) return;
-  await player.play(id);
+  if (await player.play(id)) player.closePanel();
 }
 
+/* The cell is the picture: the number rides in its corner and everything else is what the frame shows. The
+   episode's name is still worth having, so it is the cell's tooltip rather than a second line under it. */
 const titleOf = (ep: LibraryItem): string =>
   episodeName({ episode: ep.indexNumber, season: ep.parentIndexNumber, seriesName: ep.seriesName }, names.value[ep.id], ep.name);
 </script>
@@ -172,23 +296,43 @@ const titleOf = (ep: LibraryItem): string =>
 <template>
   <p v-if="!seriesId" class="pl-empty">这不是剧集条目</p>
   <template v-else>
-    <div v-if="seasons.length > 1" class="pl-chips">
-      <button v-for="s in seasons" :key="s.id" class="pl-chip" :class="{ on: active === s.id }" @click="loadEpisodes(s.id)">
-        {{ chipLabel(s) }}
+    <!-- The card has no header of its own: the season words and the close button share the one line the
+         covers need above them, and that line carries no title and no count - the pictures say both. -->
+    <div class="ep-top">
+      <div v-if="seasons.length > 1" class="ep-seasons">
+        <button
+          v-for="s in seasons"
+          :key="s.id"
+          class="ep-season"
+          :class="{ on: active === s.id, playing: s.indexNumber === playingSeason }"
+          :aria-pressed="active === s.id"
+          :title="s.indexNumber === playingSeason ? '正在播放这一季' : chipLabel(s)"
+          @click="loadEpisodes(s.id)"
+        >
+          {{ chipLabel(s) }}
+        </button>
+      </div>
+      <button class="ep-x" title="关闭" @click="player.closePanel()">
+        <X :size="16" />
       </button>
     </div>
 
     <p v-if="loading" class="pl-empty">载入中…</p>
-    <div v-else ref="strip" class="pl-strip">
-      <button v-for="ep in episodes" :key="ep.id" class="pl-cell" :class="{ on: ep.id === currentCell }" @click="choose(ep.id)">
+    <div v-else ref="strip" class="pl-strip" @wheel="onWheel" @keydown="onStripKey">
+      <button
+        v-for="ep in episodes"
+        :key="ep.id"
+        class="pl-cell"
+        :class="{ on: ep.id === currentCell }"
+        :title="titleOf(ep)"
+        @click="choose(ep.id)"
+      >
         <span class="art">
           <img v-reveal v-if="artOf(ep)" :src="artOf(ep)" :alt="ep.name" loading="lazy" @error="onArtFail(ep)" />
           <template v-else>{{ ep.indexNumber ?? '' }}</template>
+          <span v-if="artOf(ep)" class="no">{{ ep.indexNumber }}</span>
         </span>
-        <span class="cap">
-          <b>{{ episodePosition(ep.parentIndexNumber, ep.indexNumber) }}</b>
-          <span>{{ titleOf(ep) || fmtRuntime(ep.runTimeTicks) }}</span>
-        </span>
+        <span class="cap">{{ titleOf(ep) || `第 ${ep.indexNumber} 集` }}</span>
       </button>
     </div>
     <p v-if="!loading && !episodes.length" class="pl-empty">这一季没有返回条目</p>

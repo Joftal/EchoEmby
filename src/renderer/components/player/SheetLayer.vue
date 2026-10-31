@@ -45,14 +45,19 @@ const { x, y, arrowX, room, place } = useSheetGeometry(card, computed(() => play
  *  drill-in is a direct child and the rule that retires the first level can see it. */
 provide('pl-sheet-card', card);
 
-const PANELS: Record<PanelKind, { comp: unknown; title: string; props?: Record<string, unknown> }> = {
+const PANELS: Record<
+  PanelKind,
+  { comp: unknown; title: string; props?: Record<string, unknown>; bare?: boolean }
+> = {
   quality: { comp: QualityPanel, title: '播放资源' },
   subtitle: { comp: TrackPanel, title: '字幕', props: { kind: 'subtitle' } },
   audio: { comp: TrackPanel, title: '音轨', props: { kind: 'audio' } },
   video: { comp: TrackPanel, title: '画面', props: { kind: 'video' } },
   speed: { comp: SpeedPanel, title: '播放速度' },
   chapters: { comp: ChapterPanel, title: '片段' },
-  episodes: { comp: EpisodePanel, title: '选集' },
+  // `bare` hands the top line to the panel: 选集 wants its season words and its covers with nothing
+  // between them, and a title row above a wall of pictures is a line of text that says nothing.
+  episodes: { comp: EpisodePanel, title: '选集', bare: true },
   danmaku: { comp: DanmakuPanel, title: '弹幕' },
 };
 
@@ -71,7 +76,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', onResize));
 
 /** Everything the card can land a cursor on. `offsetParent` is how a hidden one shows itself: while a
  *  drill-in is up the first level is out of the layout, and its rows must not be reachable. */
-const ITEMS = '.pl-row, .pl-cell, .pl-card, .pl-chip, .pl-switch, .pl-step button, .pl-words';
+const ITEMS = '.pl-row, .pl-cell, .pl-card, .pl-chip, .ep-season, .pl-switch, .pl-step button, .pl-words';
 
 function items(): HTMLElement[] {
   return Array.from(card.value?.querySelectorAll<HTMLElement>(ITEMS) ?? []).filter(el => el.offsetParent !== null && !el.hasAttribute('disabled'));
@@ -193,8 +198,16 @@ watch(
 <template>
   <Transition name="pl-sheet">
     <div v-show="!!current" class="pl-sheet no-drag" :style="{ transform: `translate3d(${x}px, -${y}px, 0)`, '--ax': `${arrowX}px`, '--room': `${room}px` }">
-      <div ref="card" class="pl-panel" :class="{ 'is-more': more }" role="dialog" :aria-label="title" tabindex="-1" @keydown="onKey">
-        <div class="pl-head">
+      <div
+        ref="card"
+        class="pl-panel"
+        :class="{ 'is-more': more, 'is-wide': player.panel === 'episodes', 'is-bare': !!current?.bare }"
+        role="dialog"
+        :aria-label="title"
+        tabindex="-1"
+        @keydown="onKey"
+      >
+        <div v-if="!current?.bare" class="pl-head">
           <span class="pl-title">{{ title }}</span>
           <button class="ib" title="关闭" @click="player.closePanel()">
             <X :size="18" />

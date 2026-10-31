@@ -174,6 +174,21 @@
 }
 /* The card is a dialog, not a control - its rows carry the focus ring, and a rectangle around the whole
    menu would say 「nothing is chosen」 at the moment the user is choosing something. */
+/* 选集 spends its width on the strip: five and a third covers instead of three and a third at the old
+   measure. Only that one card asks for it, because every other panel is a column of rows and a 900px row
+   would be a paragraph. */
+.pl-panel.is-wide {
+  /* Five covers and the four gaps between them, plus the card's own 10px and border: 5 × 152 + 4 × 12 =
+     808. Whole covers at rest, because a cover cut by the card's edge reads as a mistake - and the strip
+     centres the episode on screen, which lands a cell boundary exactly on each edge. */
+  max-width: min(830px, calc(100vw - 24px));
+}
+/* 选集 draws its own top line - the season words and the close button - and gives the covers the height the
+   shared header would have spent on a title. The card is a wall of pictures; a 「选集」 above them says
+   nothing the pictures do not. */
+.pl-panel.is-bare > .pl-body {
+  padding: 10px;
+}
 .pl-panel:focus,
 .pl-panel:focus-visible {
   outline: none;
@@ -497,6 +512,64 @@
   background: var(--pl-fill);
   color: #fff;
 }
+/* 季 as three words and nothing else: the season being read is the bright one, the season playing keeps a
+   5px dot. No fill, no pill, no count - the covers under this line are the card. */
+.ep-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 0 5px;
+}
+.ep-seasons {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.ep-season {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--pl-faint);
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: color var(--hov) var(--ease), background var(--hov) var(--ease);
+}
+.ep-season:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--pl-dim);
+}
+.ep-season.on {
+  color: #fff;
+  font-weight: 600;
+}
+.ep-season.playing:not(.on) {
+  color: var(--pl-dim);
+}
+/* 选集 carries its own close button, since the card has no header: it sits at the end of the season words,
+   in the corner the shared header would have put it. */
+.ep-x {
+  flex: none;
+  margin-left: auto;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: var(--pl-faint);
+  transition: background var(--hov) var(--ease), color var(--hov) var(--ease);
+}
+.ep-x:hover {
+  background: var(--pl-glass-hi);
+  color: var(--pl-text);
+}
 
 .pl-switch {
   display: flex;
@@ -609,8 +682,9 @@
 }
 .pl-strip {
   display: flex;
-  gap: 10px;
-  padding: 4px 0 10px;
+  gap: 12px;
+  /* 4px on top is room for the focus ring; the card's own 10px of bottom padding does the rest. */
+  padding: 4px 0 2px;
   overflow-x: auto;
   /* Every horizontal strip in the app hides its scrollbar (RowScroller, the detail pages); a native one
      under the thumbnails drew a grey track across the bottom of a frosted popover. */
@@ -619,19 +693,21 @@
 .pl-strip::-webkit-scrollbar {
   height: 0;
 }
-/* 128px is what three cells plus their gaps cost inside the sheet's own cap, so the strip reads as a
-   row of covers rather than as a wall with one cover in it. */
+/* 152px is the 选集 strip's own measure: the panel widens for it (see .pl-panel.is-wide), and five and a
+   third cells inside that width read as a row of pictures rather than as a wall with five thumbnails in it.
+   The picture is the cell; under it one line names the episode (the number rides in the corner, so the
+   line never has to say 第 N 集). */
 .pl-cell {
   flex: none;
-  width: 128px;
+  width: 152px;
   color: var(--pl-dim);
   text-align: left;
-  font-size: 14px;
+  font-size: 12px;
 }
 .pl-cell .art {
   position: relative;
-  width: 128px;
-  height: 72px;
+  width: 152px;
+  height: 86px;
   border-radius: 10px;
   overflow: hidden;
   background: rgba(255, 255, 255, 0.08);
@@ -648,24 +724,46 @@
   object-fit: cover;
   display: block;
 }
-.pl-cell.on .art {
+.pl-cell:hover .art {
+  border-color: rgba(255, 255, 255, 0.24);
+}
+.pl-cell.on .art,
+.pl-cell.on:hover .art {
   border-color: #fff;
 }
+/* The episode number, on the picture. It is the only word in the cell: the frame says what the episode is,
+   the number says which one it is, and a 18px tag in the corner costs the frame two rows of caption. */
+.pl-cell .no {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.52);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  color: #fff;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+/* One line of the episode name under the frame. Truncated, never wrapped: a second line would turn the
+   row back into the wall of text this panel just got rid of. */
 .pl-cell .cap {
-  padding-top: 5px;
-  line-height: 1.35;
-}
-.pl-cell .cap b {
   display: block;
-  font-weight: 500;
-  color: var(--pl-text);
-}
-.pl-cell .cap span {
-  display: block;
-  color: var(--pl-faint);
+  margin-top: 7px;
+  padding: 0 1px;
+  font-size: 12.5px;
+  line-height: 1.28;
+  color: var(--pl-dim);
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+}
+.pl-cell.on .cap {
+  color: var(--pl-text);
 }
 
 /* ---- motion ---- */
