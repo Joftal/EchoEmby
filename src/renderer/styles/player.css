@@ -472,6 +472,12 @@
   max-width: 332px;
   padding: 3px 6px 7px;
 }
+/* A block of chips belongs to the row above it, so the row below needs the gap the chips' own padding
+   does not give: without this 「复位」 sits flush against 「字号」 and reads as that row's control. */
+.pl-chips + .pl-line,
+.pl-note + .pl-line {
+  margin-top: 8px;
+}
 .pl-chip {
   padding: 6px 12px;
   border-radius: 999px;

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import SubPopover from './SubPopover.vue';
 import SubRow from './SubRow.vue';
 import StepRow from './StepRow.vue';
@@ -43,11 +43,14 @@ const inUse = (s: SidecarRow): boolean =>
  *  A title that only re-says the language leaves the row to the language itself, and a row with neither
  *  says 无语言 — the card's word for the same fact, not the 「轨道 1」 this line used to invent next to a
  *  sibling named 英语. The number the row was reaching for is already the one in front of it. */
-const rowLabel = (t: PlayerTrack): string => {
+const rowLabel = (t: PlayerTrack, i?: number): string => {
   const said = zhTrackWords((t.title || '').trim(), t.lang || '', false);
   const lang = langName(t.lang);
   const head = said || lang || NO_LANG;
-  return `${t.id}. ${head}${t.forced ? '（强制）' : ''}`;
+  // The step of the row in its own list, not mpv's id: once a 本地字幕 holds id 1 the file's own subtitles
+  // start at 2, and a list that opens on 「2.」 reads like a row is missing.
+  const n = i === undefined ? t.id : i + 1;
+  return `${n}. ${head}${t.forced ? '（强制）' : ''}`;
 };
 /** The language rides beside the row only when the row does not already say it — 「12. 巴西 葡萄牙语」
  *  needs both halves, 「12. 葡萄牙语 葡萄牙语」 says one thing twice. `saidLang` is the version of that
@@ -168,6 +171,59 @@ async function setFit(mode: FitMode): Promise<void> {
 }
 
 const delayMs = computed(() => (props.kind === 'audio' ? media.value.audioDelayMs : media.value.subtitleDelayMs));
+
+/** What 显示设置 reports on its closed row: the two values that were always there, plus the three this menu
+ *  later grew — otherwise a speed of ×1.40 or a shifted file would be invisible from the menu that set it. */
+const styleMeta = computed(() => {
+  const parts = [`${media.value.subtitleScale}%`, `${delayMs.value > 0 ? '+' : ''}${(delayMs.value / 1000).toFixed(1)}s`];
+  if (media.value.subtitleSpeed !== 100) parts.push(`×${(media.value.subtitleSpeed / 100).toFixed(2)}`);
+  if (media.value.subtitlePos !== 100) parts.push(`高度 ${media.value.subtitlePos}%`);
+  const dy = media.value.localSub?.dy ?? 0;
+  if (dy) parts.push(`位移 ${dy > 0 ? '+' : ''}${dy}px`);
+  return parts.join(' · ');
+});
+
+/** 本地字幕. The picker is a native dialog, so it is one round trip from here to main and the answer comes
+ *  back through the media push rather than as a value this component stores: what is on screen is mpv's
+ *  track list, not this file's opinion of it. */
+/** What the local row says on its right: a picture track is neither 可调高度 nor 自带定位 — its placement was
+ *  painted into the frames by whoever authored it. */
+const localMeta = computed(() => {
+  const l = media.value.localSub;
+  if (!l) return '';
+  if (l.bitmap) return '图像字幕';
+  return l.positioned ? '自带定位' : '可调高度';
+});
+const picking = ref(false);
+async function pickSubtitle(): Promise<void> {
+  if (picking.value) return;
+  picking.value = true;
+  try {
+    const r = await window.echoemby.player.pickSubtitle();
+    if (!r.ok) player.say(r.error || '没有导入字幕文件');
+  } catch {
+    player.say('没有导入字幕文件');
+  } finally {
+    picking.value = false;
+  }
+}
+function dropLocal(): void {
+  void player.cmd({ action: 'dropLocalSubtitle' });
+}
+/** 特效位置 moves the copy itself, in ten-pixel steps: on a file that writes its own coordinates mpv's
+ *  `sub-pos` does nothing at all (measured), so this is a rewrite-and-re-add rather than a property. */
+function shiftLocal(dx: number, dy: number): void {
+  const local = media.value.localSub;
+  if (!local) return;
+  if (!dx && !dy) return;
+  void player.cmd({ action: 'subtitleShift', value: { dx, dy } });
+}
+/** 字幕速度 is a factor of real time: a file timed by hand can sit seconds off, and moving the whole track is
+ *  the only cure that does not rewrite every cue. Steps of 5% stay inside what a viewer can judge by eye. */
+function nudgeSpeed(dir: number): void {
+  const v = Math.max(25, Math.min(400, media.value.subtitleSpeed + dir * 5));
+  void player.cmd({ action: 'subtitleSpeed', value: Math.round(v) });
+}
 function nudgeDelay(dir: number): void {
   const v = delayMs.value + dir * 100;
   void player.cmd({ action: props.kind === 'audio' ? 'audioDelay' : 'subtitleDelay', value: Math.round(v * 10) / 10 });
@@ -187,10 +243,10 @@ function nudgeDelay(dir: number): void {
     </button>
 
     <div v-if="embedded.length" class="pl-sect">内封字幕</div>
-    <button v-for="t in embedded" :key="t.id" class="pl-row" :class="{ on: current === t.id }" @click="pick(t.id)">
+    <button v-for="(t, i) in embedded" :key="t.id" class="pl-row" :class="{ on: current === t.id }" @click="pick(t.id)">
       <span class="mark"></span>
       <span class="label">
-        {{ rowLabel(t) }}
+        {{ rowLabel(t, i) }}
         <span v-if="subLang(t)" class="sub">{{ subLang(t) }}</span>
       </span>
       <span class="meta">{{ meta(t) }}</span>
@@ -207,14 +263,29 @@ function nudgeDelay(dir: number): void {
       <span class="meta">{{ sidecarMeta(s) }}</span>
     </button>
 
+    <div class="pl-sect">本地字幕</div>
+    <button v-if="media.localSub" class="pl-row" :class="{ on: current === media.localSub.trackId }" @click="pick(media.localSub.trackId)">
+      <span class="mark"></span>
+      <span class="label">
+        {{ media.localSub.name }}
+        <span class="sub">本地</span>
+      </span>
+      <span class="meta">{{ localMeta }}</span>
+    </button>
+    <p v-else class="pl-empty">电脑里的字幕文件可以直接拿进来用</p>
+    <div class="pl-chips">
+      <button class="pl-chip" :disabled="picking" @click="pickSubtitle">{{ media.localSub ? '换一个字幕文件…' : '导入字幕文件…' }}</button>
+      <button v-if="media.localSub" class="pl-chip" @click="dropLocal">移除</button>
+    </div>
+
     <div class="pl-sep"></div>
-    <SubRow name="style" label="显示设置" :value="`${media.subtitleScale}% · ${delayMs > 0 ? '+' : ''}${(delayMs / 1000).toFixed(1)}s`" />
+    <SubRow name="style" label="显示设置" :value="styleMeta" />
   </template>
 
   <template v-else-if="kind === 'audio'">
-    <button v-for="t in tracks" :key="t.id" class="pl-row" :class="{ on: current === t.id }" @click="pick(t.id)">
+    <button v-for="(t, i) in tracks" :key="t.id" class="pl-row" :class="{ on: current === t.id }" @click="pick(t.id)">
       <span class="mark"></span>
-      <span class="label">{{ rowLabel(t) }}</span>
+      <span class="label">{{ rowLabel(t, i) }}</span>
       <span class="meta">{{ audioMeta(t) }}</span>
     </button>
     <p v-if="!tracks.length" class="pl-empty">这个文件里没有可切换的音轨</p>
@@ -227,9 +298,9 @@ function nudgeDelay(dir: number): void {
     <SubRow name="aspect" label="画面比例" :value="ASPECTS.find(a => isAspect(a.value))?.label || ''" />
     <template v-if="tracks.length > 1">
       <div class="pl-sect">视频轨道</div>
-      <button v-for="t in tracks" :key="t.id" class="pl-row" :class="{ on: current === t.id }" @click="pick(t.id)">
+      <button v-for="(t, i) in tracks" :key="t.id" class="pl-row" :class="{ on: current === t.id }" @click="pick(t.id)">
         <span class="mark"></span>
-        <span class="label">{{ rowLabel(t) }}</span>
+        <span class="label">{{ rowLabel(t, i) }}</span>
         <span class="meta">{{ meta(t) }}</span>
       </button>
     </template>
@@ -241,7 +312,20 @@ function nudgeDelay(dir: number): void {
       <button class="pl-chip" @click="player.cmd({ action: 'subtitleDelay', value: 0 })">复位</button>
     </div>
     <StepRow label="字号" :text="`${media.subtitleScale}%`" @down="player.cmd({ action: 'subtitleStyle', value: { scale: Math.max(50, media.subtitleScale - 5) } })" @up="player.cmd({ action: 'subtitleStyle', value: { scale: Math.min(200, media.subtitleScale + 5) } })" />
-    <StepRow label="高度" :text="`${media.subtitlePos}%`" @down="player.cmd({ action: 'subtitleStyle', value: { pos: Math.max(0, media.subtitlePos - 2) } })" @up="player.cmd({ action: 'subtitleStyle', value: { pos: Math.min(100, media.subtitlePos + 2) } })" />
+    <StepRow v-if="!media.localSub?.positioned" label="高度" :text="`${media.subtitlePos}%`" @down="player.cmd({ action: 'subtitleStyle', value: { pos: Math.max(0, media.subtitlePos - 2) } })" @up="player.cmd({ action: 'subtitleStyle', value: { pos: Math.min(100, media.subtitlePos + 2) } })" />
+    <p v-else class="pl-note">这条字幕自己写死了坐标，没有「高度」可调，用下面的「特效位置」整块挪动。</p>
+    <StepRow label="速度" :text="`×${(media.subtitleSpeed / 100).toFixed(2)}`" @down="nudgeSpeed(-1)" @up="nudgeSpeed(1)" />
+    <div class="pl-chips">
+      <button class="pl-chip" @click="player.cmd({ action: 'subtitleSpeed', value: 100 })">原速</button>
+    </div>
+    <template v-if="media.localSub?.positioned">
+      <StepRow label="特效位置" :text="`${media.localSub.dy > 0 ? '+' : ''}${media.localSub.dy}px`" @down="shiftLocal(0, -10)" @up="shiftLocal(0, 10)" />
+      <div class="pl-chips">
+        <button class="pl-chip" @click="shiftLocal(-10, 0)">左移</button>
+        <button class="pl-chip" @click="shiftLocal(10, 0)">右移</button>
+        <button class="pl-chip" @click="shiftLocal(-media.localSub.dx, -media.localSub.dy)">复位</button>
+      </div>
+    </template>
   </SubPopover>
 
   <SubPopover v-else-if="kind === 'audio'" name="delay" title="声音延迟">
