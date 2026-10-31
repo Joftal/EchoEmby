@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import AppSideNav from './components/AppSideNav.vue';
 import AppTitleBar from './components/AppTitleBar.vue';
+import PageRefresh from './components/PageRefresh.vue';
+import PageTop from './components/PageTop.vue';
 import { pageDir } from './router';
 import { useAppStore } from './stores/app';
 
@@ -36,13 +38,20 @@ onMounted(() => {
   void store.init();
   // The player window runs this same file, and it is the one place that must not listen: it has no
   // lobby to write back into, and a subscriber there would re-ask the resume row on every stop.
-  if (!overlay.value) store.watchPlayback();
+  if (!overlay.value) {
+    store.watchPlayback();
+    // 关键数据的自动更新: the main process retires a library the moment it sees one move, but the renderer keeps
+    // its own ten-minute memo, so the find only becomes visible through this window.
+    onBeforeUnmount(window.echoemby.cache.onStale(() => store.libraryChanged()));
+  }
 });
 </script>
 
 <template>
   <div class="shell" :class="{ nav: showNav, min: collapsed, booted }">
     <AppTitleBar v-if="!overlay" />
+    <PageRefresh v-if="!overlay" />
+    <PageTop v-if="!overlay" />
     <Transition name="rail">
       <AppSideNav v-if="showNav" :collapsed="collapsed" @toggle="toggle" />
     </Transition>
@@ -60,8 +69,11 @@ onMounted(() => {
              reader returns to often, and the one whose rebuild was measurable (scroll position, carousel
              slide and 157 card entrances all replayed). -->
         <transition :name="overlay ? 'fade' : pageDir" type="animation">
+          <!-- 刷新当前页 appends the tick to the key, so the page is rebuilt instead of reused: a new key
+               also misses the keep-alive entry, which is the only way the lobby re-reads its rows. The note
+               sits outside the wrapper on purpose - a comment inside it counts as a second child. -->
           <keep-alive include="HomeView">
-            <component :is="Component" :key="route.path" />
+            <component :is="Component" :key="route.path + ':' + store.reloadTick" />
           </keep-alive>
         </transition>
       </router-view>

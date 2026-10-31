@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onActivated, onBeforeUnmount, onDeactivated, ref } from 'vue';
+import { useSlowFlag } from '../lib/slowload';
 import { useRouter } from 'vue-router';
 import type { LibraryItem } from '../../shared/types';
 import HeroBanner from '../components/home/HeroBanner.vue';
@@ -11,12 +12,14 @@ import { useAppStore } from '../stores/app';
 import { usePlayerStore } from '../stores/player';
 
 const store = useAppStore();
+/* The lobby's rows come from the store, so a warm visit has them before the first frame and this never
+   turns on; a cold one waits on the gateway and the shimmer is earned. */
+const slowSkel = useSlowFlag(() => store.loading && !store.rows.length);
 const player = usePlayerStore();
 const router = useRouter();
 
 const scroller = ref<HTMLElement | null>(null);
 const scroll = ref(0);
-const atTop = ref(true);
 
 /** The lobby promotes whatever the shelves hold, ranked by how well it fills a hero. */
 const features = computed<LibraryItem[]>(() => {
@@ -54,11 +57,6 @@ function onScroll(): void {
   const el = scroller.value;
   if (!el) return;
   scroll.value = el.scrollTop;
-  atTop.value = el.scrollTop < 420;
-}
-
-function toTop(): void {
-  scroller.value?.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function open(item: LibraryItem, autoplay = false): void {
@@ -117,7 +115,6 @@ onActivated(async () => {
   if (el) {
     el.scrollTop = savedScroll;
     scroll.value = savedScroll;
-    atTop.value = savedScroll < 420;
   }
   if (!store.ready) await store.init();
   if (!store.account) {
@@ -159,7 +156,7 @@ onBeforeUnmount(() => {
         @play="onPlay"
       />
 
-      <div v-if="store.loading && !store.rows.length">
+      <div v-if="store.loading && !store.rows.length" :class="{ hold: !slowSkel }">
         <div v-for="n in 2" :key="n" class="rsk">
           <div class="hd"></div>
           <div class="cards">
@@ -168,12 +165,6 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </div>
-
-    <Transition name="fade">
-      <button v-if="!atTop" class="top no-drag" aria-label="回到顶部" @click="toTop">
-        <svg viewBox="0 0 24 24" width="17" height="17"><path d="M12 19V6M6 12l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
-      </button>
-    </Transition>
 
     <Transition name="toast">
       <div v-if="toast" class="toast">{{ toast }}</div>
@@ -300,32 +291,6 @@ onBeforeUnmount(() => {
 .rsk:first-child .cd {
   width: 300px;
   aspect-ratio: 16 / 9;
-}
-
-.top {
-  position: fixed;
-  right: var(--side);
-  bottom: 22px;
-  z-index: var(--z-top);
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
-  color: var(--text);
-  background: rgba(255, 255, 255, 0.86);
-  border: 1px solid var(--line);
-  backdrop-filter: blur(12px);
-  box-shadow: var(--shadow);
-  transition: background var(--hov) var(--ease), color var(--hov) var(--ease), transform var(--hov) var(--ease-out);
-}
-.top:hover {
-  background: var(--ink);
-  color: #fff;
-  transform: translate3d(0, -2px, 0);
-}
-.top:active {
-  transform: scale(0.9);
 }
 
 </style>

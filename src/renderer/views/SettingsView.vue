@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { useSlowFlag } from '../lib/slowload';
 import { useRouter } from 'vue-router';
 import { AppWindow, Captions, ChevronRight, Database, Globe, GripVertical, HardDrive, MessageSquareText, Monitor, Play, Plus, X } from 'lucide-vue-next';
-import type { DanmakuSource, MediaCachePrefs, MediaCacheStats, NetProbe, PlayerPrefs, Settings, WindowPrefs } from '../../shared/types';
+import type { CacheCategory, CacheCategoryId, CacheUsage, DanmakuSource, MediaCachePrefs, NetProbe, PlayerPrefs, Settings, WindowPrefs } from '../../shared/types';
 import { useAppStore } from '../stores/app';
 import FilterSelect from '../components/browse/FilterSelect.vue';
 import { AUDIO_LANGS, SUB_LANGS } from '../../shared/lang';
@@ -13,6 +14,8 @@ const router = useRouter();
 
 const settings = computed(() => store.config?.settings);
 const player = computed<PlayerPrefs | undefined>(() => settings.value?.player);
+/* Both come from one config read, so this shows only if the IPC itself is late. */
+const slowSkel = useSlowFlag(() => !settings.value || !player.value);
 const win = computed<WindowPrefs | undefined>(() => settings.value?.window);
 /* 弹幕 needs no toggle of its own: the endpoint rows are the switch. No usable row, no request, no layer. */
 const mc = computed<MediaCachePrefs | undefined>(() => settings.value?.mediaCache);
@@ -263,10 +266,24 @@ const limitChoices = computed<number[]>(() => {
   return [...below, cur, ...above, 0];
 });
 
-/** What is on disk right now. Read from the main process's own index, because a `dir` walk here would
- *  see a folder the renderer cannot address anyway (it lives under userData, outside the app bundle). */
-const stats = ref<MediaCacheStats | null>(null);
-const cacheBusy = ref(false);
+/** What is on disk right now, per kind. Read from the main process, because these folders live outside the
+ *  app bundle and the renderer cannot address them; one answer for all six keeps the sizes in agreement. */
+const cacheUsage = ref<CacheUsage | null>(null);
+const clearing = ref<CacheCategoryId | 'all' | ''>('');
+const cats = computed(() => cacheUsage.value?.categories ?? []);
+const totalRead = computed(() => (cacheUsage.value ? sizeRead(cacheUsage.value.total) : '统计中…'));
+/** The default folder is the profile's own; a chosen one is worth printing in full, because it is the thing
+ *  the viewer picked and the thing they may want to find in Explorer. */
+const rootRead = computed(() => {
+  const u = cacheUsage.value;
+  if (!u) return '统计中…';
+  return u.root === u.defaultRoot ? `默认位置 · ${u.root}` : u.root;
+});
+const rootHint = computed(() => {
+  const u = cacheUsage.value;
+  if (!u) return '与应用数据放在一起';
+  return u.root === u.defaultRoot ? '与应用数据放在一起，换到别的盘可以省系统盘' : '图片缓存下次启动才会搬过去';
+});
 
 function sizeRead(n: number): string {
   if (!(n > 0)) return '0 B';
@@ -280,26 +297,53 @@ function sizeRead(n: number): string {
   return (i <= 1 || v >= 100 ? Math.round(v) : v.toFixed(1)) + ' ' + units[i];
 }
 
-const usedRead = computed(() => (stats.value ? sizeRead(stats.value.bytes) : '统计中…'));
-/** The line under 已用: how many videos it is, and what the ceiling is. The button beside it only says
- *  what it does, so neither half repeats the other. */
-const cacheNote = computed(() => {
-  const cap = mc.value?.limitGB ? `${mc.value.limitGB} GB 上限` : '不限上限';
-  return stats.value ? `${stats.value.items} 个视频 · ${cap}` : cap;
+/** 缓存有没有在工作: the two counters the disk cache already keeps, so the reading is the app's own，not a
+ *  guess from timings. Both start at zero on launch — a hit from yesterday says nothing about today. */
+const hitRead = computed(() => {
+  const u = cacheUsage.value;
+  if (!u) return '统计中…';
+  const total = u.hits + u.misses;
+  if (!total) return '本次启动还没有读取';
+  return `${u.hits} 命中 · ${u.misses} 未命中 · ${Math.round((u.hits / total) * 100)}%`;
 });
 
-async function readCache(): Promise<void> {
-  const r = await window.echoemby.mediaCache.stats();
-  if (r.ok) stats.value = r.data ?? null;
+/** Each kind prints a size and, where a count means something, how many of them. 海报与图片 has thousands of
+ *  blobs and no useful count, so it prints bytes only. */
+const unitOf = (c: CacheCategory): string => {
+  if (c.id === 'media') return ' 个视频';
+  if (c.id === 'data') return ' 条';
+  if (c.id === 'thumbs') return ' 组';
+  if (c.id === 'images') return '';
+  return ' 个文件';
+};
+
+async function readCacheUsage(): Promise<void> {
+  const r = await window.echoemby.cache.usage();
+  if (r.ok) cacheUsage.value = r.data ?? null;
 }
 
-async function clearCache(): Promise<void> {
-  if (cacheBusy.value) return;
-  cacheBusy.value = true;
-  const r = await window.echoemby.mediaCache.clear();
-  cacheBusy.value = false;
-  if (r.ok) stats.value = r.data ?? null;
+async function clearKind(id: CacheCategoryId | 'all'): Promise<void> {
+  if (clearing.value) return;
+  clearing.value = id;
+  const r = await window.echoemby.cache.clear(id);
+  clearing.value = '';
+  if (r.ok) cacheUsage.value = r.data ?? null;
   else store.error = r.error || '清理失败';
+}
+
+/** Moving the folder takes the caches with it; the page then re-reads, because every size just changed. */
+async function pickRoot(): Promise<void> {
+  const picked = await window.echoemby.cache.pick();
+  if (!picked.ok || !picked.data) return;
+  clearing.value = 'all';
+  const r = await window.echoemby.cache.setRoot(picked.data);
+  clearing.value = '';
+  if (r.ok) cacheUsage.value = r.data ?? null;
+  else store.error = r.error || '换文件夹失败';
+}
+
+async function openRoot(): Promise<void> {
+  await window.echoemby.cache.open();
 }
 
 const DECODERS: { value: PlayerPrefs['hwdec']; label: string }[] = [
@@ -384,7 +428,12 @@ const DESCS: Record<SectionId, string> = {
 };
 
 const scrollEl = ref<HTMLElement | null>(null);
-const active = ref<SectionId>('screen');
+/** Which page the rail is on, remembered per session: 刷新当前页 rebuilds this component, and a fresh ref
+ *  would drop the viewer on 画面 every time they refreshed 缓存 or 网络. Session storage is also what makes
+ *  leaving 设置 and coming back land where they left. */
+const SECTION_KEY = 'echoemby.settings.section';
+const active = ref<SectionId>((sessionStorage.getItem(SECTION_KEY) as SectionId) || 'screen');
+watch(active, id => sessionStorage.setItem(SECTION_KEY, id));
 
 /** A page is swapped, not scrolled to: only the chosen one is in the document, so the pane comes back at
  *  its own top and the rail's word is the page's name. */
@@ -456,7 +505,7 @@ onMounted(async () => {
   if (!store.ready) await store.init();
   else await store.refreshSettings();
   if (!store.account) router.replace('/login');
-  void readCache();
+  void readCacheUsage();
   // 弹幕调试 is the one page entered from the settings rail, so coming back has to land on that page
   // instead of 画面. The address carries no page, but the history entry remembers the debug page as the one
   // either behind us (返回) or ahead of us (管理 went forward into 设置); every other way in starts at 画面.
@@ -467,7 +516,8 @@ onMounted(async () => {
 /** The reading is taken again whenever the sheet is opened on 缓存, because the number moves while the
  *  page is elsewhere: a viewing in the player is filling it. */
 watch(active, id => {
-  if (id === 'cache') void readCache();
+  if (id !== 'cache') return;
+  void readCacheUsage();
 });
 
 /** A reading belongs to the route it was taken on, so changing either half of that route retires it -
@@ -489,7 +539,7 @@ async function set(patch: Parameters<typeof store.saveSettings>[0]): Promise<boo
   // 上限 is applied by the cache when it is read, not when it is written, so this page has to ask again or it
   // keeps showing the number from before the change (measured: picking 5 GB left 已用 at the value read when
   // the page opened, 179 MB, and only a fresh stats() brought it to 199 MB).
-  if (ok && patch.mediaCache) void readCache();
+  if (ok && patch.mediaCache) void readCacheUsage();
   return ok;
 }
 
@@ -549,7 +599,7 @@ async function runProbe(): Promise<void> {
           </nav>
 
           <div ref="scrollEl" class="scroll">
-            <div v-if="!settings || !player" class="skel" aria-hidden="true">
+            <div v-if="!settings || !player" class="skel" :class="{ hold: !slowSkel }" aria-hidden="true">
               <div class="pane">
                 <div v-for="n in 5" :key="n" class="row">
                   <div class="k">
@@ -693,6 +743,67 @@ async function runProbe(): Promise<void> {
               </section>
 
               <section v-if="active === 'cache'" class="group">
+                <p class="glabel">位置</p>
+                <div class="pane">
+                  <div class="row">
+                    <div class="k">
+                      <b>缓存文件夹</b>
+                      <i class="path">{{ rootRead }}</i>
+                    </div>
+                    <div class="acts">
+                      <button class="go quiet" type="button" :disabled="clearing !== ''" @click="openRoot">打开文件夹</button>
+                      <button class="go" type="button" :disabled="clearing !== ''" @click="pickRoot">更改…</button>
+                    </div>
+                  </div>
+                  <div class="row">
+                    <div class="k">
+                      <b>共 {{ totalRead }}</b>
+                      <i>{{ rootHint }}</i>
+                    </div>
+                    <span class="tag" :class="{ on: cacheUsage && cacheUsage.root !== cacheUsage.defaultRoot }">
+                      {{ cacheUsage && cacheUsage.root !== cacheUsage.defaultRoot ? '自定义' : '默认' }}
+                    </span>
+                  </div>
+                </div>
+
+                <p class="glabel">分类</p>
+                <div class="pane">
+                  <div v-for="c in cats" :key="c.id" class="row">
+                    <div class="k">
+                      <b>{{ c.label }}</b>
+                      <i>{{ c.hint }}<template v-if="c.restart"> · 下次启动生效</template></i>
+                    </div>
+                    <div class="acts">
+                      <span class="size">{{ sizeRead(c.bytes) }}<em v-if="unitOf(c)">· {{ c.items }}{{ unitOf(c) }}</em></span>
+                      <button
+                        class="go quiet"
+                        type="button"
+                        :disabled="clearing !== '' || c.items === 0 && c.bytes < 1024"
+                        @click="clearKind(c.id)"
+                      >
+                        {{ clearing === c.id ? '清理中…' : '清空' }}
+                      </button>
+                    </div>
+                  </div>
+                  <div class="row">
+                    <div class="k">
+                      <b>本次命中</b>
+                      <i>从磁盘取到的答复；重启归零</i>
+                    </div>
+                    <span class="size">{{ hitRead }}</span>
+                  </div>
+                  <div class="row">
+                    <div class="k">
+                      <b>全部清空</b>
+                      <i>六类一起清；缓存文件夹的选择保留</i>
+                    </div>
+                    <button class="go" type="button" :disabled="clearing !== '' || !cacheUsage || cacheUsage.total === 0" @click="clearKind('all')">
+                      {{ clearing === 'all' ? '清理中…' : '全部清空' }}
+                    </button>
+                  </div>
+                </div>
+
+                <p class="glabel">媒体缓存</p>
                 <div class="pane">
                   <div class="row">
                     <div class="k">
@@ -736,15 +847,6 @@ async function runProbe(): Promise<void> {
                     </button>
                   </div>
 
-                  <div class="row">
-                    <div class="k">
-                      <b>已用 {{ usedRead }}</b>
-                      <i>{{ cacheNote }}</i>
-                    </div>
-                    <button class="go" type="button" :disabled="cacheBusy || !stats || stats.bytes === 0" @click="clearCache">
-                      {{ cacheBusy ? '清理中…' : '清理全部缓存' }}
-                    </button>
-                  </div>
                 </div>
               </section>
 
@@ -1154,6 +1256,65 @@ h1 {
   background: var(--bg-elev);
   border: 1px solid var(--line);
   box-shadow: var(--shadow-sm);
+}
+/* A caption outside the box. 缓存 is the one page that holds three cards (位置 / 分类 / 媒体缓存), and a
+   caption above each reads faster than a chapter banner with an icon in it. */
+.glabel {
+  margin: 0 0 8px 4px;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--text-dim);
+}
+.pane + .glabel {
+  margin-top: 22px;
+}
+/* Two controls on one line: 打开文件夹 is quiet and 更改… is the one to press, so they keep their order. */
+.acts {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-self: end;
+}
+.size {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.size em {
+  font-style: normal;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.go.quiet {
+  background: transparent;
+}
+.go.quiet:hover:not(:disabled) {
+  background: var(--bg-elev-2);
+}
+.tag {
+  justify-self: end;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-faint);
+}
+.tag.on {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  background: var(--accent-soft);
+}
+/* A folder path is read character by character (C:\Users\Eric\…), so it gets the one monospace face on the
+   page and is allowed to break anywhere: the row must not widen the card. */
+.k i.path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  word-break: break-all;
 }
 .tic {
   display: grid;

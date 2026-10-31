@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useSlowFlag } from '../lib/slowload';
 import { useRouter } from 'vue-router';
 import type { CalendarPool, CalendarQuiet, CalendarResult, CalendarSlot } from '../../shared/types';
 import CalendarDayCard from '../components/calendar/CalendarDayCard.vue';
@@ -36,6 +37,7 @@ const pool = ref<'' | CalendarPool>('');
 
 const data = ref<CalendarResult | null>(null);
 const loading = ref(true);
+const slowSkel = useSlowFlag(() => loading.value);
 const error = ref('');
 
 /** `force` is the 刷新 button: a date that slipped or a season that finally started is the one thing a
@@ -356,7 +358,7 @@ onBeforeUnmount(() => {
 
     <!-- One row per day, its date held in a column that says the same day three ways, and that day's
          episodes as cards beside it. -->
-    <div v-if="loading" class="tl">
+    <div v-if="loading" class="tl" :class="{ hold: !slowSkel }">
       <section v-for="g in 4" :key="g" class="grp">
         <span class="dcol sk"><i></i><i></i><i></i></span>
         <span class="cards">

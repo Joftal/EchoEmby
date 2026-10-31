@@ -68,6 +68,45 @@ export const useAppStore = defineStore('app', () => {
     return true;
   }
 
+  /** 刷新当前页: every view is keyed by this, so bumping it rebuilds the page and its mount asks everything
+   *  again. The disk answers for this account go first, or the rebuilt page would read the same files back. */
+  const reloadTick = ref(0);
+  const refreshing = ref(false);
+
+  async function refreshPage(): Promise<boolean> {
+    if (refreshing.value) return false;
+    refreshing.value = true;
+    try {
+      const r = await window.echoemby.cache.refresh();
+      if (!r.ok) {
+        error.value = r.error || '刷新失败';
+        return false;
+      }
+      clearEmbyCache();
+      reloadTick.value += 1;
+      return true;
+    } finally {
+      refreshing.value = false;
+    }
+  }
+
+  /** 关键数据的自动更新 found something on the server (see src/main/cache/watch.ts): one library moved, and
+   *  the main process has already retired that library's answers. What is left is the renderer's own ten-minute
+   *  memo, which would otherwise repaint the page with the rows that were just retired.
+   *
+   *  This is deliberately not 刷新当前页: that button asks the main process to drop the whole account and then
+   *  rebuilds the page, which is the right gesture for a hand press and far too much for a background find.
+   *  Here only the memo goes, and the lobby repaints itself when nothing is in the way — a list that moves under
+   *  a hand mid-scroll is worse than a row that is ten minutes old. Every other page stays put and reads the new
+   *  answer the next time it is opened. */
+  function libraryChanged(): void {
+    clearEmbyCache();
+    const home = /^#\/?$/.test(location.hash || '#/');
+    const top = (document.scrollingElement?.scrollTop ?? window.scrollY) <= 4;
+    const busy = refreshing.value || !!document.querySelector('.panel');
+    if (home && top && !busy) reloadTick.value += 1;
+  }
+
   /** Item ids are per-server and collide across them, so nothing may survive a switch. */
   function invalidate(): void {
     imgCache.clear();
@@ -513,5 +552,5 @@ export const useAppStore = defineStore('app', () => {
     offWatched = window.echoemby.player.onWatched(w => void rememberPlayback(w));
   }
 
-  return { config, account, rows, views, genres, studios, studiosLoading, loading, error, ready, counts, lastStop, init, login, switchTo, remove, update, saveSettings, refreshSettings, loadCounts, loadHome, loadViews, loadGenres, loadStudios, ensureResumeRow, imageUrl, backdropUrl, logoCandidates, workLogos, itemArt, episodeTitle, episodeOverview, setFavorite, watchPlayback };
+  return { config, account, rows, views, genres, studios, studiosLoading, loading, error, ready, counts, lastStop, reloadTick, refreshing, refreshPage, libraryChanged, init, login, switchTo, remove, update, saveSettings, refreshSettings, loadCounts, loadHome, loadViews, loadGenres, loadStudios, ensureResumeRow, imageUrl, backdropUrl, logoCandidates, workLogos, itemArt, episodeTitle, episodeOverview, setFavorite, watchPlayback };
 });

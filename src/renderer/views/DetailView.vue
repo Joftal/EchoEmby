@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useSlowFlag } from '../lib/slowload';
 import { useRouter } from 'vue-router';
 import { hasContent, type LibraryItem, type TmdbCreditRow, type TmdbCredits, type TmdbEpisodeRow, type TmdbSeasonRow, type TmdbStills } from '../../shared/types';
 import HScroller from '../components/detail/HScroller.vue';
@@ -71,6 +72,8 @@ const seriesItem = ref<LibraryItem | null>(null);
 /** The picked season's own art from the server, the one season field that costs a round trip. */
 const seasonArt = ref('');
 const error = ref('');
+/* A page opened twice in ten minutes answers from the renderer memo before the first frame. */
+const slowSkel = useSlowFlag(() => !item.value && !error.value);
 const playErr = ref('');
 const favBusy = ref(false);
 
@@ -1685,7 +1688,7 @@ const LEVEL_WORD = ['无', '极少', '轻微', '中等', '较多', '严重'];
     <template v-if="!item && !error">
       <div class="flow">
         <BlockPh v-if="wantRail" />
-        <div v-for="n in 2" :key="n" class="block skb">
+        <div v-for="n in 2" :key="n" class="block skb" :class="{ hold: !slowSkel }">
           <div class="skhd"></div>
           <div class="skrow"><div v-for="m in 5" :key="m" class="skcd"></div></div>
         </div>

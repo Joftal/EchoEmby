@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
-
 const router = useRouter();
 const maximized = ref(false);
 
@@ -17,6 +16,8 @@ const onMax = () => {
 let handler: ((e: KeyboardEvent) => void) | null = null;
 onMounted(() => {
   handler = (e: KeyboardEvent) => {
+    // 刷新 moved to the corner (components/PageRefresh.vue) and took F5 with it; what is left here is the
+    // window's own key.
     if (e.key === 'Escape' && router.currentRoute.value.name !== 'login') void router.push('/');
   };
   window.addEventListener('keydown', handler);
@@ -38,6 +39,8 @@ onUnmounted(() => {
        would otherwise hide them. -->
   <div class="grip drag" />
   <header class="bar">
+    <!-- 刷新当前页 lives in the corner now (components/PageRefresh.vue): it is about the page, not the window,
+         and a chip up here read as one more piece of window chrome. -->
     <button class="icon" @click="send('minimize')">
       <svg viewBox="0 0 24 24" width="14" height="14"><path d="M5 12h14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
     </button>

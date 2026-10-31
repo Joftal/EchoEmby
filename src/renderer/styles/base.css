@@ -124,6 +124,16 @@
     radial-gradient(50% 40% at 4% 92%, rgba(208, 238, 244, 0.22), transparent 62%);
 }
 
+/* A skeleton that is mounted but not yet worth painting. It keeps its box — so the page cannot jump when
+   the real rows land — and drops every descendant's paint, which is what a 120ms wait should look like: nothing.
+   The flag behind this class is useSlowFlag() in lib/slowload.ts; the measurement and the threshold are there.
+   It gates paint rather than existence on purpose: several pages put an empty-state branch right after the
+   loading one, and removing the loading branch for 120ms would flash 「没有内容」 at every navigation. */
+.hold,
+.hold * {
+  visibility: hidden;
+}
+
 @keyframes sh {
   to {
     background-position: calc(-1 * var(--sk-tile)) 0;

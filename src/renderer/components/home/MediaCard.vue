@@ -7,6 +7,8 @@ import { begin } from '../../lib/handoff';
 import { episodeName, episodePosition, fmtRuntime, seenLabel, watchedRatio } from '../../lib/format';
 import { useTmdb } from '../../lib/scores';
 import { LOOP_NEED } from '../../lib/looprail';
+import { noteShown, shownBefore } from '../../lib/imgmemo';
+import { useSlowFlag } from '../../lib/slowload';
 
 const props = withDefaults(
   defineProps<{ item: LibraryItem; variant?: 'poster' | 'still'; width?: number; index?: number }>(),
@@ -89,6 +91,19 @@ watch(
    clears, and the gateway minting a URL for a tag it cannot render, which no retry clears and the next rung
    does. So try the picture once more, then step down to the stand-in behind it, and only fall to the letter
    when the ladder has run out. */
+/* The shimmer is the card's answer to a wait, so it waits for one too: a picture that lands inside
+   120ms is shown without ever saying 「loading」, and a picture this window has already painted never says it.
+   The memo is keyed by the card's subject rather than by its URL: a retry adds 「&_r=1」 and a rail asks for a
+   different width, so the same picture arrives under three strings within one page. */
+const artKey = computed(() => `${props.item.id}:${props.variant}`);
+const painted = shownBefore(artKey.value);
+const skelDue = useSlowFlag(() => !loaded.value && !failed.value && !shownBefore(artKey.value));
+
+function onLoad(): void {
+  loaded.value = true;
+  noteShown(artKey.value);
+}
+
 function onErr(): void {
   const cur = src.value;
   if (!cur) return;
@@ -196,9 +211,18 @@ function open(): void {
   >
     <div class="frame">
       <Transition name="art-skel">
-        <div v-if="!loaded && !failed" class="skeleton"></div>
+        <div v-if="skelDue" class="skeleton"></div>
       </Transition>
-      <img v-if="url && !failed" :src="url" alt="" :class="{ show: loaded }" loading="lazy" decoding="async" @load="loaded = true" @error="onErr" />
+      <img
+        v-if="url && !failed"
+        :src="url"
+        alt=""
+        :class="{ show: loaded, settled: painted }"
+        loading="lazy"
+        decoding="async"
+        @load="onLoad"
+        @error="onErr"
+      />
       <span v-if="failed" class="ph">{{ (item.seriesName || item.name).slice(0, 1) }}</span>
 
       <span v-if="rating" class="rate">★ {{ rating }}</span>
@@ -288,6 +312,12 @@ img {
 img.show {
   opacity: 1;
   transform: none;
+}
+/* A picture this window has already painted is not a wait: it takes its place in one frame instead of fading
+   up over the shimmer it no longer has. Measured on 浏览: without this the card still looked like it was
+   loading for the whole 0.45s fade, on a page whose bytes came from the HTTP cache. */
+img.settled {
+  transition: none;
 }
 .card:hover img.show {
   transform: scale(1.055);

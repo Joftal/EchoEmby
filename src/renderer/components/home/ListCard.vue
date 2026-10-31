@@ -9,6 +9,8 @@ import { mergeGenres } from '../../lib/genres';
 import ScoreStrip from '../ScoreStrip.vue';
 import { useTmdb } from '../../lib/scores';
 import { LOOP_NEED } from '../../lib/looprail';
+import { noteShown, shownBefore } from '../../lib/imgmemo';
+import { useSlowFlag } from '../../lib/slowload';
 
 /* Two densities of the same horizontal card. `row` is the catalogue row 收藏 wants: a poster, the
    paragraph, and the badges a title carries. `queue` is 在看's: a 16:9 frame to read the stop against,
@@ -100,6 +102,17 @@ watch(
    clears, and the gateway minting a URL for a tag it cannot render, which no retry clears and the next rung
    does. So try the picture once more, then step down to the stand-in behind it, and only fall to the letter
    when the ladder has run out. */
+/* The shimmer is the card's answer to a wait, so it waits for one too: a picture that lands inside
+   120ms is shown without ever saying 「loading」, and a URL this window has already painted never says it. */
+const artKey = computed(() => `${props.item.id}:${props.variant}:list`);
+const painted = shownBefore(artKey.value);
+const skelDue = useSlowFlag(() => !loaded.value && !failed.value && !shownBefore(artKey.value));
+
+function onLoad(): void {
+  loaded.value = true;
+  noteShown(artKey.value);
+}
+
 function onErr(): void {
   const cur = src.value;
   if (!cur) return;
@@ -240,9 +253,18 @@ function open(): void {
   <article ref="root" class="lcard" :class="{ queue }" :style="{ '--i': index }" tabindex="0" @click="open" @keydown.enter="open">
     <div class="thumb">
       <Transition name="art-skel">
-        <div v-if="!loaded && !failed" class="skeleton"></div>
+        <div v-if="skelDue" class="skeleton"></div>
       </Transition>
-      <img v-if="url && !failed" :src="url" alt="" :class="{ show: loaded }" loading="lazy" decoding="async" @load="loaded = true" @error="onErr" />
+      <img
+        v-if="url && !failed"
+        :src="url"
+        alt=""
+        :class="{ show: loaded, settled: painted }"
+        loading="lazy"
+        decoding="async"
+        @load="onLoad"
+        @error="onErr"
+      />
       <span v-if="failed" class="ph">{{ (item.seriesName || item.name).slice(0, 1) }}</span>
 
       <!-- The pill the 继续观看 row paints, from the same class in base.css and the same number the 「看到」
@@ -346,6 +368,9 @@ function open(): void {
 }
 .thumb img.show {
   opacity: 1;
+}
+.thumb img.settled {
+  transition: none;
 }
 .ph {
   position: absolute;

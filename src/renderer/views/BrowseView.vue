@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useSlowFlag } from '../lib/slowload';
 import { useRoute, useRouter } from 'vue-router';
 import type { IpcResult, LibraryItem } from '../../shared/types';
 import MediaCard from '../components/home/MediaCard.vue';
@@ -260,6 +261,8 @@ async function askRows(startIndex: number, q?: string): Promise<IpcResult<Librar
 
 const items = ref<LibraryItem[]>([]);
 const loading = ref(false);
+/* A cached page answers in 89-112ms; a shimmer that lives that long is noise. */
+const slowSkel = useSlowFlag(() => loading.value);
 const busy = ref(false);
 const error = ref('');
 const hasMore = ref(false);
@@ -838,7 +841,7 @@ onBeforeUnmount(() => {
           <div class="body">
             <p v-if="error" class="err">{{ error }} <button @click="load(true)">重试</button></p>
 
-            <div v-if="loading" ref="skEl" class="grid sk" :class="{ list: layout === 'list' }" :style="gridStyle">
+            <div v-if="loading" ref="skEl" class="grid sk" :class="{ list: layout === 'list', hold: !slowSkel }" :style="gridStyle">
               <template v-if="layout === 'list'">
                 <div v-for="n in skCells" :key="n" class="cell list" :class="{ queue: rowVariant === 'queue' }">
                   <span class="th"></span>
