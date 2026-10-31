@@ -16,6 +16,7 @@
 - Library browsing with filters and search
 - Playback: hardware decoding (auto / D3D11 / software), subtitles and audio tracks, preferred languages, local subtitle files (srt / ass / ssa / vtt / sub / smi / txt and .sup image subtitles, with effects, speed and position), picture fit (fit / fill / stretch), Anime4K picture enhancement (off / light / standard / high), HDR (Windows HDR switched on for HDR titles and restored afterwards), chapters, speed, auto-next, seek-bar previews (off by default, switched on in Settings)
 - Danmaku from the dandanplay API: automatic matching, manual linking, blocked words and styling; endpoints are configurable, tried in order, with a four-step test
+- Answers from the server cached on disk (libraries, seasons, episodes, searches) with watching state merged separately and corrected after a read; the cache folder can be moved, cleared per kind, and a background pass looks for new arrivals every ten minutes
 - Ratings and Chinese synopses filled in from TMDB, Rotten Tomatoes, Bangumi, Trakt and others
 - Keyboard control
 
