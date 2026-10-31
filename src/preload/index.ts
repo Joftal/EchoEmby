@@ -89,6 +89,15 @@ const api: EchoEmbyApi = {
     stats: () => invoke('mediaCache:stats'),
     clear: () => invoke('mediaCache:clear'),
   },
+  cache: {
+    usage: () => invoke('cache:usage'),
+    clear: id => invoke('cache:clear', id),
+    setRoot: root => invoke('cache:root', root),
+    pick: () => invoke('cache:pick'),
+    open: () => invoke('cache:open'),
+    refresh: () => invoke('cache:refresh'),
+    onStale: cb => on('cache:stale', cb),
+  },
   ui: {
     window: action => ipcRenderer.send('ui:window', { action }),
   },

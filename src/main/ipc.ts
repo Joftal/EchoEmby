@@ -1,5 +1,5 @@
-import { BrowserWindow, dialog, ipcMain } from 'electron';
-import { EmbyClient, EmbyError, normalizeBase } from './emby/client';
+import { BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { EmbyClient, EmbyError, dropSessionCached, normalizeBase } from './emby/client';
 import { detail, explain } from './emby/errors';
 import * as config from './config';
 import { rtScores } from './meta/rt';
@@ -13,9 +13,13 @@ import { PlayerWindows } from './player/windows';
 import { revealWindow } from './tray';
 import { PlayerController, type PlayerOut } from './player/session';
 import { mediaCache } from './media-cache';
+import { diskCache } from './cache/disk';
+import { clearAll, clearCategory, setRoot, usage } from './cache/manage';
+import { cacheRoot, ensureRoot } from './cache/root';
+import { startFreshWatch } from './cache/watch';
 import * as danmaku from './danmaku';
 import { applyProxy, probeNetwork } from './net';
-import { type Account, type DanmakuLink, type DanmakuQuery, type DanmakuSource, type IpcResult, type PlayerCommand, type SettingsPatch } from '../shared/types';
+import { type Account, type CacheCategoryId, type DanmakuLink, type DanmakuQuery, type DanmakuSource, type IpcResult, type PlayerCommand, type SettingsPatch } from '../shared/types';
 
 /** Every renderer-facing failure crosses here, so this is the one line that has to say which channel asked.
  *  Without it a gateway error in the log — 服务器出错了, a Guid parse, a null reference — is a pile of twelve
@@ -260,6 +264,59 @@ export class AppServices {
       await this.player.clearThumbs().catch(() => undefined);
       return mediaCache.stats();
     }));
+
+    /* 缓存管理: one question for all six kinds, because the sheet prints them side by side and a per-kind
+       handler would be six chances for the numbers to disagree. Clearing answers the new reading, so the row
+       that was pressed shows what it did instead of a number from before the delete. */
+    ipcMain.handle('cache:usage', () => wrap('cache:usage', () => usage()));
+    ipcMain.handle('cache:clear', (_e, id: CacheCategoryId | 'all') =>
+      wrap('cache:clear', async () => {
+        const next = id === 'all' ? await clearAll() : await clearCategory(id);
+        // 剧集信息 lives in two places — the disk and the 10-minute memo — and clearing one of them would leave
+        // the page still answering from the other.
+        if (id === 'all' || id === 'data') dropSessionCached();
+        return next;
+      }),
+    );
+    ipcMain.handle('cache:root', (_e, root: string) => wrap('cache:root', () => setRoot(root)));
+    ipcMain.handle('cache:pick', () =>
+      wrap('cache:pick', async () => {
+        const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+        const picked = win
+          ? await dialog.showOpenDialog(win, { title: '选择缓存文件夹', properties: ['openDirectory', 'createDirectory'] })
+          : await dialog.showOpenDialog({ title: '选择缓存文件夹', properties: ['openDirectory', 'createDirectory'] });
+        return picked.canceled ? null : picked.filePaths[0] || null;
+      }),
+    );
+    ipcMain.handle('cache:open', () =>
+      wrap('cache:open', async () => {
+        ensureRoot();
+        await shell.openPath(cacheRoot());
+        return cacheRoot();
+      }),
+    );
+    /* 刷新当前页: the server did not tell us anything changed, the viewer did. Only this account's answers are
+       dropped — switching folders or clearing is a different gesture, and a refresh must not cost the other
+       profile its cache. The renderer then rebuilds the page, whose mount asks everything again. */
+    /* 关键数据的自动更新: a small pass on a schedule, so a new episode or a title added on the server shows up
+       by itself. The probe follows whichever account is active when it runs, so switching accounts needs no
+       restart; turning it off is not a setting — a pass with nothing new writes nothing. */
+    startFreshWatch(async () => {
+      const acc = config.activeAccount();
+      if (!acc) return [];
+      return new EmbyClient(acc, this.identity()).probeFreshness();
+    });
+
+    ipcMain.handle('cache:refresh', () =>
+      wrap('cache:refresh', async () => {
+        const cfg = config.load();
+        const account = cfg.accounts.find(a => a.accountId === cfg.activeAccountId);
+        if (account) diskCache.dropPrefix(`${account.accountId}|${account.userId}|`);
+        dropSessionCached();
+        const st = diskCache.stats();
+        return { entries: st.entries, hits: st.hits, misses: st.misses };
+      }),
+    );
 
     // 弹幕 talks to a service that is not the media server, and every handler answers nothing at all while
     // the switch in 设置 is off — the module checks that itself, so no row here has to.

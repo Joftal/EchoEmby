@@ -1,4 +1,4 @@
-import { app } from 'electron';
+import { cachePath } from '../cache/root';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import * as https from 'node:https';
 import path from 'node:path';
@@ -32,8 +32,13 @@ interface Store {
   guides: Record<string, CsmGuide | { missing: true; fetchedAt: number }>;
 }
 
-const file = () => path.join(app.getPath('userData'), 'csm.json');
+const file = () => cachePath('csm.json');
 let store: Store | null = null;
+
+/** Forget the in-memory copy: the file behind it was deleted, or the folder it lives in moved. */
+export function resetCsm(): void {
+  store = null;
+}
 
 const load = (): Store => {
   if (store) return store;

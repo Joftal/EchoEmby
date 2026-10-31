@@ -1,4 +1,5 @@
-import { app, net } from 'electron';
+import { net } from 'electron';
+import { cachePath } from '../cache/root';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import * as config from '../config';
@@ -64,8 +65,13 @@ interface Store {
   titles: Record<string, { value: string[]; fetchedAt: number }>;
 }
 
-const file = () => path.join(app.getPath('userData'), 'tmdb.json');
+const file = () => cachePath('tmdb.json');
 let store: Store | null = null;
+
+/** Forget the in-memory copy: the file behind it was deleted, or the folder it lives in moved. */
+export function resetTmdb(): void {
+  store = null;
+}
 
 const load = (): Store => {
   if (store) return store;

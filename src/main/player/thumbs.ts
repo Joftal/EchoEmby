@@ -3,7 +3,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { BaseWindow, app } from 'electron';
+import { BaseWindow } from 'electron';
+import { cachePath } from '../cache/root';
 import { MpvPipe } from './mpv-pipe';
 import { mpvExecutable } from './kernel';
 import type { PlayerThumb } from '../../shared/types';
@@ -104,7 +105,7 @@ export interface ThumbOpen {
 const dataUrl = (jpeg: Buffer): string => 'data:image/jpeg;base64,' + jpeg.toString('base64');
 
 /** Where saved grids live, one folder per item+version. */
-const cacheRoot = (): string => path.join(app.getPath('userData'), 'thumbs');
+const cacheRoot = (): string => cachePath('thumbs');
 /**
  * Progress-bar preview frames, decoded by a second mpv that nobody watches.
  *

@@ -1,4 +1,5 @@
-import { app, net } from 'electron';
+import { net } from 'electron';
+import { cachePath } from '../cache/root';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { RtScores } from '../../shared/types';
@@ -21,8 +22,13 @@ interface Store {
   rt: Record<string, RtScores | { missing: true; fetchedAt: number }>;
 }
 
-const file = () => path.join(app.getPath('userData'), 'meta.json');
+const file = () => cachePath('meta.json');
 let store: Store | null = null;
+
+/** Forget the in-memory copy: the file behind it was deleted, or the folder it lives in moved. */
+export function resetRt(): void {
+  store = null;
+}
 
 const load = (): Store => {
   if (store) return store;

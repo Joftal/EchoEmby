@@ -1,6 +1,6 @@
-import { app } from 'electron';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { cachePath } from '../cache/root';
 
 /**
  * One JSON file per outside source under userData, shared by the IMDb / Trakt / Bangumi lookups.
@@ -26,13 +26,27 @@ export interface SourceCache<T> {
   markEmpty(key: string): void;
 }
 
+/** Files this layer owns, by name. `clearMetaFiles()` deletes them and every loader forgets its copy. */
+const resetters = new Set<() => void>();
+
+export const META_FILES = ['tmdb.json', 'imdb.json', 'trakt.json', 'bangumi.json', 'csm.json', 'meta.json'];
+
+export function resetSources(): void {
+  for (const fn of resetters) fn();
+}
+
 export function sourceCache<T extends { fetchedAt: number }>(
   name: string,
   hitTtl: number = 30 * DAY,
   missTtl: number = 7 * DAY,
 ): SourceCache<T> {
-  const file = () => path.join(app.getPath('userData'), name);
+  const file = () => cachePath(name);
   let data: Record<string, T | Missing> | null = null;
+  // Every source registers its loader here so one 清空 can make them all re-read: deleting the files alone
+  // would leave each module's in-memory copy answering from a file that no longer exists.
+  resetters.add(() => {
+    data = null;
+  });
 
   const load = (): Record<string, T | Missing> => {
     if (!data) {

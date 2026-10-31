@@ -1,4 +1,5 @@
-import { app, net } from 'electron';
+import { net } from 'electron';
+import { cachePath } from '../cache/root';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import * as config from '../config';
@@ -127,8 +128,14 @@ interface Store {
   bili: { fetchedAt: number; rows: BiliRow[] } | null;
 }
 
-const file = () => path.join(app.getPath('userData'), 'calendar.json');
+const file = () => cachePath('calendar.json');
 let store: Store | null = null;
+
+/** Forget the in-memory copy: the file behind it was deleted, or the folder it lives in moved. */
+export function resetCalendar(): void {
+  store = null;
+  dirty = false;
+}
 /** One write per answer, however many entries the run produced. */
 let dirty = false;
 

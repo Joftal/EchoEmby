@@ -87,6 +87,13 @@ if (!app.requestSingleInstanceLock()) {
   // 152 B/s vs 2.8 MB/s through the local proxy, which is why 系统代理 is the default.
   app.commandLine.appendSwitch('enable-gpu-rasterization');
   app.commandLine.appendSwitch('ignore-gpu-blocklist');
+  /* 缓存位置 moves the pictures too, but Chromium picks its cache folder once, at start-up, from sessionData
+     (measured 2026-10-31: an explicit --disk-cache-dir on the command line was ignored and the pictures still
+     landed in userData/Cache). Pointing sessionData at the chosen folder is the lever that works; it has to
+     happen before anything asks for a session, so it is here with the other launch-time switches. A chosen
+     folder therefore takes the image cache on the next launch — the row in 设置 says so. */
+  const chosenCache = config.bootCacheRoot();
+  if (chosenCache) app.setPath('sessionData', path.join(chosenCache, 'chromium'));
 
   app.whenReady().then(async () => {
     startNetMeter();

@@ -1,10 +1,11 @@
-import { app, net } from 'electron';
+import { net } from 'electron';
 import { createHash } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Readable } from 'node:stream';
 import * as config from './config';
+import { cachePath } from './cache/root';
 
 /**
  * The byte cache behind the playback bridge.
@@ -118,7 +119,7 @@ class MediaCache {
   }
 
   private async scan(): Promise<void> {
-    this.root = path.join(app.getPath('userData'), 'media-cache');
+    this.root = cachePath('media-cache');
     await fsp.mkdir(this.root, { recursive: true });
     const dirs = await fsp.readdir(this.root, { withFileTypes: true }).catch(() => []);
     for (const d of dirs) {
@@ -582,6 +583,19 @@ class MediaCache {
       e.bytes = 0;
       this.entries.set(e.meta.key, e);
     }
+  }
+
+  /** After the folder moved: drop what was learned about the old one and read the new one. A viewing that is
+   *  already reading bytes keeps its entry objects, which point at files that no longer exist — those
+   *  requests fail and the bridge asks the server again, which is the same path a first play takes. */
+  reset(): Promise<void> {
+    this.cancelPrefetch();
+    this.entries.clear();
+    this.total = 0;
+    this.serving.clear();
+    this.broken.clear();
+    this.initPromise = null;
+    return this.init();
   }
 
   /** 退出程序时清理缓存, bounded by the caller's exit budget. */

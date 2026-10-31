@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { isAnime4kLevel } from '../shared/anime4k';
 import { isAudioLang, isSubLang } from '../shared/lang';
-import type { Account, AppConfig, DanmakuSettings, DanmakuSource, MediaCachePrefs, MetaKeys, PlayerPrefs, Settings, SettingsPatch, WindowPrefs } from '../shared/types';
+import type { Account, AppConfig, CachePrefs, DanmakuSettings, DanmakuSource, MediaCachePrefs, MetaKeys, PlayerPrefs, Settings, SettingsPatch, WindowPrefs } from '../shared/types';
 
 /* No `cuda`: mpv only offers that path to an OpenGL or Vulkan backend, and this player launches with
    `--vo=gpu-next --gpu-api=d3d11` — it answered 「CUDA hwdec only works with OpenGL or Vulkan backends」 and
@@ -95,6 +95,9 @@ const DEFAULT_DANMAKU: DanmakuSettings = {
   blockedWords: '',
 };
 
+/** '' keeps every cache in the profile folder, which is what the app did before the row existed. */
+const DEFAULT_CACHE: CachePrefs = { root: '' };
+
 const DEFAULT_SETTINGS: Settings = {
   player: { ...DEFAULT_PLAYER },
   window: { ...DEFAULT_WINDOW },
@@ -102,6 +105,7 @@ const DEFAULT_SETTINGS: Settings = {
   proxyMode: 'system',
   proxyUrl: '',
   danmaku: { ...DEFAULT_DANMAKU },
+  cache: { ...DEFAULT_CACHE },
 };
 
 const num = (v: unknown, lo: number, hi: number, dflt: number): number =>
@@ -234,9 +238,35 @@ const pickSettings = (raw: Partial<Settings> | undefined): Settings => ({
   proxyMode: raw?.proxyMode && PROXY_MODES.includes(raw.proxyMode) ? raw.proxyMode : DEFAULT_SETTINGS.proxyMode,
   proxyUrl: str(raw?.proxyUrl),
   danmaku: pickDanmaku(raw?.danmaku),
+  cache: pickCache(raw?.cache),
 });
 
+/** Only a path that names a place: a bare word would put the caches in whatever folder the app was started
+ *  from, which for a packaged build is somewhere nobody would look. Trailing separators are dropped so the
+ *  same folder is never stored two ways. */
+const pickCache = (raw: Partial<CachePrefs> | undefined): CachePrefs => {
+  const root = typeof raw?.root === 'string' ? raw.root.trim() : '';
+  if (!/^([a-zA-Z]:[\\/]|\\\\)/.test(root) && !root.startsWith('/')) return { ...DEFAULT_CACHE };
+  const trimmed = root.replace(/[\\/]+$/, '');
+  return { root: trimmed || DEFAULT_CACHE.root };
+};
+
 const file = () => path.join(app.getPath('userData'), 'config.json');
+
+/** The one setting a launch needs before the app is ready, read straight from the file.
+ *
+ *  `load()` must not be used this early: it decrypts the saved tokens with safeStorage, which only answers
+ *  once the app is ready. Called any sooner, every account comes back with an empty token — and because the
+ *  reading is cached for the whole run, every request in that run is answered 401 (measured 2026-10-31).
+ *  This reads the same field and touches nothing encrypted. */
+export function bootCacheRoot(): string {
+  try {
+    const raw = JSON.parse(readFileSync(file(), 'utf8')) as Partial<AppConfig>;
+    return pickCache(raw.settings?.cache).root;
+  } catch {
+    return '';
+  }
+}
 
 const readToken = (raw: string): string => {
   if (!raw.startsWith('dpapi:')) return raw;
@@ -373,6 +403,7 @@ export function saveSettings(patch: SettingsPatch): Settings {
     window: { ...cfg.settings.window, ...(patch.window || {}) },
     mediaCache: { ...cfg.settings.mediaCache, ...(patch.mediaCache || {}) },
     danmaku: { ...cfg.settings.danmaku, ...(patch.danmaku || {}) },
+    cache: { ...cfg.settings.cache, ...(patch.cache || {}) },
   };
   cfg.settings = pickSettings(next);
   save(cfg);

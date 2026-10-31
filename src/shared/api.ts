@@ -1,4 +1,4 @@
-import type { Account, AppConfig, BangumiScore, CalendarResult, CsmGuide, DanmakuAnime, DanmakuDebugReply, DanmakuEpisode, DanmakuLink, DanmakuLookup, DanmakuQuery, DanmakuSource, DanmakuTestResult, DanmakuTrack, FacetOption, ImdbRating, IpcResult, LibraryItem, LibraryRow, MediaCacheStats, MetaKeys, NetProbe, PlayerCommand, PlayerMedia, PlayerSession, PlayerState, PlayerThumb, RtScores, Settings, SettingsPatch, TmdbCredits, TmdbMeta, TmdbRelated, TmdbStills, TraktScores, WatchedRecord } from './types';
+import type { Account, AppConfig, BangumiScore, CalendarResult, CsmGuide, DanmakuAnime, DanmakuDebugReply, DanmakuEpisode, DanmakuLink, DanmakuLookup, DanmakuQuery, DanmakuSource, DanmakuTestResult, DanmakuTrack, CacheCategoryId, CacheUsage, FacetOption, ImdbRating, IpcResult, LibraryItem, LibraryRow, MediaCacheStats, MetaKeys, NetProbe, PlayerCommand, PlayerMedia, PlayerSession, PlayerState, PlayerThumb, RtScores, Settings, SettingsPatch, TmdbCredits, TmdbMeta, TmdbRelated, TmdbStills, TraktScores, WatchedRecord } from './types';
 
 export interface EchoEmbyApi {
   app: {
@@ -123,6 +123,19 @@ export interface EchoEmbyApi {
   mediaCache: {
     stats(): Promise<IpcResult<MediaCacheStats>>;
     clear(): Promise<IpcResult<MediaCacheStats>>;
+  };
+  /** 缓存管理: what each kind of cache takes on disk, and one way to drop one kind or all of them. */
+  cache: {
+    usage(): Promise<IpcResult<CacheUsage>>;
+    clear(id: CacheCategoryId | 'all'): Promise<IpcResult<CacheUsage>>;
+    setRoot(root: string): Promise<IpcResult<CacheUsage>>;
+    pick(): Promise<IpcResult<string | null>>;
+    open(): Promise<IpcResult<string>>;
+    refresh(): Promise<IpcResult<{ entries: number; hits: number; misses: number }>>;
+    /** Fires when the background pass finds a library that moved. The page has to forget what it read from
+     *  the cache, and the lobby may repaint itself — that is the whole point of the pass, and doing it only
+     *  in the main process would leave the renderer's own ten-minute memo in charge. */
+    onStale(cb: (e: { libraries: string[]; at: number }) => void): () => void;
   };
   ui: {
     window(action: 'minimize' | 'maximize' | 'close'): void;

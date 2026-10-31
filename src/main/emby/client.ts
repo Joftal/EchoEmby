@@ -3,6 +3,8 @@ import { hasContent } from '../../shared/types';
 import type { Account, FacetOption, LibraryItem, LibraryRow, MediaStreamInfo, Person, PlayMethod, PlaybackSource, Providers, StudioRef } from '../../shared/types';
 import { buildDeviceProfile } from './deviceProfile';
 import { cleanTrackTitle } from '../track-title';
+import { diskCache, DAY, HOUR, MINUTE } from '../cache/disk';
+import { userDataStore } from '../cache/userdata';
 
 export interface Identity {
   deviceId: string;
@@ -253,6 +255,13 @@ async function http(url: string, init: RequestInit, timeoutMs: number): Promise<
 const TTL = 10 * 60_000;
 const session = new Map<string, { at: number; value: unknown; pending: Promise<unknown> | null }>();
 
+/** 刷新当前页 is a promise to the viewer that the next look at a page is a fresh one, and this memo answers
+ *  before the disk does — so it has to go with the disk entries, or a full 刷新 still shows the old lobby for
+ *  ten minutes. The other accounts lose a 10-minute memo, which they rebuild on their next ask. */
+export function dropSessionCached(): void {
+  session.clear();
+}
+
 function sessionCached<T>(key: string, load: () => Promise<T>): Promise<T> {
   const hit = session.get(key);
   if (hit?.pending) return hit.pending as Promise<T>;
@@ -276,6 +285,64 @@ function sessionCached<T>(key: string, load: () => Promise<T>): Promise<T> {
   return pending;
 }
 
+
+/** Which answers are worth keeping on disk, and for how long.
+ *
+ *  Measured 2026-10-31 on the gateway: one round trip is 450–550 ms whatever it carries, so the cost of a
+ *  page is its number of asks, not its bytes. The rule below follows the split that stood up in that
+ *  measurement — a library's shape and a title's metadata do not change between two openings of the app,
+ *  while 观看状态 does, and is handled by the store next door rather than by a shorter TTL here.
+ *
+ *  Two asks are deliberately left uncached:
+ *  — the freshness probe (`Limit 1` newest-first) is the signal that retires a library, so answering it from
+ *    disk would let a stale cache bless itself;
+ *  — browsing, favorites and 继续观看 carry a filter the viewer is actively turning, and a rewound answer
+ *    reads as a broken button.
+ */
+function cacheTtl(path: string, params: Record<string, string | number | boolean | undefined>): number {
+  // Half an hour, not a day: a library added in the server's own admin page should show up the same day.
+  if (path.endsWith('/Views')) return 30 * MINUTE;
+  if (path === '/Genres' || path === '/Studios') return 7 * DAY;
+  if (/^\/Shows\/[^/]+\/(Seasons|Episodes)$/.test(path)) return 12 * HOUR;
+  if (path.endsWith('/Items/Latest')) return 20 * MINUTE;
+  if (path.endsWith('/Items')) {
+    // One row per related-work card (the detail page asks 21 of these in a row).
+    if (params.SearchTerm) return 7 * DAY;
+    // The 最新更新 pass: up to 1200 episodes of one library, ~0.85 MB, asked once per row per lobby paint.
+    if (Number(params.Limit) === 1200) return 20 * MINUTE;
+    // counts(): one row of one type, no sort — the total is the answer.
+    if (Number(params.Limit) === 1 && !params.SortBy) return 3 * HOUR;
+    // A grid page (a library, 类型/公司/年份 narrowed, one sort): the rows change only when something is added
+    // to the library, and the 10 minutes is the same window the renderer already keeps in memory. Favourites
+    // are excluded on purpose — starring a film has to move it in and out of that list at once.
+    if (params.IncludeItemTypes && params.SortBy && !params.Filters && Number(params.Limit) > 1) return 10 * MINUTE;
+  }
+  // The detail page's own item read (People and Taglines included). Only that shape: the same path with
+  // Fields=UserData is the live resume point, and a cached copy of that would hand back a stale position.
+  if (/^\/Users\/[^/]+\/Items\/[^/]+$/.test(path) && String(params.Fields || '') === DETAIL_FIELDS) return HOUR;
+  // What this server is and what it can do: asked at login and by 网络, and it changes when the server is
+  // upgraded, not between two page opens.
+  if (path === '/System/Info/Public') return HOUR;
+  return 0;
+}
+
+/** How old a learned 观看状态 may be before a cached page stops trusting it. Two minutes would re-ask on every
+ *  reopen; ten keeps a splash of episode pages free while bounding how wrong a phone-side change can be.
+ *  An answer whose rows are all newer than this — the usual case right after playback — costs no round trip. */
+const CATCH_UP_MS = 10 * MINUTE;
+
+/** Cap on the ids one catch-up asks about: a detail page or one season's episodes fit in a single ask, and
+ *  anything larger is a grid, which the TTL above already keeps fresh enough. */
+const CATCH_UP_IDS = 60;
+
+/** A zero-row answer is a fact about this moment, not about the library: 「本库没有这部」 asked today must not
+ *  still answer in a week, or a title added on the server stays missing in the app. */
+function emptyAnswerTtl(ttl: number, params: Record<string, string | number | boolean | undefined>, body: unknown): number {
+  if (!params.SearchTerm || ttl < HOUR) return ttl;
+  const rows = (body as { Items?: unknown[] } | null)?.Items;
+  return Array.isArray(rows) && rows.length === 0 ? 30 * MINUTE : ttl;
+}
+
 export class EmbyClient {
   constructor(
     private readonly account: Account,
@@ -295,13 +362,69 @@ export class EmbyClient {
     };
   }
 
+  /** Ids collide across servers (173216 is a different film on each), so the namespace is the account's own
+   *  pair — and an account is also what a 清空 button means by "mine". */
+  private cacheScope(): string {
+    return `${this.account.accountId}|${this.account.userId}`;
+  }
+
+  /** A library's answers share a prefix so one probe can retire all of them (`dropPrefix`), instead of
+   *  guessing which endpoints depended on that library's contents. */
+  private cacheKey(path: string, params: Record<string, string | number | boolean | undefined>): string {
+    const body = Object.keys(params)
+      .filter(k => params[k] !== undefined && params[k] !== '')
+      .sort()
+      .map(k => `${k}=${String(params[k])}`)
+      .join('&');
+    const lib = params.ParentId ? `lib:${params.ParentId}|` : '';
+    return `${this.cacheScope()}|${lib}${path}|${body}`;
+  }
+
   async get<T = any>(path: string, params: Record<string, string | number | boolean | undefined> = {}, timeoutMs = 15000): Promise<T> {
     const q = authQuery(this.identity);
     for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') q.set(k, String(v));
+    const ttl = cacheTtl(path, params);
+    const key = ttl ? this.cacheKey(path, params) : '';
+    if (key) {
+      const kept = diskCache.read<T>(key);
+      if (kept !== null) {
+        userDataStore.apply(this.account.userId, kept);
+        await this.catchUp(kept, ttl);
+        return kept;
+      }
+    }
     const res = await http(`${this.base}${path}?${q}`, { method: 'GET', headers: this.headers() }, timeoutMs);
     const text = await res.text();
     if (!res.ok) throw new EmbyError(text.slice(0, 200) || res.statusText, res.status, path);
-    return text ? JSON.parse(text) : ({} as T);
+    const body = (text ? JSON.parse(text) : {}) as T;
+    // Harvest before storing: the stored copy then carries a 观看状态 no older than the store, and a page read
+    // from disk is patched with whatever playback has learned since it was written.
+    userDataStore.harvest(this.account.userId, body);
+    if (key) diskCache.write(key, body, emptyAnswerTtl(ttl, params, body));
+    return body;
+  }
+
+  /** The 观看状态 half of a cached answer cannot come from the disk, and the store next door only knows what
+   *  this machine saw. One small ask — the ids in this answer, their UserData only — closes the gap; answering
+   *  from the stored row instead would park the page where the other device left it hours ago. */
+  private async catchUp<T>(body: T, ttl: number): Promise<void> {
+    // Grids live for ten minutes, so their rows are already close enough and one ask per grid hit would
+    // spend the saving this cache exists for.
+    if (ttl < HOUR) return;
+    const ids = userDataStore.staleIds(this.account.userId, body, CATCH_UP_MS, CATCH_UP_IDS);
+    if (!ids.length) return;
+    if (process.env.ECHOEMBY_CACHE_LOG) console.log('[cache] catch-up %d 观看状态', ids.length);
+    try {
+      const answer = await this.get<any>(
+        `/Users/${this.account.userId}/Items`,
+        { Ids: ids.join(','), Fields: 'UserData' },
+        8000,
+      );
+      userDataStore.harvest(this.account.userId, answer);
+      userDataStore.apply(this.account.userId, body);
+    } catch {
+      // No answer is not an answer: the stored state stays, which is still better than a blank row.
+    }
   }
 
   async post<T = any>(path: string, body?: unknown, params: Record<string, string | number | boolean | undefined> = {}, timeoutMs = 20000): Promise<T> {
@@ -445,27 +568,90 @@ export class EmbyClient {
   private probedViews(): Promise<{ views: LibraryItem[]; fresh: Map<string, number> }> {
     return sessionCached(`navViews|${this.libraryKey}`, async () => {
       const all = await this.libraryViews();
-      const probes = await Promise.all(
-        all.map(v =>
-          this.items({
-            ParentId: v.id,
-            IncludeItemTypes: 'Movie,Series,Episode,Video',
-            Recursive: true,
-            Limit: 1,
-            SortBy: 'DateCreated',
-            SortOrder: 'Descending',
-            Fields: 'DateCreated',
-          })
-            .then(x => ({ at: Date.parse(x[0]?.dateCreated || '') || 0, empty: !x.length }))
-            .catch(() => ({ at: 0, empty: false })),
-        ),
-      );
+      const shots = await Promise.all(all.map(v => this.librarySnapshot(v.id)));
       const fresh = new Map<string, number>();
       all.forEach((v, i) => {
-        if (probes[i].at) fresh.set(v.id, probes[i].at);
+        const s = shots[i];
+        if (!s) return;
+        if (s.at) fresh.set(v.id, s.at);
+        this.noteLibraryFresh(v.id, s.at, s.series, s.count);
       });
-      return { views: all.filter((_, i) => !probes[i].empty), fresh };
+      return { views: all.filter((_, i) => !shots[i]?.empty), fresh };
     });
+  }
+
+  /** The one ask that proves a library moved: its newest row's date, the show that row belongs to, and how
+   *  many rows the library holds. Not cached — the probe is the thing that retires caches, and an answer from
+   *  disk would let a library bless its own stale copy. Null means the ask failed, which proves nothing and
+   *  must not be read as 「this library is empty」. */
+  private async librarySnapshot(viewId: string): Promise<{ at: number; series: string; count: number; empty: boolean } | null> {
+    try {
+      const j = await this.get<any>(
+        `/Users/${this.account.userId}/Items`,
+        {
+          ParentId: viewId,
+          IncludeItemTypes: 'Movie,Series,Episode,Video',
+          Recursive: true,
+          Limit: 1,
+          SortBy: 'DateCreated',
+          SortOrder: 'Descending',
+          Fields: 'DateCreated,SeriesId',
+        },
+        8000,
+      );
+      const first = (j?.Items || [])[0];
+      return {
+        at: Date.parse(first?.DateCreated || '') || 0,
+        series: String(first?.SeriesId || ''),
+        count: Number(j?.TotalRecordCount) || 0,
+        empty: !first,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /** The background pass's question: which libraries moved since the marker we keep. Deliberately not behind
+   *  `sessionCached` — a schedule that reads a ten-minute memo is not a schedule — and deliberately the same
+   *  ask as the launch probe, because that is the only change signal this server offers.
+   *
+   *  Why it is worth its cost: a round is one ask per library (12 on the gateway) plus the folder list, 19 KB
+   *  and under three seconds. At ten minutes it is 2.7 MB a day, and it is what turns 「新集上线要等有人点刷新」
+   *  into 「下一次打开那一页就是新的」. */
+  async probeFreshness(): Promise<string[]> {
+    const all = await this.libraryViews();
+    const changed: string[] = [];
+    await Promise.all(
+      all.map(async v => {
+        const s = await this.librarySnapshot(v.id);
+        if (!s || !s.at) return;
+        if (this.noteLibraryFresh(v.id, s.at, s.series, s.count)) changed.push(v.id);
+      }),
+    );
+    return changed;
+  }
+
+  /** Remember the newest thing in a library, and retire that library's cached answers when the number moves.
+   *
+   *  One `Limit 1` ask per library is the entire invalidation scheme, because it is the only honest signal
+   *  this server gives: it has no content version to compare (checked 2026-10-31 — /System/Info carries no
+   *  content stamp, and the socket endpoint answers 404 on this fork). The probe is already part of the
+   *  lobby's first paint, so the comparison costs nothing extra; a first visit on a machine has nothing to
+   *  retire and only writes the marker. */
+  private noteLibraryFresh(viewId: string, at: number, seriesId: string, count = 0): boolean {
+    if (!at) return false;
+    const key = `${this.cacheScope()}|fresh|${viewId}`;
+    const seen = diskCache.peek<{ at: number; count?: number }>(key);
+    // Two signals, one ask: a new or newer row moves the date, and a row that left (deleted, re-filed) moves
+    // the count while leaving the date where it was. A marker written before this build has no count, so an
+    // upgrade adopts the number without retiring anything — otherwise the first pass would empty every cache.
+    const moved = !!seen && (seen.at !== at || (typeof seen.count === 'number' && count > 0 && seen.count !== count));
+    if (!seen || seen.at !== at || seen.count !== count) diskCache.write(key, { at, count }, 400 * DAY);
+    if (!moved) return false;
+    diskCache.dropPrefix(`${this.cacheScope()}|lib:${viewId}|`);
+    if (seriesId) diskCache.dropPrefix(`${this.cacheScope()}|/Shows/${seriesId}/`);
+    if (process.env.ECHOEMBY_CACHE_LOG) console.log('[cache] library %s moved (was %d/%d, now %d/%d)', viewId, seen?.at, seen?.count, at, count);
+    return true;
   }
 
   async navViews(): Promise<LibraryItem[]> {
@@ -822,7 +1008,10 @@ export class EmbyClient {
     const path = event === 'start' ? '/Sessions/Playing' : '/Sessions/Playing/Stopped';
     const body = { ...this.progressBody(input), EventName: event === 'start' ? 'FirstPlay' : undefined };
     return this.post(path, body, {}, 8000)
-      .then(() => true)
+      .then(() => {
+        if (event === 'stopped') this.patchProgress(input);
+        return true;
+      })
       .catch(e => {
         // A refusal used to end here as a bare `false`, so the one write that decides 看到 could fail with
         // no record of the item, the number or the answer. The caller still gets the boolean it patches cards
@@ -832,10 +1021,26 @@ export class EmbyClient {
       });
   }
 
+  /** The server has just been told where playback stopped; a cached page must not disagree with it. Same
+   *  rule the server applies to 已看: past 90 % the row is finished, and its position goes back to zero. */
+  private patchProgress(input: ProgressInput): void {
+    const total = Math.round(input.durationMs * 10_000);
+    const pos = Math.round(input.positionMs * 10_000);
+    const played = total > 0 && pos >= total * 0.9;
+    userDataStore.patch(this.account.userId, input.itemId, {
+      PlaybackPositionTicks: played ? 0 : pos,
+      PlayedPercentage: total > 0 ? Math.min(100, (pos / total) * 100) : 0,
+      Played: played,
+    });
+  }
+
   async markPlayed(itemId: string): Promise<boolean> {
     const path = `/Users/${this.account.userId}/PlayedItems/${itemId}`;
     return this.post(path)
-      .then(() => true)
+      .then(() => {
+        userDataStore.patch(this.account.userId, itemId, { Played: true, PlaybackPositionTicks: 0, PlayedPercentage: 0 });
+        return true;
+      })
       .catch(e => {
         console.warn('[emby] 已播放没写出去', why(e));
         return false;
@@ -847,6 +1052,7 @@ export class EmbyClient {
     const path = `/Users/${this.account.userId}/FavoriteItems/${itemId}`;
     if (on) await this.post(path);
     else await this.del(path);
+    userDataStore.patch(this.account.userId, itemId, { IsFavorite: on });
     return on;
   }
 }

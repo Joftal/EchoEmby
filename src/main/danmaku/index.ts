@@ -1,7 +1,7 @@
-import { app } from 'electron';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import * as config from '../config';
+import { cachePath } from '../cache/root';
 import { clearFailure, commentPage, comments, lastFailure, matchFile, normalizeBase, probe, raw, searchAnime, searchEpisodes, type ApiAnime, type ApiCommentRow, type ApiSource } from './api';
 import type {
   DanmakuAnime,
@@ -107,8 +107,14 @@ interface Store {
   counts: Record<string, Cached<number>>;
 }
 
-const file = () => path.join(app.getPath('userData'), 'danmaku.json');
+const file = () => cachePath('danmaku.json');
 let store: Store | null = null;
+
+/** Forget the in-memory copy: the file behind it was deleted, or the folder it lives in moved. The hand-made
+ *  链接 are in that file too, so this is only ever called after the caller decided to drop them as well. */
+export function resetStore(): void {
+  store = null;
+}
 
 const empty = (): Store => ({ v: STORE_VERSION, tracks: {}, candidates: {}, links: {}, counts: {} });
 

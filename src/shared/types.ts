@@ -51,6 +51,18 @@ export interface MediaCacheStats {
   enabled: boolean;
 }
 
+/** What the 剧集信息 layer holds. Separate from MediaCacheStats because nothing here is a video: this is the
+ *  server's own answers kept on disk, and its ceiling is the app's own rather than a setting the viewer picks. */
+export interface DataCacheStats {
+  bytes: number;
+  entries: number;
+  cap: number;
+  /** Answered from disk, and asked of the server, since this process started — the pair that says whether the
+   *  cache is doing anything at all. */
+  hits: number;
+  misses: number;
+}
+
 export interface Settings {
   player: PlayerPrefs;
   window: WindowPrefs;
@@ -63,15 +75,54 @@ export interface Settings {
    *  `user:pass@` in front of the host. */
   proxyUrl: string;
   danmaku: DanmakuSettings;
+  cache: CachePrefs;
+}
+
+/** 缓存位置. Everything the app can throw away lives under one folder: an empty root means the profile
+ *  folder it has always used. The Chromium image cache is the one exception — its location is decided before
+ *  the app is ready, so it follows on the next launch rather than immediately. */
+export interface CachePrefs {
+  /** Absolute path, no trailing separator; '' for the default. */
+  root: string;
+}
+
+/** One row of 设置 → 缓存. The six kinds are split by who owns the bytes and how they are thrown away, because
+ *  a single 「清空缓存」 would also drop the 弹幕 links someone matched by hand. */
+export type CacheCategoryId = 'media' | 'data' | 'images' | 'meta' | 'danmaku' | 'thumbs';
+
+export interface CacheCategory {
+  id: CacheCategoryId;
+  label: string;
+  /** One line about what is inside, printed under the label. */
+  hint: string;
+  bytes: number;
+  /** Files, videos or rows — whatever this kind counts best. */
+  items: number;
+  /** Chromium's image cache only moves on the next launch, so the row says so instead of promising now. */
+  restart?: boolean;
+}
+
+export interface CacheUsage {
+  /** Where the folders are now. */
+  root: string;
+  /** The profile folder, i.e. what '' means. */
+  defaultRoot: string;
+  total: number;
+  categories: CacheCategory[];
+  /** Answers served from disk and answers fetched this run. Both count from launch, because the point of the
+   *  number is 「缓存有没有在工作」 now, not since the folder was created. */
+  hits: number;
+  misses: number;
 }
 
 /** A settings write may name only the rows the user touched, so every nested block is partial too; the
  *  main process rebuilds each block from its own defaults before it lands in the file. */
-export type SettingsPatch = Omit<Partial<Settings>, 'player' | 'danmaku' | 'window' | 'mediaCache'> & {
+export type SettingsPatch = Omit<Partial<Settings>, 'player' | 'danmaku' | 'window' | 'mediaCache' | 'cache'> & {
   player?: Partial<PlayerPrefs>;
   window?: Partial<WindowPrefs>;
   mediaCache?: Partial<MediaCachePrefs>;
   danmaku?: Partial<DanmakuSettings>;
+  cache?: Partial<CachePrefs>;
 };
 
 /** Knobs that belong to the player itself. `hwdec` is read when mpv is launched and again at runtime, so
