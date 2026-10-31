@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import { AppWindow, ChevronRight, Database, Globe, GripVertical, HardDrive, MessageSquareText, Play, Plus, X } from 'lucide-vue-next';
+import { AppWindow, Captions, ChevronRight, Database, Globe, GripVertical, HardDrive, MessageSquareText, Monitor, Play, Plus, X } from 'lucide-vue-next';
 import type { DanmakuSource, MediaCachePrefs, MediaCacheStats, NetProbe, PlayerPrefs, Settings, WindowPrefs } from '../../shared/types';
 import { useAppStore } from '../stores/app';
 import FilterSelect from '../components/browse/FilterSelect.vue';
@@ -49,9 +49,7 @@ const dmSummary = computed(() => {
   return usable.value.length > 1 ? `${first} +${usable.value.length - 1}` : first;
 });
 const dmHint = computed(() =>
-  usable.value.length
-    ? '按顺序依次尝试，第一个答得上的用来取弹幕'
-    : '现在没有可用接口，播放器不会请求弹幕；打开这里的开关或补一条完整地址即可',
+  usable.value.length ? '按顺序试，第一条能答的取弹幕' : '没有可用接口，播放器不会请求弹幕',
 );
 
 /* The list, the addresses and the tester live in one sheet: a settings row that grows a line per mirror
@@ -282,7 +280,13 @@ function sizeRead(n: number): string {
   return (i <= 1 || v >= 100 ? Math.round(v) : v.toFixed(1)) + ' ' + units[i];
 }
 
-const usedRead = computed(() => (stats.value ? sizeRead(stats.value.bytes) + ' · ' + stats.value.items + ' 个视频' : '统计中…'));
+const usedRead = computed(() => (stats.value ? sizeRead(stats.value.bytes) : '统计中…'));
+/** The line under 已用: how many videos it is, and what the ceiling is. The button beside it only says
+ *  what it does, so neither half repeats the other. */
+const cacheNote = computed(() => {
+  const cap = mc.value?.limitGB ? `${mc.value.limitGB} GB 上限` : '不限上限';
+  return stats.value ? `${stats.value.items} 个视频 · ${cap}` : cap;
+});
 
 async function readCache(): Promise<void> {
   const r = await window.echoemby.mediaCache.stats();
@@ -332,79 +336,72 @@ const CLOSE_ACTIONS: { value: WindowPrefs['closeAction']; label: string }[] = [
   { value: 'tray', label: '隐藏至菜单栏' },
 ];
 
+/* Four chapters, and the card labels do the finer grouping: 播放 holds 画面 / 播放 / 字幕与音频,
+   应用 holds 窗口 / 网络 / 元数据. The old rail had one entry per card, so 窗口 and 元数据 each owned two
+   rows while 播放 owned eight, and the index said less than the cards already did. */
+/* One line that changes with the answer: the row already names the question, so the second line says
+   what the current choice does instead of explaining all three choices at once. */
+const FIT_HINTS: Record<PlayerPrefs['fit'], string> = {
+  fit: '完整显示，四周留黑边',
+  fill: '裁掉溢出，不留黑边',
+  stretch: '拉满窗口，画面会变形',
+};
+const CLOSE_HINTS: Record<WindowPrefs['closeAction'], string> = {
+  quit: '关掉窗口就退出；进度会写回服务器',
+  tray: '只隐藏窗口，播放继续',
+};
+const PROXY_HINTS: Record<Settings['proxyMode'], string> = {
+  system: '跟随 Windows 的代理设置',
+  manual: '用下面的地址',
+  none: '直连，不走代理',
+};
+
+/* One page per question. A rail entry owns exactly one card and one card only holds its own rows:
+   nothing shares a page with anything else, so what is on screen is the whole answer to the rail's word. */
 const SECTIONS = [
+  { id: 'screen', label: '画面', icon: Monitor },
   { id: 'play', label: '播放', icon: Play },
+  { id: 'tracks', label: '字幕与音频', icon: Captions },
   { id: 'cache', label: '缓存', icon: HardDrive },
-  { id: 'window', label: '窗口', icon: AppWindow },
   { id: 'danmaku', label: '弹幕', icon: MessageSquareText },
-  { id: 'meta', label: '元数据', icon: Database },
+  { id: 'window', label: '窗口', icon: AppWindow },
   { id: 'network', label: '网络', icon: Globe },
+  { id: 'meta', label: '元数据', icon: Database },
 ] as const;
 type SectionId = (typeof SECTIONS)[number]['id'];
 
+/** What the chosen page answers, on the title line: eight short pages read as eight empty forms without a
+ *  word saying what each one is for. */
+const DESCS: Record<SectionId, string> = {
+  screen: '解码、适配与画质增强',
+  play: '快进、连播与预览',
+  tracks: '默认选哪一条字幕与音轨',
+  cache: '看过的片段留在本地',
+  danmaku: '接口与调试台',
+  window: '关闭按钮与播放时的行为',
+  network: '代理与连通性',
+  meta: 'TMDB 与 Trakt 的密钥',
+};
+
 const scrollEl = ref<HTMLElement | null>(null);
-const active = ref<SectionId>('play');
-/** A jump owns the indicator until its glide ends: the last sections are too short to reach the top
- *  line, so the scroll position alone would light 网络 after a click on 元数据. */
-let navLock = 0;
+const active = ref<SectionId>('screen');
 
-function unlock(): void {
-  navLock = 0;
-}
-
-/** The anchors are data markers rather than # links: the window's whole address is the router's hash, so
- *  an <a href="#play"> would send the app to a route that does not exist. */
-function sectionEl(id: SectionId): HTMLElement | null {
-  return scrollEl.value?.querySelector<HTMLElement>(`[data-sec="${id}"]`) ?? null;
-}
-
-/** The title and the section index sit outside the scroll pane, so a sheet's own top is the line a jump
- *  stops on: the pane's top edge is already below both navigations. */
+/** A page is swapped, not scrolled to: only the chosen one is in the document, so the pane comes back at
+ *  its own top and the rail's word is the page's name. */
 function go(id: SectionId): void {
-  const pane = scrollEl.value;
-  const el = sectionEl(id);
-  if (!pane || !el) return;
-  active.value = id;
-  navLock = performance.now() + 900;
-  const top = Math.min(pane.scrollHeight - pane.clientHeight, Math.max(0, el.offsetTop));
-  pane.scrollTo({ top, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
-}
-
-/** A wheel over the fixed title or index still drives the sheets: the page itself has nothing left to
- *  scroll, so without this the 152px beside the sheets would be a dead strip. */
-function onWheel(e: WheelEvent): void {
-  unlock();
-  const pane = scrollEl.value;
-  if (!pane) return;
-  if ((e.target as Element | null)?.closest?.('.scroll')) return;
-  const step = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
-  pane.scrollBy({ top: step });
-}
-
-/** The last sheet whose top has passed the pane's first line is the one being read. The final sheet can
- *  never reach that line at the bottom, so it is chosen outright. */
-function onScroll(): void {
-  const pane = scrollEl.value;
-  if (!pane) return;
-  if (performance.now() < navLock) return;
-  if (pane.scrollTop + pane.clientHeight >= pane.scrollHeight - 2) {
-    active.value = SECTIONS[SECTIONS.length - 1].id;
+  if (active.value === id) {
+    scrollEl.value?.scrollTo({ top: 0 });
     return;
   }
-  const line = pane.scrollTop + 8;
-  let current: SectionId = SECTIONS[0].id;
-  for (const s of SECTIONS) {
-    const el = sectionEl(s.id);
-    if (el && el.offsetTop <= line) current = s.id;
-  }
-  active.value = current;
+  active.value = id;
+  void nextTick(() => scrollEl.value?.scrollTo({ top: 0 }));
 }
 
 const addr = ref('');
 watch(() => settings.value?.proxyUrl, v => (addr.value = v || ''), { immediate: true });
 const addrHint = computed(() => {
-  if (settings.value?.proxyMode !== 'manual') return '选「手动代理」后用这个地址';
-  return settings.value.proxyUrl ? '改完按回车或点别处生效' : '填好地址才会切换路线';
+  if (settings.value?.proxyMode !== 'manual') return '选「手动代理」才用这个地址';
+  return settings.value.proxyUrl ? '改完回车生效' : '填好地址才会切换路线';
 });
 
 /* These keys live on their own channel because they are not settings the player reads — they are
@@ -460,21 +457,11 @@ onMounted(async () => {
   else await store.refreshSettings();
   if (!store.account) router.replace('/login');
   void readCache();
-  // 弹幕调试 is the one page entered from a sheet this deep in the list, so coming back has to land on
-  // that sheet instead of the top of the page. The address carries no section, but the history entry
-  // remembers the debug page as the one either behind us (返回) or ahead of us (管理 went forward into
-  // 设置) - every other way into this page still starts at 播放. No animation: nothing moved yet.
+  // 弹幕调试 is the one page entered from the settings rail, so coming back has to land on that page
+  // instead of 画面. The address carries no page, but the history entry remembers the debug page as the one
+  // either behind us (返回) or ahead of us (管理 went forward into 设置); every other way in starts at 画面.
   const st = window.history.state as { back?: string; forward?: string } | null;
-  if (st?.back === '/danmaku' || st?.forward === '/danmaku') {
-    await nextTick();
-    const pane = scrollEl.value;
-    const el = sectionEl('danmaku');
-    if (pane && el) {
-      active.value = 'danmaku';
-      navLock = performance.now() + 900;
-      pane.scrollTop = Math.min(pane.scrollHeight - pane.clientHeight, Math.max(0, el.offsetTop));
-    }
-  }
+  if (st?.back === '/danmaku' || st?.forward === '/danmaku') active.value = 'danmaku';
 });
 
 /** The reading is taken again whenever the sheet is opened on 缓存, because the number moves while the
@@ -525,10 +512,11 @@ async function runProbe(): Promise<void> {
 </script>
 
 <template>
-  <div class="page" @wheel.passive="onWheel" @pointerdown="unlock" @keydown="unlock">
+  <div class="page">
     <div class="col">
       <header class="head">
         <h1>设置</h1>
+        <p class="lead">{{ DESCS[active] }}</p>
       </header>
 
       <div class="layout">
@@ -560,399 +548,334 @@ async function runProbe(): Promise<void> {
             </button>
           </nav>
 
-          <div ref="scrollEl" class="scroll" @scroll.passive="onScroll">
+          <div ref="scrollEl" class="scroll">
             <div v-if="!settings || !player" class="skel" aria-hidden="true">
-            <section class="group">
               <div class="pane">
-                <header class="ph">
-                  <span class="tic"><Play :size="15" :stroke-width="1.7" /></span>
-                  <h2>播放</h2>
-                </header>
-                <div v-for="n in 4" :key="n" class="row">
+                <div v-for="n in 5" :key="n" class="row">
                   <div class="k">
                     <span class="sk skk"></span>
-                    <span v-if="n === 3 || n === 4" class="sk skhint"></span>
+                    <span v-if="n > 1" class="sk skhint"></span>
                   </div>
                   <i class="sk skg"></i>
                 </div>
               </div>
-            </section>
-            <section class="group">
-              <div class="pane">
-                <header class="ph">
-                  <span class="tic"><AppWindow :size="15" :stroke-width="1.7" /></span>
-                  <h2>窗口</h2>
-                </header>
-                <div class="row">
-                  <div class="k">
-                    <span class="sk skk"></span>
-                    <span class="sk skhint"></span>
+            </div>
+
+            <template v-else>
+              <section v-if="active === 'screen'" class="group">
+                <div class="pane">
+                  <div class="row">
+                    <div class="k">
+                      <b>硬件解码</b>
+                      <i>默认自动；画面花屏时换软解</i>
+                    </div>
+                    <div class="seg">
+                      <button v-for="o in DECODERS" :key="o.value" type="button" :class="{ on: player.hwdec === o.value }" @click="set({ player: { hwdec: o.value } })">
+                        {{ o.label }}
+                      </button>
+                    </div>
                   </div>
-                  <i class="sk skg"></i>
-                </div>
-              </div>
-            </section>
-            <section class="group">
-              <div class="pane">
-                <header class="ph">
-                  <span class="tic"><MessageSquareText :size="15" :stroke-width="1.7" /></span>
-                  <h2>弹幕</h2>
-                </header>
-                <div v-for="n in 2" :key="n" class="row">
-                  <div class="k">
-                    <span class="sk skk"></span>
-                    <span v-if="n === 1" class="sk skhint"></span>
+
+                  <div class="row">
+                    <div class="k">
+                      <b>画面适配</b>
+                      <i>{{ FIT_HINTS[player.fit] }}</i>
+                    </div>
+                    <FilterSelect
+                      label="画面"
+                      :options="FITS"
+                      :model-value="player.fit"
+                      bare
+                      menu
+                      neutral
+                      @update:model-value="v => set({ player: { fit: v as PlayerPrefs['fit'] } })"
+                    />
                   </div>
-                  <i class="sk skg"></i>
+
+                  <div class="row">
+                    <div class="k">
+                      <b>Anime4K 画质增强</b>
+                      <i>{{ ANIME4K_NOTES[player.anime4k] }}</i>
+                    </div>
+                    <FilterSelect
+                      label="Anime4K"
+                      :options="ANIME4K_OPTIONS"
+                      :model-value="player.anime4k"
+                      bare
+                      menu
+                      neutral
+                      @update:model-value="v => set({ player: { anime4k: v as PlayerPrefs['anime4k'] } })"
+                    />
+                  </div>
+
+                  <div class="row">
+                    <div class="k">
+                      <b>HDR</b>
+                      <i>HDR 片源自动开 Windows HDR，看完还原</i>
+                    </div>
+                    <button type="button" class="sw" :class="{ on: player.hdr }" @click="set({ player: { hdr: !player.hdr } })">
+                      <span class="track"><i></i></span>
+                    </button>
+                  </div>
                 </div>
-              </div>
-            </section>
+              </section>
+
+              <section v-if="active === 'play'" class="group">
+                <div class="pane">
+                  <div class="row">
+                    <div class="k">
+                      <b>快进步长</b>
+                      <i>按 ← / → 跳这么多</i>
+                    </div>
+                    <div class="seg">
+                      <button v-for="s in STEPS" :key="s" type="button" :class="{ on: player.seekStepMs === s }" @click="set({ player: { seekStepMs: s } })">
+                        {{ s / 1000 }} 秒
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="row">
+                    <div class="k">
+                      <b>自动连播</b>
+                      <i>播完接着下一集</i>
+                    </div>
+                    <button type="button" class="sw" :class="{ on: player.autoNext }" @click="set({ player: { autoNext: !player.autoNext } })">
+                      <span class="track"><i></i></span>
+                    </button>
+                  </div>
+
+                  <div class="row">
+                    <div class="k">
+                      <b>进度条预览图</b>
+                      <i>悬停看到那一刻的画面 · 多占约 600 MB</i>
+                    </div>
+                    <button type="button" class="sw" :class="{ on: player.thumbPreview }" @click="set({ player: { thumbPreview: !player.thumbPreview } })">
+                      <span class="track"><i></i></span>
+                    </button>
+                  </div>
+                </div>
+              </section>
+
+              <section v-if="active === 'tracks'" class="group">
+                <div class="pane">
+                  <div class="row">
+                    <div class="k">
+                      <b>字幕首选语言</b>
+                      <i>多条字幕时优先选它</i>
+                    </div>
+                    <FilterSelect
+                      label="字幕"
+                      :options="SUB_LANGS"
+                      :model-value="player.subLang"
+                      bare
+                      menu
+                      neutral
+                      @update:model-value="v => set({ player: { subLang: String(v) } })"
+                    />
+                  </div>
+
+                  <div class="row">
+                    <div class="k">
+                      <b>音频首选语言</b>
+                      <i>多轨时优先无损与多声道</i>
+                    </div>
+                    <FilterSelect
+                      label="音频"
+                      :options="AUDIO_LANGS"
+                      :model-value="player.audioLang"
+                      bare
+                      menu
+                      neutral
+                      @update:model-value="v => set({ player: { audioLang: String(v) } })"
+                    />
+                  </div>
+                </div>
+              </section>
+
+              <section v-if="active === 'cache'" class="group">
+                <div class="pane">
+                  <div class="row">
+                    <div class="k">
+                      <b>媒体缓存</b>
+                      <i>看过的片段留在本地，回拖不再下载</i>
+                    </div>
+                    <button type="button" class="sw" :class="{ on: mc?.enabled }" @click="set({ mediaCache: { enabled: !mc?.enabled } })">
+                      <span class="track"><i></i></span>
+                    </button>
+                  </div>
+
+                  <div class="row">
+                    <div class="k">
+                      <b>缓存上限</b>
+                      <i>超出后整部片删掉，不会切成碎片</i>
+                    </div>
+                    <div class="seg">
+                      <button v-for="g in limitChoices" :key="g" type="button" :class="{ on: mc?.limitGB === g }" @click="set({ mediaCache: { limitGB: g } })">
+                        {{ limitLabel(g) }}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="row">
+                    <div class="k">
+                      <b>预取下一集</b>
+                      <i>先拉下一集开头十分钟</i>
+                    </div>
+                    <button type="button" class="sw" :class="{ on: mc?.prefetchNext }" @click="set({ mediaCache: { prefetchNext: !mc?.prefetchNext } })">
+                      <span class="track"><i></i></span>
+                    </button>
+                  </div>
+
+                  <div class="row">
+                    <div class="k">
+                      <b>退出时清空缓存</b>
+                      <i>下次打开从空开始</i>
+                    </div>
+                    <button type="button" class="sw" :class="{ on: mc?.clearOnExit }" @click="set({ mediaCache: { clearOnExit: !mc?.clearOnExit } })">
+                      <span class="track"><i></i></span>
+                    </button>
+                  </div>
+
+                  <div class="row">
+                    <div class="k">
+                      <b>已用 {{ usedRead }}</b>
+                      <i>{{ cacheNote }}</i>
+                    </div>
+                    <button class="go" type="button" :disabled="cacheBusy || !stats || stats.bytes === 0" @click="clearCache">
+                      {{ cacheBusy ? '清理中…' : '清理全部缓存' }}
+                    </button>
+                  </div>
+                </div>
+              </section>
+
+              <section v-if="active === 'danmaku'" class="group">
+                <div class="pane">
+                  <div class="row">
+                    <div class="k">
+                      <b>弹幕接口</b>
+                      <i :class="{ bad: !usable.length }">{{ dmHint }}</i>
+                    </div>
+                    <button type="button" class="dmbtn" @click="openDm()">
+                      <span class="dot" :class="{ off: !usable.length }"></span>
+                      <span class="t">{{ dmSummary }}</span>
+                      <ChevronRight :size="15" :stroke-width="2" />
+                    </button>
+                  </div>
+
+                  <div class="row">
+                    <div class="k">
+                      <b>接口调试</b>
+                      <i>试匹配、搜作品、发原始请求</i>
+                    </div>
+                    <button type="button" class="dmbtn" @click="router.push('/danmaku')">
+                      <span class="t">打开调试</span>
+                      <ChevronRight :size="15" :stroke-width="2" />
+                    </button>
+                  </div>
+                </div>
+              </section>
+
+              <section v-if="active === 'window'" class="group">
+                <div class="pane">
+                  <div class="row">
+                    <div class="k">
+                      <b>关闭按钮</b>
+                      <i>{{ CLOSE_HINTS[win?.closeAction === 'tray' ? 'tray' : 'quit'] }}</i>
+                    </div>
+                    <div class="seg">
+                      <button v-for="o in CLOSE_ACTIONS" :key="o.value" type="button" :class="{ on: win?.closeAction === o.value }" @click="set({ window: { closeAction: o.value } })">
+                        {{ o.label }}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="row">
+                    <div class="k">
+                      <b>播放时隐藏主程序</b>
+                      <i>出画面时收起主窗口，关播后回来</i>
+                    </div>
+                    <button type="button" class="sw" :class="{ on: win?.hideOnPlay }" @click="set({ window: { hideOnPlay: !win?.hideOnPlay } })">
+                      <span class="track"><i></i></span>
+                    </button>
+                  </div>
+                </div>
+              </section>
+
+              <section v-if="active === 'network'" class="group">
+                <div class="pane">
+                  <div class="row">
+                    <div class="k">
+                      <b>代理模式</b>
+                      <i>{{ PROXY_HINTS[settings.proxyMode] }}</i>
+                    </div>
+                    <div class="seg">
+                      <button v-for="o in PROXY_MODES" :key="o.value" type="button" :class="{ on: settings.proxyMode === o.value }" @click="set({ proxyMode: o.value })">
+                        {{ o.label }}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="row addr">
+                    <div class="k">
+                      <b>代理地址</b>
+                      <i>{{ addrHint }}</i>
+                    </div>
+                    <input v-model="addr" type="text" placeholder="127.0.0.1:7897" spellcheck="false" autocomplete="off" :disabled="settings.proxyMode !== 'manual'" @blur="commitAddr" @keydown.enter="commitAddr" />
+                  </div>
+
+                  <div class="row">
+                    <div class="k">
+                      <b>连接测试</b>
+                      <i v-if="probeRead">{{ probeRead }}</i>
+                      <i v-else-if="probe && probe.error" class="bad">{{ probe.error }}</i>
+                      <i v-else>看当前路线能不能连上服务器</i>
+                    </div>
+                    <button class="go" type="button" :disabled="probing" @click="runProbe">
+                      {{ probing ? '检测中…' : '检测' }}
+                    </button>
+                  </div>
+                </div>
+              </section>
+
+              <section v-if="active === 'meta'" class="group">
+                <div class="pane">
+                  <div class="row addr">
+                    <div class="k">
+                      <b>TMDB Key</b>
+                      <i>{{ tmdbSaved ? '已保存 · 清空后回车可删除' : '标题艺术字、中文简介与评分' }}</i>
+                    </div>
+                    <input
+                      v-model="tmdbKey"
+                      type="password"
+                      :placeholder="tmdbSaved ? '••••••••' : '可留空'"
+                      spellcheck="false"
+                      autocomplete="off"
+                      @blur="commitTmdb()"
+                      @keydown.enter="commitTmdb(true)"
+                    />
+                  </div>
+                  <div class="row addr">
+                    <div class="k">
+                      <b>Trakt</b>
+                      <i>{{ traktSaved ? '已保存 · 清空后回车可删除' : '评分条多一格 Trakt 分数' }}</i>
+                    </div>
+                    <input
+                      v-model="traktKey"
+                      type="password"
+                      :placeholder="traktSaved ? '••••••••' : '可留空'"
+                      spellcheck="false"
+                      autocomplete="off"
+                      @blur="commitTrakt()"
+                      @keydown.enter="commitTrakt(true)"
+                    />
+                  </div>
+                </div>
+              </section>
+            </template>
           </div>
-
-          <template v-else>
-            <section class="group" data-sec="play">
-              <div class="pane">
-                <header class="ph">
-                  <span class="tic"><Play :size="15" :stroke-width="1.7" /></span>
-                  <h2>播放</h2>
-                </header>
-
-                <div class="row">
-                  <div class="k">
-                    <b>硬件解码</b>
-                  </div>
-                  <div class="seg">
-                    <button v-for="o in DECODERS" :key="o.value" type="button" :class="{ on: player.hwdec === o.value }" @click="set({ player: { hwdec: o.value } })">
-                      {{ o.label }}
-                    </button>
-                  </div>
-                </div>
-
-                <div class="row">
-                  <div class="k">
-                    <b>快进步长</b>
-                  </div>
-                  <div class="seg">
-                    <button v-for="s in STEPS" :key="s" type="button" :class="{ on: player.seekStepMs === s }" @click="set({ player: { seekStepMs: s } })">
-                      {{ s / 1000 }} 秒
-                    </button>
-                  </div>
-                </div>
-
-                <!-- 首选语言 sits above the switches because it decides what opens, not how the picture ends:
-                     a file with several tracks is the ordinary case in this library, and until these two rows
-                     existed the only thing that had ever answered 「which one」 was the file's own default. The
-                     hints say what the picker prefers, because 「首选」 alone would leave a reader wondering why
-                     a 5.1 mix won over a 2.0 one that happens to come first in the container. -->
-                <div class="row">
-                  <div class="k">
-                    <b>字幕首选语言</b>
-                    <i>有多条字幕时先选这一种；同为中文时优先完整译制、文字字幕</i>
-                  </div>
-                  <FilterSelect
-                    label="字幕"
-                    :options="SUB_LANGS"
-                    :model-value="player.subLang"
-                    menu
-                    neutral
-                    @update:model-value="v => set({ player: { subLang: String(v) } })"
-                  />
-                </div>
-
-                <div class="row">
-                  <div class="k">
-                    <b>音频首选语言</b>
-                    <i>多轨时优先无损、多声道、高码率</i>
-                  </div>
-                  <FilterSelect
-                    label="音频"
-                    :options="AUDIO_LANGS"
-                    :model-value="player.audioLang"
-                    menu
-                    neutral
-                    @update:model-value="v => set({ player: { audioLang: String(v) } })"
-                  />
-                </div>
-
-                <div class="row">
-                  <div class="k">
-                    <b>自动连播</b>
-                    <i>一集播完接着放下一集</i>
-                  </div>
-                  <button type="button" class="sw" :class="{ on: player.autoNext }" @click="set({ player: { autoNext: !player.autoNext } })">
-                    <span class="track"><i></i></span>
-                  </button>
-                </div>
-
-                <!-- Picture fit sits with the two switches rather than with the track rows: it does not
-                     decide what opens, only how the frame meets the window. The player's own 画面适配 row
-                     writes this same setting, so a change made while watching is the change stored here. -->
-                <div class="row">
-                  <div class="k">
-                    <b>画面适配</b>
-                    <i>适应屏幕：画面完整、四周留黑边 · 填满屏幕：放大到无黑边、裁掉溢出 · 拉伸填满：拉满窗口，不管比例</i>
-                  </div>
-                  <FilterSelect
-                    label="画面"
-                    :options="FITS"
-                    :model-value="player.fit"
-                    bare
-                    menu
-                    neutral
-                    @update:model-value="v => set({ player: { fit: v as PlayerPrefs['fit'] } })"
-                  />
-                </div>
-
-                <!-- 画质增强 sits with 画面适配 because it is the other half of the same question: that row
-                     decides how the frame meets the window, this one decides what is drawn into it. The hint
-                     is the chosen level's own line — four sentences stacked under one label would say three
-                     things the reader is not choosing. -->
-                <div class="row">
-                  <div class="k">
-                    <b>Anime4K 画质增强</b>
-                    <i>{{ ANIME4K_NOTES[player.anime4k] }}</i>
-                  </div>
-                  <FilterSelect
-                    label="Anime4K"
-                    :options="ANIME4K_OPTIONS"
-                    :model-value="player.anime4k"
-                    bare
-                    menu
-                    neutral
-                    @update:model-value="v => set({ player: { anime4k: v as PlayerPrefs['anime4k'] } })"
-                  />
-                </div>
-
-                <!-- The switch below drives Windows' own HDR setting, not an mpv flag: the row is on and a
-                     HDR file plays, the app puts the display into HDR and takes it back out afterwards. -->
-                <div class="row">
-                  <div class="k">
-                    <b>HDR</b>
-                    <i>播放 HDR 片源时打开 Windows 的 HDR，看完还原；SDR 片源不动显示器</i>
-                  </div>
-                  <button type="button" class="sw" :class="{ on: player.hdr }" @click="set({ player: { hdr: !player.hdr } })">
-                    <span class="track"><i></i></span>
-                  </button>
-                </div>
-
-                <div class="row">
-                  <div class="k">
-                    <b>进度条预览图</b>
-                    <i>鼠标停在进度条上显示那一刻的画面；为抓帧要多开一个解码进程，约占 600 MB 内存</i>
-                  </div>
-                  <button type="button" class="sw" :class="{ on: player.thumbPreview }" @click="set({ player: { thumbPreview: !player.thumbPreview } })">
-                    <span class="track"><i></i></span>
-                  </button>
-                </div>
-              </div>
-            </section>
-
-            <section class="group" data-sec="cache">
-              <div class="pane">
-                <header class="ph">
-                  <span class="tic"><HardDrive :size="15" :stroke-width="1.7" /></span>
-                  <h2>缓存</h2>
-                </header>
-
-                <div class="row">
-                  <div class="k">
-                    <b>媒体缓存</b>
-                    <i>看过的片段留在本地，重看与回拖都不再走网络；关掉后每次播放都重新拉取</i>
-                  </div>
-                  <button type="button" class="sw" :class="{ on: mc?.enabled }" @click="set({ mediaCache: { enabled: !mc?.enabled } })">
-                    <span class="track"><i></i></span>
-                  </button>
-                </div>
-
-                <div class="row">
-                  <div class="k">
-                    <b>缓存上限</b>
-                    <i>超出后按最久没看的整条删掉，不会把一部片切成碎片</i>
-                  </div>
-                  <div class="seg">
-                    <button v-for="g in limitChoices" :key="g" type="button" :class="{ on: mc?.limitGB === g }" @click="set({ mediaCache: { limitGB: g } })">
-                      {{ limitLabel(g) }}
-                    </button>
-                  </div>
-                </div>
-
-                <div class="row">
-                  <div class="k">
-                    <b>追剧时预取下一集</b>
-                    <i>这一集播放时先把下一集的开头十分钟拉到本地，切集几乎不用等</i>
-                  </div>
-                  <button type="button" class="sw" :class="{ on: mc?.prefetchNext }" @click="set({ mediaCache: { prefetchNext: !mc?.prefetchNext } })">
-                    <span class="track"><i></i></span>
-                  </button>
-                </div>
-
-                <div class="row">
-                  <div class="k">
-                    <b>退出程序时清理缓存</b>
-                    <i>退出前把整个缓存目录删掉，下次打开从空开始</i>
-                  </div>
-                  <button type="button" class="sw" :class="{ on: mc?.clearOnExit }" @click="set({ mediaCache: { clearOnExit: !mc?.clearOnExit } })">
-                    <span class="track"><i></i></span>
-                  </button>
-                </div>
-
-                <div class="row">
-                  <div class="k">
-                    <b>已用 {{ usedRead }}</b>
-                    <i>{{ mc?.limitGB ? mc.limitGB + ' GB 上限 · 改小后多出来的部分会立刻清掉' : '不限制 · 缓存会一直长到磁盘写满为止' }}</i>
-                  </div>
-                  <button class="go" type="button" :disabled="cacheBusy || !stats || stats.bytes === 0" @click="clearCache">
-                    {{ cacheBusy ? '清理中…' : '清理全部缓存' }}
-                  </button>
-                </div>
-              </div>
-            </section>
-            <section class="group" data-sec="window">
-              <div class="pane">
-                <header class="ph">
-                  <span class="tic"><AppWindow :size="15" :stroke-width="1.7" /></span>
-                  <h2>窗口</h2>
-                </header>
-
-                <div class="row">
-                  <div class="k">
-                    <b>点关闭按钮时</b>
-                    <i>{{ win?.closeAction === 'tray' ? '标题栏的 × 与 Alt+F4 只把界面藏进托盘，程序与播放都不停；托盘图标上可以再打开或退出' : '标题栏的 × 与 Alt+F4 直接退出，会一起关掉播放器，看到哪里会写回服务器' }}</i>
-                  </div>
-                  <div class="seg">
-                    <button v-for="o in CLOSE_ACTIONS" :key="o.value" type="button" :class="{ on: win?.closeAction === o.value }" @click="set({ window: { closeAction: o.value } })">
-                      {{ o.label }}
-                    </button>
-                  </div>
-                </div>
-
-                <div class="row">
-                  <div class="k">
-                    <b>播放时隐藏主程序</b>
-                    <i>画面出来的那一刻把主界面收进托盘，关掉播放器后自己回来</i>
-                  </div>
-                  <button type="button" class="sw" :class="{ on: win?.hideOnPlay }" @click="set({ window: { hideOnPlay: !win?.hideOnPlay } })">
-                    <span class="track"><i></i></span>
-                  </button>
-                </div>
-              </div>
-            </section>
-
-            <section class="group" data-sec="danmaku">
-              <div class="pane">
-                <header class="ph">
-                  <span class="tic"><MessageSquareText :size="15" :stroke-width="1.7" /></span>
-                  <h2>弹幕</h2>
-                </header>
-
-                <div class="row">
-                  <div class="k">
-                    <b>弹幕接口</b>
-                    <i :class="{ bad: !usable.length }">{{ dmHint }}</i>
-                  </div>
-                  <button type="button" class="dmbtn" @click="openDm()">
-                    <span class="dot" :class="{ off: !usable.length }"></span>
-                    <span class="t">{{ dmSummary }}</span>
-                    <ChevronRight :size="15" :stroke-width="2" />
-                  </button>
-                </div>
-
-                <div class="row">
-                  <div class="k">
-                    <b>接口调试</b>
-                    <i>换一套接口之后先在这里试：自动匹配、手动搜索，以及任意一条原始请求</i>
-                  </div>
-                  <button type="button" class="dmbtn" @click="router.push('/danmaku')">
-                    <span class="t">打开调试</span>
-                    <ChevronRight :size="15" :stroke-width="2" />
-                  </button>
-                </div>
-              </div>
-            </section>
-
-            <section class="group" data-sec="meta">
-              <div class="pane">
-                <header class="ph">
-                  <span class="tic"><Database :size="15" :stroke-width="1.7" /></span>
-                  <h2>元数据</h2>
-                </header>
-
-                <div class="row addr">
-                  <div class="k">
-                    <b>TMDB Key</b>
-                    <i>{{ tmdbSaved ? '已保存，重新输入可替换，清空后回车可删除' : 'v3 API Key 或 v4 Token 均可，用于艺术字标题、中文简介与评分补强' }}</i>
-                  </div>
-                  <input
-                    v-model="tmdbKey"
-                    type="password"
-                    :placeholder="tmdbSaved ? '••••••••' : '可留空'"
-                    spellcheck="false"
-                    autocomplete="off"
-                    @blur="commitTmdb()"
-                    @keydown.enter="commitTmdb(true)"
-                  />
-                </div>
-                <div class="row addr">
-                  <div class="k">
-                    <b>Trakt Client ID</b>
-                    <i>{{ traktSaved ? '已保存，重新输入可替换，清空后回车可删除' : 'trakt.tv/app 免费申请，填上后评分条多一格 Trakt 分数' }}</i>
-                  </div>
-                  <input
-                    v-model="traktKey"
-                    type="password"
-                    :placeholder="traktSaved ? '••••••••' : '可留空'"
-                    spellcheck="false"
-                    autocomplete="off"
-                    @blur="commitTrakt()"
-                    @keydown.enter="commitTrakt(true)"
-                  />
-                </div>
-              </div>
-            </section>
-
-            <section class="group" data-sec="network">
-              <div class="pane">
-                <header class="ph">
-                  <span class="tic"><Globe :size="15" :stroke-width="1.7" /></span>
-                  <h2>网络</h2>
-                </header>
-
-                <div class="row">
-                  <div class="k">
-                    <b>代理模式</b>
-                  </div>
-                  <div class="seg">
-                    <button v-for="o in PROXY_MODES" :key="o.value" type="button" :class="{ on: settings.proxyMode === o.value }" @click="set({ proxyMode: o.value })">
-                      {{ o.label }}
-                    </button>
-                  </div>
-                </div>
-
-                <div class="row addr">
-                  <div class="k">
-                    <b>代理地址</b>
-                    <i>{{ addrHint }}</i>
-                  </div>
-                  <input v-model="addr" type="text" placeholder="127.0.0.1:7897" spellcheck="false" autocomplete="off" @blur="commitAddr" @keydown.enter="commitAddr" />
-                </div>
-
-                <div class="row">
-                  <div class="k">
-                    <b>连接测试</b>
-                    <i v-if="probeRead">{{ probeRead }}</i>
-                    <i v-if="probe && probe.error" class="bad">{{ probe.error }}</i>
-                  </div>
-                  <button class="go" type="button" :disabled="probing" @click="runProbe">
-                    {{ probing ? '检测中…' : '检测' }}
-                  </button>
-                </div>
-              </div>
-            </section>
-          </template>
           </div>
         </div>
       </div>
-    </div>
 
 
     <!-- 弹幕接口: the list and the tester share one sheet. A row per mirror in the settings sheet grew with
@@ -1084,7 +1007,15 @@ async function runProbe(): Promise<void> {
   margin-bottom: 26px;
   min-height: 42px;
   display: flex;
-  align-items: center;
+  align-items: baseline;
+  gap: 12px;
+}
+/* The page's own name under the big one: same line, quieter, and it changes with the rail. */
+.lead {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-dim);
 }
 h1 {
   margin: 0;
@@ -1116,7 +1047,7 @@ h1 {
   align-items: center;
   gap: 10px;
   width: 100%;
-  height: 40px;
+  height: 38px;
   padding: 0 12px;
   border-radius: var(--r-row);
   color: var(--text-dim);
@@ -1213,30 +1144,16 @@ h1 {
   }
 }
 .group + .group {
-  margin-top: 22px;
+  margin-top: 30px;
 }
-/* One surface per section, its title inside it: four sheets read as four chapters, and the icon tile
-   gives each chapter a fixed mark both in the rail and at its top. */
+/* One card per subject, its label outside: 播放 alone holds three of them (画面 / 播放 / 字幕与音频), so a
+   caption over each box reads faster than a chapter banner with an icon in it. */
 .pane {
   overflow: hidden;
-  border-radius: 16px;
+  border-radius: 14px;
   background: var(--bg-elev);
   border: 1px solid var(--line);
   box-shadow: var(--shadow-sm);
-}
-.ph {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 16px 22px 14px;
-  border-bottom: 1px solid var(--line);
-}
-.ph h2 {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  line-height: 1.3;
-  color: var(--text);
 }
 .tic {
   display: grid;
@@ -1255,8 +1172,9 @@ h1 {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px 24px;
-  padding: 15px 22px;
+  gap: 10px 24px;
+  padding: 13px 20px;
+  min-height: 60px;
 }
 .row + .row {
   border-top: 1px solid var(--line);
@@ -1278,8 +1196,8 @@ h1 {
 }
 .k i {
   display: block;
-  margin-top: 4px;
-  font-size: 13px;
+  margin-top: 3px;
+  font-size: 12.5px;
   font-style: normal;
   font-variant-numeric: tabular-nums;
   color: var(--text-dim);
@@ -1297,14 +1215,14 @@ h1 {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  max-width: 360px;
-  height: 40px;
-  padding: 0 11px 0 14px;
+  max-width: 340px;
+  height: 34px;
+  padding: 0 9px 0 13px;
   border-radius: 999px;
   border: 1px solid var(--line);
   background: var(--bg-elev-2);
   color: var(--text);
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 600;
   transition: background var(--hov) var(--ease), border-color var(--hov) var(--ease), transform var(--hov) var(--ease-out);
 }
@@ -1886,10 +1804,10 @@ h1 {
 /* A fixed 330 rather than a share of the row: all four fields then start and end on the same two lines
    instead of each one stretching to whatever its label left over. */
 .addr input {
-  width: 330px;
-  height: 40px;
-  padding: 0 12px;
-  border-radius: var(--radius);
+  width: 260px;
+  height: 34px;
+  padding: 0 11px;
+  border-radius: 10px;
   background: #f4f4f7;
   border: 1px solid var(--line);
   outline: none;
@@ -1910,10 +1828,10 @@ h1 {
   background: #fff;
 }
 .go {
-  height: 40px;
-  padding: 0 18px;
+  height: 34px;
+  padding: 0 16px;
   border-radius: 999px;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 600;
   color: var(--text);
   background: var(--bg-elev-2);
@@ -1936,14 +1854,14 @@ h1 {
   display: inline-flex;
   flex-wrap: nowrap;
   gap: 2px;
-  padding: 4px;
+  padding: 3px;
   border-radius: 999px;
   background: var(--bg-elev-2);
 }
 .seg button {
-  padding: 6px 12px;
+  padding: 5px 11px;
   border-radius: 999px;
-  font-size: 13px;
+  font-size: 12.5px;
   white-space: nowrap;
   color: var(--text-dim);
   transition: color var(--hov) var(--ease), background var(--hov) var(--ease), transform var(--hov) var(--ease-out);
@@ -1961,8 +1879,8 @@ h1 {
   transition-duration: 0.1s;
 }
 .sw {
-  width: 44px;
-  height: 26px;
+  width: 42px;
+  height: 24px;
   border-radius: 999px;
   background: var(--chip-hi);
   position: relative;
@@ -1974,8 +1892,8 @@ h1 {
 }
 .sw .track i {
   position: absolute;
-  top: 4px;
-  left: 4px;
+  top: 3px;
+  left: 3px;
   width: 18px;
   height: 18px;
   border-radius: 50%;
@@ -1998,8 +1916,8 @@ h1 {
   outline-offset: 2px;
 }
 /* The page is drawn only once all three blocks have come back from the config read. The real title,
-   rail and chapter headers stay on screen throughout; the bars are the first two chapters' own boxes
-   with their contents pressed in, seven rows and the four hint lines among them. */
+   rail and captions stay on screen throughout; the bars are the first two cards' own boxes with their
+   contents pressed in, one bar per label and hint line. */
 .sk {
   display: block;
   background: var(--shimmer);
@@ -2022,8 +1940,8 @@ h1 {
   border-radius: var(--r-badge);
 }
 .skg {
-  width: 300px;
-  height: 40.2px;
+  width: 280px;
+  height: 34px;
   border-radius: 999px;
 }
 </style>

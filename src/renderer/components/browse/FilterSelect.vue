@@ -132,6 +132,31 @@ const up = ref(false);
 /** Whether the panel hangs off the pill's right corner instead of its left one. */
 const end = ref(false);
 const panelEl = ref<HTMLElement | null>(null);
+/** The card's own corner, in viewport pixels. It is drawn fixed and teleported to <body>: the settings card
+ *  clips its own overflow, and a menu poured out of a row was cut off at the card's edge — the second row of a
+ *  two-row page lost four of its options. A fixed box has no such wall. */
+const pos = ref<Record<string, string>>({});
+
+/** Where the card hangs: the pill's bottom edge for a downward panel, its top edge for an upward one, both four
+ *  pixels up onto the pill so the seam stays closed after the pill drops its bottom corners. */
+function placeAt(): void {
+  const el = root.value;
+  if (!el) return;
+  const r = el.getBoundingClientRect();
+  const style: Record<string, string> = { '--pw': Math.round(r.width) + 'px' };
+  if (up.value) {
+    style.bottom = Math.round(innerHeight - r.top + 4) + 'px';
+    style.top = 'auto';
+  } else {
+    style.top = Math.round(r.bottom - 4) + 'px';
+    style.bottom = 'auto';
+  }
+  const w = panelEl.value?.offsetWidth || 0;
+  const want = end.value && w ? r.right - w : r.left;
+  style.left = Math.round(Math.min(Math.max(6, want), Math.max(6, innerWidth - 6 - w))) + 'px';
+  pos.value = style;
+}
+
 function place(): void {
   const el = root.value;
   if (!el) return;
@@ -141,22 +166,25 @@ function place(): void {
   up.value = below < 200 && above > below;
   room.value = Math.max(0, Math.round(up.value ? above : below));
   end.value = false;
+  placeAt();
 }
-/** Which side has room. The window is not the only wall: the settings pane clips its own overflow, and a
- *  pill parked against that wall poured a 336px menu 171px past it — the last column of the language matrix
- *  was simply not there. So the limit is the nearest clipping box, and the panel turns when the pill's left
- *  edge plus the panel's measured width would cross it. Measured after mount, because the width is the
- *  panel's own (a matrix is as wide as its columns, a cloud as wide as its longest name). */
+/** Which way the card turns. Nothing clips it any more — it is fixed — so the only wall is the window itself,
+ *  and it turns when the pill's left edge plus the panel's own measured width would cross that wall. Measured
+ *  after mount, because the width belongs to the panel (a matrix is as wide as its columns, a cloud as wide as
+ *  its longest name). */
 function fit(): void {
   const el = root.value;
   const panel = panelEl.value;
   if (!el || !panel) return;
-  const left = el.getBoundingClientRect().left;
-  let limit = innerWidth - 8;
-  for (let n = el.parentElement; n; n = n.parentElement) {
-    if (getComputedStyle(n).overflowX !== 'visible') limit = Math.min(limit, n.getBoundingClientRect().right - 6);
-  }
-  end.value = left + panel.offsetWidth > limit;
+  end.value = el.getBoundingClientRect().left + panel.offsetWidth > innerWidth - 8;
+  placeAt();
+}
+
+/** A menu belongs to the moment it was opened: scrolling the page out from under a fixed card would leave it
+ *  hanging over unrelated rows, so any scroll that is not the panel's own list dismisses it. */
+function onScrollAway(e: Event): void {
+  if (panelEl.value && e.target instanceof Node && panelEl.value.contains(e.target)) return;
+  open.value = false;
 }
 
 watch(open, async v => {
@@ -183,7 +211,10 @@ watch([term, () => props.options], async () => {
 });
 
 function onDocPointer(e: PointerEvent): void {
-  if (root.value && !root.value.contains(e.target as Node)) open.value = false;
+  const n = e.target as Node | null;
+  if (!n) return;
+  if (root.value?.contains(n) || panelEl.value?.contains(n)) return;
+  open.value = false;
 }
 function onKey(e: KeyboardEvent): void {
   if (e.key !== 'Escape') return;
@@ -197,16 +228,22 @@ watch(open, v => {
     opened = self;
     document.addEventListener('pointerdown', onDocPointer, true);
     window.addEventListener('keydown', onKey, true);
+    window.addEventListener('scroll', onScrollAway, true);
+    window.addEventListener('resize', placeAt);
   } else {
     if (opened === self) opened = null;
     document.removeEventListener('pointerdown', onDocPointer, true);
     window.removeEventListener('keydown', onKey, true);
+    window.removeEventListener('scroll', onScrollAway, true);
+    window.removeEventListener('resize', placeAt);
   }
 });
 onBeforeUnmount(() => {
   if (opened === self) opened = null;
   document.removeEventListener('pointerdown', onDocPointer, true);
   window.removeEventListener('keydown', onKey, true);
+  window.removeEventListener('scroll', onScrollAway, true);
+  window.removeEventListener('resize', placeAt);
 });
 </script>
 
@@ -220,8 +257,11 @@ onBeforeUnmount(() => {
       </svg>
     </button>
 
+    <!-- Teleported to <body> and drawn fixed: a card that lives inside the settings pane is cut off by the
+         pane's own overflow the moment a row sits near the card's bottom edge. -->
+    <Teleport to="body">
     <Transition name="bubble">
-      <div v-if="open" ref="panelEl" class="panel" :class="{ more, grid, up, end }" :style="[vars, { '--room': `${room}px` }]">
+      <div v-if="open" ref="panelEl" class="panel" :class="{ more, grid, up, end }" :style="[vars, pos, { '--room': `${room}px` }]">
         <label v-if="searchable" class="find">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
             <path d="M11 4.6a6.4 6.4 0 1 0 0 12.8 6.4 6.4 0 0 0 0-12.8Z" />
@@ -262,6 +302,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </Transition>
+    </Teleport>
   </div>
 </template>
 
@@ -345,22 +386,26 @@ onBeforeUnmount(() => {
 }
 
 /* ---------- the panel: it shares the pill's bottom edge and unfolds out of it ---------- */
+/* Fixed, and teleported to <body>, so no ancestor's overflow can cut it: the card is placed in viewport pixels
+   by placeAt() and hangs off the pill's bottom edge (or its top, when it has turned up). */
 .panel {
-  position: absolute;
-  top: 100%;
+  position: fixed;
+  top: 0;
   left: 0;
   z-index: var(--z-modal);
   /* Hug the options, but never narrower than the pill: a panel that stops short of the pill's right
      corner would leave that squared-off corner hanging over nothing. The pill caps at 330px, so the
      panel's 340 cap still covers it at its widest. */
   width: max-content;
-  min-width: 100%;
+  /* Not 100%: inside a fixed box a percentage is the viewport's width, so the pill's own width is handed over
+     as --pw instead. */
+  min-width: var(--pw, 0px);
   max-width: 340px;
   /* Four pixels up onto the pill, not one: opening drops the pill's own bottom border and bottom corners
      (`.on .pill`), so the card has to physically cover that edge or a hairline of it stays visible at the seam.
      The slide only ever reduces this overlap - 12px at the first frame, 4px on arrival - and nothing crosses
      the resting line any more, so 4px is the floor for the whole flight. */
-  margin-top: -4px;
+  margin: 0;
   display: flex;
   flex-direction: column;
   transform-origin: top left;
@@ -394,9 +439,6 @@ onBeforeUnmount(() => {
 /* Turned to the other edge: the same card, hinged off the pill's top instead of its bottom, so the seam moves
    with the hinge. The fade below does not. */
 .panel.up {
-  top: auto;
-  bottom: 100%;
-  margin: 0 0 -4px;
   transform-origin: bottom left;
   --pop: 8px;
   --back: 6px;
