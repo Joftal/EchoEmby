@@ -68,6 +68,9 @@ interface Raw {
   audioDelay: number;
   subScale: number;
   subPos: number;
+  /** Percent of real time the subtitle runs at: 100 is untouched, 50 half speed. A subtitle whose lines are
+   *  timed by hand can be a second off; `sub-speed` exists on this build and moves libass' clock. */
+  subSpeed: number;
   aspect: TrackSelection;
   panscan: number;
   /** False while 拉伸填满 is in force: the frame no longer keeps its own shape. */
@@ -94,6 +97,7 @@ const freshRaw = (): Raw => ({
   audioDelay: 0,
   subScale: 100,
   subPos: 100,
+  subSpeed: 100,
   aspect: 'no',
   panscan: 0,
   keepaspect: true,
@@ -124,6 +128,7 @@ const OBSERVED = [
   'audio-delay',
   'sub-scale',
   'sub-pos',
+  'sub-speed',
   'video-aspect-override',
   'panscan',
   'keepaspect',
@@ -482,6 +487,9 @@ export class MpvKernel {
       case 'sub-pos':
         r.subPos = Math.round(sec(v) ?? 100);
         return;
+      case 'sub-speed':
+        r.subSpeed = Math.round((sec(v) ?? 1) * 100);
+        return;
       case 'video-aspect-override':
         r.aspect = aspectSelection(v);
         return;
@@ -580,6 +588,7 @@ export class MpvKernel {
       audioDelayMs: r.audioDelay,
       subtitleScale: r.subScale,
       subtitlePos: r.subPos,
+      subtitleSpeed: r.subSpeed,
       aspect: r.aspect,
       panscan: r.panscan,
       keepaspect: r.keepaspect,
@@ -704,6 +713,13 @@ export class MpvKernel {
     this.wanted = w && (w.audio !== undefined || w.subtitle !== undefined) ? w : null;
   }
 
+  /** The same answer `setNextTracks` holds until a load, applied to the list that is already on screen — 移除本地字幕
+   *  happens with the file open, so there is no load to hang the pick on. */
+  applyTracksNow(w: { audio?: number; subtitle?: number | 'no' } | null): void {
+    this.setNextTracks(w);
+    this.applyWanted();
+  }
+
   private applyWanted(): void {
     const w = this.wanted;
     if (!w) return;
@@ -731,6 +747,11 @@ export class MpvKernel {
     }
     if (w.audio === undefined && w.subtitle === undefined) this.wanted = null;
   }
+  /** The subtitle mpv is showing right now: a track id, 'no' (off) or 'auto' (its own pick). */
+  get subtitleTrack(): TrackSelection {
+    return this.raw.subtitle;
+  }
+
   /** sid/aid/vid take a track id, "no" (off) or "auto" (let mpv choose). */
   async setTrack(kind: 'video' | 'audio' | 'subtitle', id: TrackSelection): Promise<void> {
     const prop = kind === 'video' ? 'vid' : kind === 'audio' ? 'aid' : 'sid';
@@ -747,6 +768,31 @@ export class MpvKernel {
     for (let i = subs.length - 1; i >= 0; i--) {
       const t = subs[i];
       if (t?.type === 'sub' && t?.external && typeof t.id === 'number') return t.id;
+    }
+    return null;
+  }
+
+  /** 图像字幕 (.sup/.pgs) do not go through `sub-add` — it answers 「error running command」 for a picture
+   *  track (measured 2026-10-31) — but mpv does read one declared as an external *file*, and it re-reads that
+   *  list every time it opens something. So the list is written before a load, and what the update costs is
+   *  one reload rather than a second process. The array form matters: the string form splits on commas and a
+   *  download folder is full of them.
+   */
+  async setExternalFiles(files: string[]): Promise<void> {
+    await this.pipe.call(['set_property', 'external-files', files]);
+  }
+
+  /** The picture track that list put in front of this file, if one is there. A fetched sidecar is external
+   *  too, so it is the codec that separates a `.sup` from a `.ass`.
+   */
+  async findBitmapSubtitle(): Promise<number | null> {
+    const list = await this.pipe.tryCall(['get_property', 'track-list']);
+    const subs = Array.isArray(list) ? list as any[] : [];
+    for (let i = subs.length - 1; i >= 0; i--) {
+      const t = subs[i];
+      if (t?.type === 'sub' && t?.external && typeof t.id === 'number' && /pgs|dvd|dvb|vobsub|xsub/i.test(String(t.codec || ''))) {
+        return t.id;
+      }
     }
     return null;
   }
@@ -768,6 +814,12 @@ export class MpvKernel {
     // outright (measured: 「unsupported format for accessing property」), and 1.3 is what means 130%.
     if (v.scale !== undefined) await this.pipe.call(['set_property', 'sub-scale', Math.max(0.5, Math.min(2.5, v.scale / 100))]);
     if (v.pos !== undefined) await this.pipe.call(['set_property', 'sub-pos', Math.max(0, Math.min(100, v.pos))]);
+  }
+
+  /** `sub-speed` is a factor, not a percent: 100 on the panel is 1 here. It moves the whole subtitle track,
+   *  which is what a file that runs a second ahead of the picture needs, and it also drags karaoke along. */
+  async setSubtitleSpeed(percent: number): Promise<void> {
+    await this.pipe.call(['set_property', 'sub-speed', Math.max(0.25, Math.min(4, percent / 100))]);
   }
 
   async setAspect(v: TrackSelection): Promise<void> {

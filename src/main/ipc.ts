@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain } from 'electron';
+import { BrowserWindow, dialog, ipcMain } from 'electron';
 import { EmbyClient, EmbyError, normalizeBase } from './emby/client';
 import { detail, explain } from './emby/errors';
 import * as config from './config';
@@ -230,6 +230,24 @@ export class AppServices {
     ipcMain.handle('player:thumb', (_e, timeMs: number, precise?: boolean) =>
       wrap('player:thumb', async () => this.player.thumbAt(Number(timeMs) || 0, precise !== false)),
     );
+    // 本地字幕. The picker has to live in main — only main can open a native dialog — and the parent is the
+    // window that asked, so the sheet is modal to the player rather than to a main window that may be hidden
+    // behind 播放时隐藏主程序. Cancelling answers null; nothing was asked for, so nothing is said.
+    ipcMain.handle('player:pickSubtitle', () => wrap('player:pickSubtitle', async () => {
+      const parent = BrowserWindow.getFocusedWindow() ?? this.getMainWindow();
+      // No filters: a subtitle usually arrives in the same download folder as the film, and a list that hides
+      // everything else turns picking one into a hunt for a folder instead of a file. What cannot be read is
+      // named when it is refused, which is a better answer than a file the dialog never showed.
+      const opts = {
+        title: '选择字幕文件',
+        properties: ['openFile' as const],
+      };
+      const res = parent ? await dialog.showOpenDialog(parent, opts) : await dialog.showOpenDialog(opts);
+      const file = res.canceled ? '' : res.filePaths[0] || '';
+      if (!file) return null;
+      await this.player.useLocalSubtitle(file);
+      return { name: file.split(/[\\/]/).pop() || '' };
+    }));
 
     // 媒体缓存: the numbers the settings sheet prints come from the index the bridge already keeps, so this
     // is not a second accounting of the same bytes. Clearing runs while nothing is playing; a viewing that

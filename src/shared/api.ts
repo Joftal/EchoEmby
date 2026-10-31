@@ -84,6 +84,9 @@ export interface EchoEmbyApi {
      *  passing over the bar takes the grid. `exact: false` means the picture is a neighbour's while the
      *  asked-for one is being decoded, and the renderer keeps polling until it is exact or final. */
     thumb(timeMs: number, precise?: boolean): Promise<IpcResult<PlayerThumb>>;
+    /** Open the native picker for 本地字幕 and hand the chosen file to the player. Null is 「没选」: a
+     *  cancelled dialog is an answer, not a failure to explain in red. */
+    pickSubtitle(): Promise<IpcResult<{ name: string } | null>>;
     onState(cb: (s: PlayerState) => void): () => void;
     /** null is the player being closed: the session identity only exists while something is loaded. */
     onSession(cb: (s: PlayerSession | null) => void): () => void;

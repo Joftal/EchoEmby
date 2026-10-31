@@ -29,6 +29,8 @@ import { mediaCache } from '../media-cache';
 import { Thumbnails, type ThumbAnswer, type ThumbOpen } from './thumbs';
 import { PlayerWindows } from './windows';
 import { WindowsHdr } from './hdr';
+import * as subs from '../subtitles';
+import type { LocalSubtitle } from '../subtitles';
 
 /** What the renderer is told, and when. The controller never touches ipc itself, so the same object can
  *  be driven from a test with three arrays to collect into. */
@@ -130,6 +132,14 @@ export class PlayerController {
   private sidecar: { index: number; file: string; trackId: number } | null = null;
   /** Scratch directory for those files, created on the first pick and cleared with the viewing. */
   private sidecarDir: string | null = null;
+  /** 本地字幕 this viewing carries: the copy the viewer brought, the account:item it is remembered under,
+   *  and the track mpv gave it. One at a time, like a sidecar — and it outranks one, because a file brought
+   *  for this film is a deliberate choice where a sidecar is only a language preference being guessed at. */
+  private local: { entry: LocalSubtitle; key: string; trackId: number } | null = null;
+  /** Watch that puts a 本地字幕 back in front while mpv finishes opening the file. See `holdLocal`. */
+  private localHold: ReturnType<typeof setInterval> | null = null;
+  /** One re-add at a time; see `repairLocal`. */
+  private localRepair = false;
   /** The version of a show this machine has been playing, keyed by series and spelled by the one word the
    *  version's own name says about its shape — 「2160p」, 「tv」, 「mobile」 — which is the word
    *  `versionLabel` reads out and the 播放资源 card and the player's 播放源 card both print. A
@@ -370,6 +380,8 @@ export class PlayerController {
     this.out.session(this.getSession());
     this.raise();
 
+    // Before the load, so a picture subtitle is in place when mpv opens the file (see `syncExternal`).
+    await this.syncExternal(this.current);
     this.kernel!.setNextTracks(this.trackWanted(pick));
     try {
       await this.kernel!.load(url, { startMs: fromStart ? 0 : resume.startMs, paused: false });
@@ -378,7 +390,14 @@ export class PlayerController {
       throw e;
     }
 
-    void this.openPickedSidecar(pick);
+    // A subtitle file the viewer brought for this item comes back on its own, and after the sidecar: which
+    // of the two is on screen should be the deliberate choice, not whichever promise resolved last.
+    const here = this.current;
+    // A sidecar that cannot be fetched must not cost the viewer the file they brought: the two are chained
+    // the other way round, sidecar first and only then 本地字幕, and a failure there is swallowed alone.
+    void this.openPickedSidecar(pick)
+      .catch(() => undefined)
+      .then(() => this.restoreLocal(here));
     // The start report carries the offset the *server* holds, never the 0 a 「播放」 button loaded at:
     // measured on bangumi, an open that reports 0 rewrites the item to 0 about a minute later while the
     // session is live, so a hard-killed app left 187396 sitting at nothing and the next 看到 had no number
@@ -570,7 +589,20 @@ export class PlayerController {
       this.sidecar = null;
       void rm(loaded.file, { force: true }).catch(() => undefined);
     }
-    this.media = { ...m, sidecar: live ? { trackId: live.trackId, index: live.index } : null };
+    // Same witness for 本地字幕. The remembered file is not dropped when its track goes missing: mpv drops
+    // every added track on a load, and the re-add that follows such a load is what puts one back.
+    const here = this.local;
+    const localLive = here && m.tracks.some(t => t.kind === 'subtitle' && t.id === here.trackId) ? here : null;
+    // A load can also take away a track that was added a moment too early: put it back rather than leave the
+    // viewer reading the film's own subtitles after they chose a file of their own.
+    if (here && !localLive && this.state.durationMs > 0) void this.repairLocal();
+    this.media = {
+      ...m,
+      sidecar: live ? { trackId: live.trackId, index: live.index } : null,
+      localSub: localLive
+        ? { trackId: localLive.trackId, name: localLive.entry.name, bitmap: localLive.entry.bitmap, positioned: localLive.entry.positioned, dx: localLive.entry.dx, dy: localLive.entry.dy }
+        : null,
+    };
     this.out.media(this.media);
   }
 
@@ -781,6 +813,8 @@ export class PlayerController {
         await k.setMuted(cmd.value);
         return;
       case 'track':
+        // A hand-made choice wins over the watch that keeps a 本地字幕 in front.
+        if (cmd.value.kind === 'subtitle') this.stopHold();
         await k.setTrack(cmd.value.kind, cmd.value.id);
         return;
       case 'sidecarSubtitle':
@@ -794,6 +828,15 @@ export class PlayerController {
         return;
       case 'subtitleStyle':
         await k.setSubtitleStyle(cmd.value);
+        return;
+      case 'subtitleSpeed':
+        await k.setSubtitleSpeed(cmd.value);
+        return;
+      case 'subtitleShift':
+        await this.shiftLocal(cmd.value.dx, cmd.value.dy);
+        return;
+      case 'dropLocalSubtitle':
+        await this.dropLocal();
         return;
       case 'aspect':
         await k.setAspect(cmd.value);
@@ -903,6 +946,189 @@ export class PlayerController {
       /* 外挂取不回来时，内封的轨道还在，画面照常 */
     }
   }
+  /** 本地字幕: a file the viewer picked off their own disk. Copied in and remembered against the item, so the
+   *  next viewing has it back without the picker — and, unlike a sidecar, it survives the app being closed.
+   *  The copy is what mpv reads: the original may be on a drive that is gone tomorrow. */
+  async useLocalSubtitle(source: string): Promise<void> {
+    const c = this.current;
+    const k = this.kernel;
+    if (!c || !k) throw new Error('没有在播放任何东西');
+    const entry = await subs.importFile(source);
+    if (entry.bitmap) {
+      // A picture track cannot be handed to a file that is already open: it enters as an external file, and
+      // mpv reads that list when it opens one. So the item is remembered first and a reload is what puts it in
+      // front — `restoreLocal` then finds the track and selects it like any other 本地字幕.
+      // The entry in memory belongs to the file being replaced, and `restoreLocal` prefers it over the index —
+      // dropping it first is what lets the reload find the picture track it was just handed.
+      this.stopHold();
+      this.local = null;
+      await subs.remember(c.accountId, c.itemId, entry);
+      await k.setExternalFiles([entry.file]);
+      await this.replay({});
+      return;
+    }
+    await this.attachLocal(c, entry);
+    await subs.remember(c.accountId, c.itemId, entry);
+  }
+
+  /** mpv's external-file list is how a picture subtitle travels, and it outlives a load: without this, one
+   *  film's `.sup` would be handed to the next episode as well. Written before every load, empty or not. */
+  private async syncExternal(c: { accountId: string; itemId: string } | null): Promise<void> {
+    const k = this.kernel;
+    if (!k) return;
+    let entry: LocalSubtitle | null = null;
+    if (c) {
+      try {
+        entry = await subs.recall(c.accountId, c.itemId);
+      } catch {
+        entry = null;
+      }
+    }
+    await k.setExternalFiles(entry?.bitmap ? [entry.file] : []).catch(() => undefined);
+  }
+
+  /** Put one 本地字幕 in front of the picture: the shifted copy on disk, through `sub-add`, and selected by
+   *  the id mpv answers with. The previous one is removed only after the new one is in, so a file that fails
+   *  to load leaves the subtitle the viewer was reading untouched. */
+  private async attachLocal(c: Current, entry: LocalSubtitle): Promise<void> {
+    const k = this.kernel;
+    if (!k) throw new Error('播放器已经关闭');
+    let trackId: number | null;
+    if (entry.bitmap) {
+      // Already in mpv: the external list was written before this file was opened. Nothing to shift either —
+      // a picture track has no coordinates we can rewrite.
+      trackId = await k.findBitmapSubtitle();
+      if (trackId === null) throw new Error('播放器还没读到这条图像字幕');
+    } else {
+      const file = await subs.shiftedFile(entry, entry.dx, entry.dy);
+      trackId = await k.addSubtitleFile(file, entry.name);
+      if (trackId === null) throw new Error('播放器读不了这条字幕文件');
+    }
+    const prev = this.local;
+    this.local = { entry, key: subs.subtitleKey(c.accountId, c.itemId), trackId };
+    await k.setTrack('subtitle', trackId);
+    this.holdLocal(trackId);
+    if (prev && prev.trackId !== trackId) await k.removeSubtitleFile(prev.trackId).catch(() => undefined);
+  }
+
+  /** mpv finishes opening a file after `sub-add` has already answered, and its own default pick can then land
+   *  on top of the `sid` written above — measured 2026-10-31: switching a film to its 1080p cut listed the
+   *  local track first, the write went through, and the film's own 简体 was on screen seconds later. This
+   *  watch puts the viewer's own file back in front, and stops the moment they pick a track by hand. */
+  private holdLocal(trackId: number): void {
+    this.stopHold();
+    /* A load can take ten seconds on a remote file, and mpv only makes its own pick once it is open — so the
+       watch runs until the file is really open and the choice has then held for three ticks, not for a fixed
+       number of tries. One property read per tick; the write only happens when mpv has taken the track away. */
+    let left = 60;
+    let settled = 0;
+    this.localHold = setInterval(() => {
+      const k = this.kernel;
+      if (!k || !this.local || this.local.trackId !== trackId || left <= 0) {
+        this.stopHold();
+        return;
+      }
+      left -= 1;
+      /* The track list, not `sid`: mpv answers 'auto' there after a load even when the row it is showing is
+         the one written (it only fires the property's change event for a value that differs). */
+      if (this.media.tracks.some((t) => t.kind === 'subtitle' && t.id === trackId && t.selected)) {
+        if (this.state.durationMs > 0 && ++settled >= 3) this.stopHold();
+        return;
+      }
+      settled = 0;
+      void k.setTrack('subtitle', trackId).catch(() => undefined);
+    }, 500);
+  }
+
+  private stopHold(): void {
+    if (this.localHold) clearInterval(this.localHold);
+    this.localHold = null;
+  }
+
+  /** mpv dropped the added track on a load (or refused it while still opening). Hand the same file over
+   *  again — once at a time, because a re-add that is already running will be seen by the same witness. */
+  private async repairLocal(): Promise<void> {
+    if (this.localRepair) return;
+    const c = this.current;
+    const here = this.local;
+    if (!c || !here) return;
+    this.localRepair = true;
+    try {
+      await new Promise((r) => setTimeout(r, 300));
+      if (this.current !== c || this.local !== here) return;
+      if (this.media.tracks.some((t) => t.kind === 'subtitle' && t.id === here.trackId)) return;
+      await this.attachLocal(c, here.entry);
+    } catch {
+      /* the film's own tracks are still there; a file mpv cannot read must not become a 播放错误 */
+    } finally {
+      this.localRepair = false;
+    }
+  }
+
+  /** Called after every load — the first play, a version switch, 下一集. mpv forgets added files on a load, so
+   *  the same file has to be handed over again rather than re-selected; the shift the viewer dialled in is
+   *  part of what is handed over, which is why it lives in the entry and not in mpv's properties. */
+  private async restoreLocal(c: Current): Promise<void> {
+    this.stopHold();
+    if (this.current !== c) return;
+    let entry: LocalSubtitle | null = null;
+    try {
+      const key = subs.subtitleKey(c.accountId, c.itemId);
+      entry = this.local && this.local.key === key ? this.local.entry : await subs.recall(c.accountId, c.itemId);
+    } catch {
+      entry = null;
+    }
+    this.local = null;
+    if (!entry) return;
+    /* A version switch answers before mpv has the new file open, and sub-add in that window leaves no track
+       behind — measured: the added file came back with an id, and two seconds later the list held only the
+       film's own two tracks. Three tries cover it without making a broken file into a 播放错误. */
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      if (this.current !== c || !this.kernel) return;
+      try {
+        await this.attachLocal(c, entry);
+        return;
+      } catch {
+        await new Promise((r) => setTimeout(r, 1200));
+      }
+    }
+  }
+
+  /** 移除: gone from mpv now and from the memory of this item, so it does not come back on the next 播放. */
+  private async dropLocal(): Promise<void> {
+    const c = this.current;
+    const k = this.kernel;
+    const was = this.local;
+    this.stopHold();
+    this.local = null;
+    if (was && k) await k.removeSubtitleFile(was.trackId).catch(() => undefined);
+    // A picture track leaves through the same list it came in by, or the next file would inherit it.
+    if (was?.entry.bitmap && k) await k.setExternalFiles([]).catch(() => undefined);
+    if (c) await subs.forget(c.accountId, c.itemId);
+    // mpv does not answer a removal by picking another subtitle: measured 2026-10-31, taking away the selected
+    // track left `sid=false` on a file that holds 34 of them. The preference already knows which one the film
+    // would have started on, so 移除 puts back what a fresh 播放 gives.
+    if (c && k) {
+      const pick = pickTracks(c.sources[c.sourceIndex], config.get().settings.player);
+      k.applyTracksNow(this.trackWanted(pick));
+      void this.openPickedSidecar(pick).catch(() => undefined);
+    }
+  }
+
+  /** 特效位置: only a file that writes its own coordinates can be moved this way (on those, mpv's `sub-pos`
+   *  is a no-op — measured), so the file is rewritten and handed over again. The offset accumulates from the
+   *  original copy, never from the already-shifted one. */
+  private async shiftLocal(dx: number, dy: number): Promise<void> {
+    const c = this.current;
+    const was = this.local;
+    if (!c || !was) throw new Error('还没有导入本地字幕');
+    if (was.entry.bitmap) throw new Error('图像字幕的位置由片子决定，挪不动');
+    if (!was.entry.positioned) throw new Error('这条字幕没有自带定位，用「高度」调整');
+    const entry: LocalSubtitle = { ...was.entry, dx: was.entry.dx + dx, dy: was.entry.dy + dy };
+    await this.attachLocal(c, entry);
+    await subs.remember(c.accountId, c.itemId, entry);
+  }
+
   /** Another version of the same item, if the server holds more than one. */
   private async useSource(index: number): Promise<void> {
     const c = this.current;
@@ -983,6 +1209,7 @@ export class PlayerController {
     // would name a track that no longer exists and a `sid` write would fail silently — the next sidecar
     // therefore has to be fetched again rather than re-selected.
     this.sidecar = null;
+    await this.syncExternal(c);
     this.kernel!.setNextTracks(this.trackWanted(pick));
     try {
       await k.load(url, { startMs: wasAt, paused: wasPaused });
@@ -992,7 +1219,9 @@ export class PlayerController {
     }
     await k.setSpeed(speed).catch(() => undefined);
     if (wasPaused) await k.setPaused(true).catch(() => undefined);
-    void this.openPickedSidecar(pick);
+    void this.openPickedSidecar(pick)
+      .catch(() => undefined)
+      .then(() => this.restoreLocal(c));
     // The frames belonged to the version that was playing; this one is a different file, so the grid is
     // rebuilt from scratch against it.
     if (config.get().settings.player.thumbPreview) this.thumbs.open(url, c.runtimeMs, this.thumbOpen());
@@ -1073,6 +1302,8 @@ export class PlayerController {
     this.bridge.close();
     this.windows.close();
     this.dropSidecar();
+    this.stopHold();
+    this.local = null;
     this.state = emptyPlayerState();
     this.media = emptyPlayerMedia();
     this.out.state(this.state);
@@ -1101,5 +1332,7 @@ export class PlayerController {
     this.bridge.close();
     this.windows.close();
     this.dropSidecar();
+    this.stopHold();
+    this.local = null;
   }
 }

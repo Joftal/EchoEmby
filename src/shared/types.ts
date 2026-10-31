@@ -689,6 +689,9 @@ export interface PlayerMedia {
   audioDelayMs: number;
   subtitleScale: number;
   subtitlePos: number;
+  /** Percent of real time the subtitle runs at (100 = untouched). A hand-timed file drifts by seconds; this
+   *  moves libass' own clock, karaoke included, without touching the picture. */
+  subtitleSpeed: number;
   /** 'no' means fit to the window; a number is a forced display aspect. */
   aspect: TrackSelection;
   panscan: number;
@@ -700,6 +703,10 @@ export interface PlayerMedia {
    *  server's stream index it came from. The menu needs both — the id to mark the row 正在用, the index
    *  because that is how a row in the 外挂字幕 list is addressed. */
   sidecar?: { trackId: number; index: number } | null;
+  /** The subtitle file the viewer brought for this item, while mpv still holds it. `positioned` says the file
+   *  writes its own coordinates (`\pos`/`\move`), which is why the height control does nothing on it and why
+   *  moving it means rewriting those numbers instead; `dx`/`dy` is the shift already baked into the copy. */
+  localSub?: { trackId: number; name: string; bitmap: boolean; positioned: boolean; dx: number; dy: number } | null;
 }
 
 export interface PlayerNav {
@@ -935,6 +942,11 @@ export type PlayerCommand =
   | { action: 'subtitleDelay'; value: number }
   | { action: 'audioDelay'; value: number }
   | { action: 'subtitleStyle'; value: { scale?: number; pos?: number } }
+  | { action: 'subtitleSpeed'; value: number }
+  /** Move a subtitle that carries its own coordinates. The file is rewritten and handed to mpv again, so this
+   *  is a re-add rather than a property: on such lines `sub-pos` has no effect at all (measured). */
+  | { action: 'subtitleShift'; value: { dx: number; dy: number } }
+  | { action: 'dropLocalSubtitle' }
   | { action: 'aspect'; value: TrackSelection }
   | { action: 'fit'; value: FitMode }
   | { action: 'chapter'; value: number }
@@ -983,6 +995,7 @@ export const emptyPlayerMedia = (): PlayerMedia => ({
   audioDelayMs: 0,
   subtitleScale: 100,
   subtitlePos: 100,
+  subtitleSpeed: 100,
   aspect: 'no',
   panscan: 0,
   keepaspect: true,

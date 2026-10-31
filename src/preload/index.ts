@@ -67,6 +67,7 @@ const api: EchoEmbyApi = {
     session: () => invoke('player:session'),
     media: () => invoke('player:media'),
     thumb: (timeMs, precise) => invoke('player:thumb', timeMs, precise),
+    pickSubtitle: () => invoke('player:pickSubtitle'),
     onState: cb => on('player:state', cb),
     onSession: cb => on('player:session', cb),
     onMedia: cb => on('player:media', cb),
